@@ -125,30 +125,12 @@ test-builds:
 	@echo "Compiling tests for linux/386..." && GOOS=linux GOARCH=386 $(GO) test -c ./pkg/... && rm -f *.test
 	@echo "All platform builds and test compilations succeeded!"
 
-# Test nix build
-test-nix:
-	@echo "Testing nix build..."
-	@if command -v nix >/dev/null 2>&1; then \
-		CURRENT_SYSTEM=$$(nix eval --raw --impure --expr builtins.currentSystem); \
-		echo "Building for current system ($$CURRENT_SYSTEM)..."; \
-		nix build .#packages.$$CURRENT_SYSTEM.default -L --no-link || exit 1; \
-		echo "Nix build succeeded for $$CURRENT_SYSTEM!"; \
-		echo "Note: Cross-compilation testing skipped (requires additional setup)"; \
-	else \
-		echo "Nix not installed, skipping nix build test"; \
-	fi
-
 # Run all tests and checks (comprehensive)
-test-all: fmt vet lint test test-race test-integration test-builds test-nix
+test-all: fmt vet lint test test-race test-integration test-builds
 	@echo "All tests passed!"
 
 # CI workflow - all checks
 ci: deps fmt vet lint test test-race test-coverage test-builds
-
-# Update all Nix hashes to point to current HEAD
-update-nix:
-	@echo "Updating all Nix hashes to current HEAD..."
-	@./scripts/update-nix-hashes.sh $(ARGS)
 
 # Development helpers
 
@@ -176,10 +158,6 @@ setup-hooks:
 install-tools:
 	@echo "Installing development tools..."
 	@bash scripts/install-tools.sh
-
-update-nix:
-	@echo "Updating all Nix hashes to current HEAD..."
-	@./scripts/update-nix-hashes.sh $(ARGS)
 
 # Help
 help:

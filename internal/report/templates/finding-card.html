@@ -1,0 +1,54 @@
+{{define "finding-card.html"}}
+<div class="finding-card {{severityClass .Severity}}{{if .Suppressed}} suppressed{{end}}">
+    <div class="finding-header">
+        <h4 class="finding-title">{{.Title}}</h4>
+        <div class="badges">
+            <span class="severity-badge {{severityClass .Severity}}">{{title .Severity}}</span>
+            {{if .OriginalSeverity}}
+            <span class="original-severity">was: {{title .OriginalSeverity}}</span>
+            {{end}}
+            {{if .Suppressed}}
+            <span class="suppressed-badge">Suppressed</span>
+            {{end}}
+        </div>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">{{.Type}}</span>
+        <span class="meta-tag">{{.Resource}}</span>
+        {{if .Location}}
+        <span class="meta-tag">📍 {{.Location}}</span>
+        {{end}}
+        {{if .Framework}}
+        <span class="meta-tag">🏛️ {{.Framework}}</span>
+        {{end}}
+    </div>
+    
+    <p class="finding-description">{{.Description}}</p>
+    
+    {{if .Impact}}
+    <div class="finding-impact">
+        <strong>Impact:</strong> {{.Impact}}
+    </div>
+    {{end}}
+    
+    {{if .Remediation}}
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>{{.Remediation}}</p>
+    </div>
+    {{end}}
+    
+    {{if .SuppressionReason}}
+    <div class="suppression-reason">
+        <strong>Suppression Reason:</strong> {{.SuppressionReason}}
+    </div>
+    {{end}}
+    
+    {{if .Comment}}
+    <div class="finding-comment">
+        <strong>Comment:</strong> {{.Comment}}
+    </div>
+    {{end}}
+</div>
+{{end}}

@@ -1,0 +1,23 @@
+version: "1.0"
+last_modified: 2025-06-07T15:05:01.922876915-07:00
+author: security-team@example.com
+description: Manual modifications for Q4 2024 security scan
+suppressions:
+    - finding_id: abc123def456
+      reason: False positive - this S3 bucket is intentionally public for static website hosting
+      suppressed_by: john.doe@example.com
+      suppressed_at: 2025-06-07T15:05:01.922873281-07:00
+      expires_at: 2025-07-07T15:05:01.922873281-07:00
+    - finding_id: ghi789jkl012
+      reason: Accepted risk - legacy system scheduled for decommission in Q1 2025
+      suppressed_by: jane.smith@example.com
+      suppressed_at: 2025-06-07T15:05:01.922873281-07:00
+overrides:
+    - finding_id: mno345pqr678
+      new_severity: low
+      reason: Reduced severity - mitigating controls in place
+      overridden_by: security-team@example.com
+      overridden_at: 2025-06-07T15:05:01.922873281-07:00
+comments:
+    stu901vwx234: Tracking in JIRA ticket SEC-1234
+    yza567bcd890: Remediation planned for next sprint

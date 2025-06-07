@@ -122,6 +122,8 @@ severity_overrides:
 
 metadata_enrichment:
   # Add business context to findings
+  # Note: If no enrichment is configured, findings remain as-is (no enrichment required)
+  # This is the recommended default - findings are sufficient without business context
   resources:
     "arn:aws:s3:::acme-public-website":
       owner: "Marketing Team"
@@ -185,6 +187,44 @@ func GenerateFindingID(f Finding) string {
     core := fmt.Sprintf("%s:%s:%s:%s", f.Scanner, f.Type, f.Resource, f.Location)
     hash := sha256.Sum256([]byte(core))
     return hex.EncodeToString(hash[:8]) // First 8 bytes for readability
+}
+```
+
+### Finding Enrichment Philosophy
+
+Metadata enrichment in Prismatic is **optional and additive**. The design principles are:
+
+1. **Findings are sufficient by default** - Scanner output contains all necessary technical information
+2. **Enrichment adds business context** - When configured, it layers organizational information on top
+3. **No enrichment is perfectly valid** - Most organizations can use Prismatic effectively without any metadata enrichment
+4. **Organization-wide context** - When no specific resource metadata exists, findings apply to the whole organization
+
+This approach ensures Prismatic works excellently out-of-the-box while allowing sophisticated organizations to add business context as needed.
+
+#### Enrichment Implementation
+
+The orchestrator includes an optional `EnrichFindings` method that:
+- Returns an empty slice if no metadata enrichment is configured (the default)
+- Matches findings to resource metadata based on the resource identifier
+- Creates `EnrichedFinding` objects that include business context
+- Preserves all original finding data while adding organizational information
+
+```go
+// Example enriched finding
+{
+    "id": "abc12345",
+    "scanner": "trivy",
+    "type": "vulnerability",
+    "resource": "postgres:14",
+    "severity": "high",
+    "title": "CVE-2024-1234",
+    // ... other finding fields ...
+    "business_context": {
+        "owner": "data-team",
+        "data_classification": "confidential",
+        "business_impact": "Core customer database",
+        "compliance_impact": ["GDPR", "SOC2"]
+    }
 }
 ```
 

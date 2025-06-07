@@ -1,0 +1,104 @@
+package scanner
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/Veraticus/prismatic/internal/models"
+)
+
+// Scanner defines the interface that all security scanners must implement.
+type Scanner interface {
+	// Name returns the scanner name (e.g., "prowler", "trivy")
+	Name() string
+
+	// Scan executes the scanner and returns raw results
+	Scan(ctx context.Context) (*models.ScanResult, error)
+
+	// ParseResults converts raw scanner output to normalized findings
+	ParseResults(raw []byte) ([]models.Finding, error)
+}
+
+// Config holds common scanner configuration.
+type Config struct {
+	Env        map[string]string
+	WorkingDir string
+	Timeout    int
+	Debug      bool
+}
+
+// BaseScanner provides common functionality for all scanners.
+type BaseScanner struct {
+	name    string
+	version string
+	config  Config
+}
+
+// NewBaseScanner creates a new base scanner instance.
+func NewBaseScanner(name string, config Config) *BaseScanner {
+	return &BaseScanner{
+		name:   name,
+		config: config,
+	}
+}
+
+// Name returns the scanner name.
+func (b *BaseScanner) Name() string {
+	return b.name
+}
+
+// GetVersion returns the scanner version.
+func (b *BaseScanner) GetVersion() string {
+	return b.version
+}
+
+// SetVersion sets the scanner version.
+func (b *BaseScanner) SetVersion(version string) {
+	b.version = version
+}
+
+// Config returns the scanner configuration.
+func (b *BaseScanner) Config() Config {
+	return b.config
+}
+
+// ValidateFinding ensures a finding has all required fields and normalizes severity.
+func ValidateFinding(f *models.Finding) error {
+	if err := f.IsValid(); err != nil {
+		return fmt.Errorf("invalid finding: %w", err)
+	}
+
+	// Normalize severity
+	f.Severity = models.NormalizeSeverity(f.Severity)
+
+	// Generate ID if not set
+	if f.ID == "" {
+		f.ID = models.GenerateFindingID(f.Scanner, f.Type, f.Resource, f.Location)
+	}
+
+	return nil
+}
+
+// ScannerError represents an error from a scanner.
+type ScannerError struct {
+	Err     error
+	Scanner string
+	Phase   string
+}
+
+func (e *ScannerError) Error() string {
+	return fmt.Sprintf("%s scanner %s error: %v", e.Scanner, e.Phase, e.Err)
+}
+
+func (e *ScannerError) Unwrap() error {
+	return e.Err
+}
+
+// NewScannerError creates a new scanner error.
+func NewScannerError(scanner, phase string, err error) error {
+	return &ScannerError{
+		Scanner: scanner,
+		Phase:   phase,
+		Err:     err,
+	}
+}

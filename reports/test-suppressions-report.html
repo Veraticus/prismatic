@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prismatic Security Report - Example Corp</title>
+    <style>
+        
+ 
+:root {
+     
+    --prism-gradient: linear-gradient(135deg, 
+        rgba(110, 90, 255, 0.1) 0%,
+        rgba(100, 170, 255, 0.1) 20%,
+        rgba(90, 220, 220, 0.1) 40%,
+        rgba(90, 255, 170, 0.1) 60%,
+        rgba(220, 255, 90, 0.1) 80%,
+        rgba(255, 170, 90, 0.1) 100%
+    );
+    
+     
+    --severity-critical: #9b111e;   
+    --severity-high: #ff6700;       
+    --severity-medium: #ffd700;     
+    --severity-low: #4169e1;        
+    --severity-info: #708090;       
+    
+     
+    --bg-primary: #fafafa;
+    --bg-secondary: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: #4a4a4a;
+    --border-light: #e0e0e0;
+    --accent: #6a5acd;   
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+ 
+.prismatic-header {
+    position: relative;
+    padding: 60px 40px;
+    background: var(--bg-secondary);
+    overflow: hidden;
+    margin-bottom: 60px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.prismatic-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--prism-gradient);
+    opacity: 0.4;
+    transform: skewY(-2deg);
+    transform-origin: top left;
+}
+
+.prismatic-header > * {
+    position: relative;
+    z-index: 1;
+}
+
+.prismatic-accent {
+    font-size: 3rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #6a5acd, #4169e1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 2rem;
+}
+
+.header-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 2rem;
+}
+
+.client-info h2 {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.environment {
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+}
+
+.scan-info {
+    text-align: right;
+    color: var(--text-secondary);
+}
+
+.scan-info p {
+    margin: 0.25rem 0;
+}
+
+ 
+.executive-summary {
+    margin-bottom: 60px;
+}
+
+.executive-summary h2 {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 2rem;
+    color: var(--text-primary);
+}
+
+ 
+.summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+    margin-bottom: 3rem;
+}
+
+.summary-card {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 16px;
+    padding: 32px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+    transition: all 0.3s ease;
+}
+
+.summary-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.08);
+}
+
+.summary-card h3 {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 1rem;
+}
+
+.big-number {
+    font-size: 3.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1;
+}
+
+.suppressed-note {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+}
+
+ 
+.severity-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.severity-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg-primary);
+    border-radius: 8px;
+}
+
+.severity-icon {
+    font-size: 1.25rem;
+}
+
+.severity-label {
+    flex: 1;
+    font-weight: 500;
+}
+
+.severity-count {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+ 
+.severity-critical .severity-count {
+    color: var(--severity-critical);
+}
+
+.severity-high .severity-count {
+    color: var(--severity-high);
+}
+
+.severity-medium .severity-count {
+    color: var(--severity-medium);
+}
+
+.severity-low .severity-count {
+    color: var(--severity-low);
+}
+
+.severity-info .severity-count {
+    color: var(--severity-info);
+}
+
+ 
+.scanner-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.scanner-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+}
+
+.status-icon {
+    font-size: 1rem;
+}
+
+ 
+.top-risks {
+    background: var(--bg-secondary);
+    border-radius: 16px;
+    padding: 32px;
+    border: 1px solid var(--border-light);
+}
+
+.top-risks h3 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+}
+
+.risk-list {
+    counter-reset: risk-counter;
+    list-style: none;
+}
+
+.risk-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    background: var(--bg-primary);
+    border-radius: 8px;
+    counter-increment: risk-counter;
+}
+
+.risk-item::before {
+    content: counter(risk-counter);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: var(--accent);
+    color: white;
+    border-radius: 50%;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.risk-item strong {
+    flex: 1;
+}
+
+.resource {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+ 
+.severity-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.severity-badge.severity-critical {
+    color: var(--severity-critical);
+    background: rgba(155, 17, 30, 0.1);
+}
+
+.severity-badge.severity-high {
+    color: var(--severity-high);
+    background: rgba(255, 103, 0, 0.1);
+}
+
+.severity-badge.severity-medium {
+    color: var(--severity-medium);
+    background: rgba(255, 215, 0, 0.1);
+}
+
+.severity-badge.severity-low {
+    color: var(--severity-low);
+    background: rgba(65, 105, 225, 0.1);
+}
+
+.severity-badge.severity-info {
+    color: var(--severity-info);
+    background: rgba(112, 128, 144, 0.1);
+}
+
+ 
+.detailed-findings {
+    margin-bottom: 80px;
+}
+
+.detailed-findings h2 {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 3rem;
+}
+
+.findings-category {
+    margin-bottom: 3rem;
+}
+
+.findings-category h3 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+ 
+.finding-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 16px;
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+.finding-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: currentColor;
+    border-radius: 8px 0 0 8px;
+}
+
+.finding-card.severity-critical::before {
+    background: var(--severity-critical);
+}
+
+.finding-card.severity-high::before {
+    background: var(--severity-high);
+}
+
+.finding-card.severity-medium::before {
+    background: var(--severity-medium);
+}
+
+.finding-card.severity-low::before {
+    background: var(--severity-low);
+}
+
+.finding-card.severity-info::before {
+    background: var(--severity-info);
+}
+
+.finding-card:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.finding-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.finding-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-right: 16px;
+}
+
+.finding-meta {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.meta-tag {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    background: var(--bg-primary);
+    border-radius: 4px;
+}
+
+.finding-description {
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+
+.finding-impact {
+    background: rgba(255, 103, 0, 0.05);
+    border-left: 3px solid var(--severity-high);
+    padding: 12px 16px;
+    margin-bottom: 16px;
+}
+
+.finding-impact strong {
+    color: var(--severity-high);
+}
+
+.finding-remediation {
+    background: var(--bg-primary);
+    padding: 16px;
+    border-radius: 8px;
+    border-left: 3px solid var(--accent);
+}
+
+.finding-remediation h4 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    margin-bottom: 8px;
+}
+
+ 
+footer {
+    margin-top: 80px;
+    padding: 40px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-light);
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+footer p {
+    margin: 0.25rem 0;
+}
+
+ 
+@media (max-width: 768px) {
+    .prismatic-header {
+        padding: 40px 20px;
+    }
+    
+    .prismatic-accent {
+        font-size: 2rem;
+    }
+    
+    .header-info {
+        flex-direction: column;
+    }
+    
+    .scan-info {
+        text-align: left;
+    }
+    
+    .summary-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    .risk-item {
+        flex-wrap: wrap;
+    }
+}
+
+ 
+@media print {
+    body {
+        background: white;
+    }
+    
+    .prismatic-header::before {
+        opacity: 0.2;
+    }
+    
+    .summary-card,
+    .finding-card {
+        break-inside: avoid;
+    }
+    
+    .finding-card {
+        border: 1px solid #ddd;
+        margin-bottom: 12px;
+    }
+}
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        
+        <header class="prismatic-header">
+            <h1 class="prismatic-accent">Prismatic Security Report</h1>
+            <div class="header-info">
+                <div class="client-info">
+                    <h2>Example Corp</h2>
+                    <p class="environment">Development Environment</p>
+                </div>
+                <div class="scan-info">
+                    <p>Scan Date: 2025-06-07 08:54:35</p>
+                    <p>Duration: 3s</p>
+                    <p>Report Generated: 2025-06-07 14:55:35</p>
+                </div>
+            </div>
+        </header>
+
+        
+        <section class="executive-summary">
+            <h2>Executive Summary</h2>
+            
+            <div class="summary-cards">
+                <div class="summary-card total-findings">
+                    <h3>Total Findings</h3>
+                    <div class="big-number">12</div>
+                    
+                </div>
+                
+                <div class="summary-card severity-breakdown">
+                    <h3>Severity Breakdown</h3>
+                    <div class="severity-grid">
+                        
+                        <div class="severity-item severity-critical">
+                            <span class="severity-icon">🔴</span>
+                            <span class="severity-label">Critical</span>
+                            <span class="severity-count">2</span>
+                        </div>
+                        
+                        
+                        <div class="severity-item severity-high">
+                            <span class="severity-icon">🟠</span>
+                            <span class="severity-label">High</span>
+                            <span class="severity-count">3</span>
+                        </div>
+                        
+                        
+                        <div class="severity-item severity-medium">
+                            <span class="severity-icon">🟡</span>
+                            <span class="severity-label">Medium</span>
+                            <span class="severity-count">5</span>
+                        </div>
+                        
+                        
+                        <div class="severity-item severity-low">
+                            <span class="severity-icon">🔵</span>
+                            <span class="severity-label">Low</span>
+                            <span class="severity-count">2</span>
+                        </div>
+                        
+                        
+                    </div>
+                </div>
+                
+                <div class="summary-card scan-coverage">
+                    <h3>Scan Coverage</h3>
+                    <div class="scanner-list">
+                        
+                        <div class="scanner-status">
+                            
+                            <span class="status-icon">✅</span>
+                            
+                            <span>mock-checkov</span>
+                        </div>
+                        
+                        <div class="scanner-status">
+                            
+                            <span class="status-icon">✅</span>
+                            
+                            <span>mock-gitleaks</span>
+                        </div>
+                        
+                        <div class="scanner-status">
+                            
+                            <span class="status-icon">✅</span>
+                            
+                            <span>mock-prowler</span>
+                        </div>
+                        
+                        <div class="scanner-status">
+                            
+                            <span class="status-icon">✅</span>
+                            
+                            <span>mock-trivy</span>
+                        </div>
+                        
+                    </div>
+                </div>
+            </div>
+
+            
+            <div class="top-risks">
+                <h3>Top Security Risks</h3>
+                <ol class="risk-list">
+                    
+                    <li class="risk-item">
+                        <span class="severity-badge severity-critical">Critical</span>
+                        <strong>OpenSSL vulnerability allows remote code execution</strong>
+                        <span class="resource">nginx:latest</span>
+                    </li>
+                    
+                    <li class="risk-item">
+                        <span class="severity-badge severity-critical">Critical</span>
+                        <strong>Root account does not have MFA enabled</strong>
+                        <span class="resource">arn:aws:iam::123456789012:root</span>
+                    </li>
+                    
+                    <li class="risk-item">
+                        <span class="severity-badge severity-high">High</span>
+                        <strong>S3 bucket allows public read access</strong>
+                        <span class="resource">arn:aws:s3:::my-public-bucket</span>
+                    </li>
+                    
+                    <li class="risk-item">
+                        <span class="severity-badge severity-high">High</span>
+                        <strong>Security group allows SSH from anywhere</strong>
+                        <span class="resource">sg-0123456789abcdef0</span>
+                    </li>
+                    
+                    <li class="risk-item">
+                        <span class="severity-badge severity-high">High</span>
+                        <strong>glibc buffer overflow vulnerability</strong>
+                        <span class="resource">nginx:latest</span>
+                    </li>
+                    
+                </ol>
+            </div>
+            
+        </section>
+
+        
+        <section class="detailed-findings">
+            <h2>Detailed Findings</h2>
+            
+            
+            <div class="findings-category">
+                <h3>🔧 AWS Infrastructure</h3>
+                
+                
+<div class="finding-card severity-critical">
+    <div class="finding-header">
+        <h4 class="finding-title">Root account does not have MFA enabled</h4>
+        <span class="severity-badge severity-critical">Critical</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">iam_root_no_mfa</span>
+        <span class="meta-tag">arn:aws:iam::123456789012:root</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">The AWS root account does not have multi-factor authentication enabled, which significantly increases security risk.</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Unauthorized access to root account could lead to complete AWS account compromise
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Enable MFA for the root account immediately</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-high">
+    <div class="finding-header">
+        <h4 class="finding-title">S3 bucket allows public read access</h4>
+        <span class="severity-badge severity-high">High</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">s3_bucket_public_read</span>
+        <span class="meta-tag">arn:aws:s3:::my-public-bucket</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">The S3 bucket &#39;my-public-bucket&#39; is configured to allow public read access, potentially exposing sensitive data.</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Sensitive data could be exposed to unauthorized parties
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Review bucket policy and remove public access unless explicitly required</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-high">
+    <div class="finding-header">
+        <h4 class="finding-title">Security group allows SSH from anywhere</h4>
+        <span class="severity-badge severity-high">High</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">ec2_security_group_ssh_open</span>
+        <span class="meta-tag">sg-0123456789abcdef0</span>
+        
+        <span class="meta-tag">📍 us-east-1</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">Security group sg-0123456789abcdef0 allows SSH (port 22) access from 0.0.0.0/0</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Instances could be accessed by unauthorized users
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Restrict SSH access to specific IP ranges</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-medium">
+    <div class="finding-header">
+        <h4 class="finding-title">CloudTrail is not enabled</h4>
+        <span class="severity-badge severity-medium">Medium</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">cloudtrail_not_enabled</span>
+        <span class="meta-tag">arn:aws:cloudtrail:us-east-1:123456789012:trail/management</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">CloudTrail logging is not enabled for management events</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Security incidents and API calls cannot be audited
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Enable CloudTrail for all regions</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-medium">
+    <div class="finding-header">
+        <h4 class="finding-title">RDS instance not encrypted</h4>
+        <span class="severity-badge severity-medium">Medium</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">rds_instance_no_encryption</span>
+        <span class="meta-tag">arn:aws:rds:us-east-1:123456789012:db:prod-db</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">RDS instance &#39;prod-db&#39; does not have encryption at rest enabled</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Database contents could be exposed if storage is compromised
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Enable encryption for the RDS instance</p>
+    </div>
+    
+</div>
+
+                
+            </div>
+            
+            
+            
+            <div class="findings-category">
+                <h3>🐳 Container Security</h3>
+                
+                
+<div class="finding-card severity-critical">
+    <div class="finding-header">
+        <h4 class="finding-title">OpenSSL vulnerability allows remote code execution</h4>
+        <span class="severity-badge severity-critical">Critical</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">CVE-2023-12345</span>
+        <span class="meta-tag">nginx:latest</span>
+        
+        <span class="meta-tag">📍 libssl1.1</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">A buffer overflow in OpenSSL 1.1.1 allows attackers to execute arbitrary code</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Remote code execution on container
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Update libssl1.1 to version 1.1.1t or later</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-high">
+    <div class="finding-header">
+        <h4 class="finding-title">glibc buffer overflow vulnerability</h4>
+        <span class="severity-badge severity-high">High</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">CVE-2023-23456</span>
+        <span class="meta-tag">nginx:latest</span>
+        
+        <span class="meta-tag">📍 libc6</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">Buffer overflow in glibc DNS resolver</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Potential remote code execution
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Update libc6 to version 2.35-r1 or later</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-medium">
+    <div class="finding-header">
+        <h4 class="finding-title">BusyBox shell injection vulnerability</h4>
+        <span class="severity-badge severity-medium">Medium</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">CVE-2022-34567</span>
+        <span class="meta-tag">alpine:latest</span>
+        
+        <span class="meta-tag">📍 busybox</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">Shell injection possible through crafted input</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Local privilege escalation
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Update busybox to version 1.35.0-r2 or later</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-low">
+    <div class="finding-header">
+        <h4 class="finding-title">npm prototype pollution vulnerability</h4>
+        <span class="severity-badge severity-low">Low</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">GHSA-1234-5678-9abc</span>
+        <span class="meta-tag">node:16</span>
+        
+        <span class="meta-tag">📍 npm</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">Prototype pollution in npm package handling</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Application behavior modification
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Update npm to version 8.19.4 or later</p>
+    </div>
+    
+</div>
+
+                
+            </div>
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            <div class="findings-category">
+                <h3>📋 Infrastructure as Code</h3>
+                
+                
+<div class="finding-card severity-medium">
+    <div class="finding-header">
+        <h4 class="finding-title">RDS instance does not have deletion protection</h4>
+        <span class="severity-badge severity-medium">Medium</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">CKV_AWS_79</span>
+        <span class="meta-tag">terraform/rds.tf</span>
+        
+        <span class="meta-tag">📍 line 8</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">RDS instance can be accidentally deleted</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Database could be accidentally deleted
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Enable deletion protection for production databases</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-medium">
+    <div class="finding-header">
+        <h4 class="finding-title">S3 bucket versioning not enabled</h4>
+        <span class="severity-badge severity-medium">Medium</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">CKV_AWS_23</span>
+        <span class="meta-tag">terraform/s3.tf</span>
+        
+        <span class="meta-tag">📍 line 15-22</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">S3 bucket does not have versioning enabled</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Cannot recover from accidental deletions or modifications
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Enable versioning on S3 bucket</p>
+    </div>
+    
+</div>
+
+                
+                
+<div class="finding-card severity-low">
+    <div class="finding-header">
+        <h4 class="finding-title">VPC Flow Logs not enabled</h4>
+        <span class="severity-badge severity-low">Low</span>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">CKV2_AWS_6</span>
+        <span class="meta-tag">terraform/network.tf</span>
+        
+        <span class="meta-tag">📍 line 45</span>
+        
+        
+    </div>
+    
+    <p class="finding-description">VPC does not have flow logs enabled for network monitoring</p>
+    
+    
+    <div class="finding-impact">
+        <strong>Impact:</strong> Cannot monitor network traffic for security analysis
+    </div>
+    
+    
+    
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>Enable VPC Flow Logs</p>
+    </div>
+    
+</div>
+
+                
+            </div>
+            
+        </section>
+
+        
+        <footer>
+            <p>Generated by Prismatic Security Scanner v1.0.0</p>
+            <p>Report ID: test-suppressions</p>
+        </footer>
+    </div>
+</body>
+</html>

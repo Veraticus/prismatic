@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prismatic Security Report - {{.Metadata.ClientName}}</title>
+    <style>
+        {{template "styles.html"}}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="prismatic-header">
+            <h1 class="prismatic-accent">Prismatic Security Report</h1>
+            <div class="header-info">
+                <div class="client-info">
+                    <h2>{{.Metadata.ClientName}}</h2>
+                    <p class="environment">{{.Metadata.Environment}} Environment</p>
+                </div>
+                <div class="scan-info">
+                    <p>Scan Date: {{formatTime .Metadata.StartTime}}</p>
+                    <p>Duration: {{formatDuration .ScanDuration}}</p>
+                    <p>Report Generated: {{formatTime .GeneratedAt}}</p>
+                </div>
+            </div>
+        </header>
+
+        <!-- Executive Summary -->
+        <section class="executive-summary">
+            <h2>Executive Summary</h2>
+            
+            <div class="summary-cards">
+                <div class="summary-card total-findings">
+                    <h3>Total Findings</h3>
+                    <div class="big-number">{{.TotalActive}}</div>
+                    {{if gt .TotalSuppressed 0}}
+                    <p class="suppressed-note">+ {{.TotalSuppressed}} suppressed</p>
+                    {{end}}
+                </div>
+                
+                <div class="summary-card severity-breakdown">
+                    <h3>Severity Breakdown</h3>
+                    <div class="severity-grid">
+                        {{if gt .CriticalCount 0}}
+                        <div class="severity-item severity-critical">
+                            <span class="severity-icon">🔴</span>
+                            <span class="severity-label">Critical</span>
+                            <span class="severity-count">{{.CriticalCount}}</span>
+                        </div>
+                        {{end}}
+                        {{if gt .HighCount 0}}
+                        <div class="severity-item severity-high">
+                            <span class="severity-icon">🟠</span>
+                            <span class="severity-label">High</span>
+                            <span class="severity-count">{{.HighCount}}</span>
+                        </div>
+                        {{end}}
+                        {{if gt .MediumCount 0}}
+                        <div class="severity-item severity-medium">
+                            <span class="severity-icon">🟡</span>
+                            <span class="severity-label">Medium</span>
+                            <span class="severity-count">{{.MediumCount}}</span>
+                        </div>
+                        {{end}}
+                        {{if gt .LowCount 0}}
+                        <div class="severity-item severity-low">
+                            <span class="severity-icon">🔵</span>
+                            <span class="severity-label">Low</span>
+                            <span class="severity-count">{{.LowCount}}</span>
+                        </div>
+                        {{end}}
+                        {{if gt .InfoCount 0}}
+                        <div class="severity-item severity-info">
+                            <span class="severity-icon">⚪</span>
+                            <span class="severity-label">Info</span>
+                            <span class="severity-count">{{.InfoCount}}</span>
+                        </div>
+                        {{end}}
+                    </div>
+                </div>
+                
+                <div class="summary-card scan-coverage">
+                    <h3>Scan Coverage</h3>
+                    <div class="scanner-list">
+                        {{range $scanner, $result := .Metadata.Results}}
+                        <div class="scanner-status">
+                            {{if $result.Error}}
+                            <span class="status-icon">❌</span>
+                            {{else}}
+                            <span class="status-icon">✅</span>
+                            {{end}}
+                            <span>{{$scanner}}</span>
+                        </div>
+                        {{end}}
+                    </div>
+                </div>
+            </div>
+
+            {{if .TopRisks}}
+            <div class="top-risks">
+                <h3>Top Security Risks</h3>
+                <ol class="risk-list">
+                    {{range .TopRisks}}
+                    <li class="risk-item">
+                        <span class="severity-badge {{severityClass .Severity}}">{{title .Severity}}</span>
+                        <strong>{{.Title}}</strong>
+                        <span class="resource">{{truncate .Resource 60}}</span>
+                    </li>
+                    {{end}}
+                </ol>
+            </div>
+            {{end}}
+        </section>
+
+        <!-- Detailed Findings -->
+        <section class="detailed-findings">
+            <h2>Detailed Findings</h2>
+            
+            {{if .AWSFindings}}
+            <div class="findings-category">
+                <h3>🔧 AWS Infrastructure</h3>
+                {{range .AWSFindings}}
+                {{template "finding-card.html" .}}
+                {{end}}
+            </div>
+            {{end}}
+            
+            {{if .ContainerFindings}}
+            <div class="findings-category">
+                <h3>🐳 Container Security</h3>
+                {{range .ContainerFindings}}
+                {{template "finding-card.html" .}}
+                {{end}}
+            </div>
+            {{end}}
+            
+            {{if .KubernetesFindings}}
+            <div class="findings-category">
+                <h3>☸️ Kubernetes Security</h3>
+                {{range .KubernetesFindings}}
+                {{template "finding-card.html" .}}
+                {{end}}
+            </div>
+            {{end}}
+            
+            {{if .WebFindings}}
+            <div class="findings-category">
+                <h3>🌐 Web Endpoints</h3>
+                {{range .WebFindings}}
+                {{template "finding-card.html" .}}
+                {{end}}
+            </div>
+            {{end}}
+            
+            {{if .SecretsFindings}}
+            <div class="findings-category">
+                <h3>🔑 Secrets & Credentials</h3>
+                {{range .SecretsFindings}}
+                {{template "finding-card.html" .}}
+                {{end}}
+            </div>
+            {{end}}
+            
+            {{if .IaCFindings}}
+            <div class="findings-category">
+                <h3>📋 Infrastructure as Code</h3>
+                {{range .IaCFindings}}
+                {{template "finding-card.html" .}}
+                {{end}}
+            </div>
+            {{end}}
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p>Generated by Prismatic Security Scanner v1.0.0</p>
+            <p>Report ID: {{.Metadata.ID}}</p>
+        </footer>
+    </div>
+</body>
+</html>
