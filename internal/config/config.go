@@ -1,3 +1,4 @@
+// Package config provides configuration loading and validation for Prismatic.
 package config
 
 import (
@@ -70,7 +71,7 @@ type ResourceMetadata struct {
 
 // LoadConfig reads and parses a YAML configuration file.
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // Path is from trusted source (config file)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file: %w", err)
 	}

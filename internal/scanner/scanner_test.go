@@ -176,7 +176,7 @@ func TestValidateFinding(t *testing.T) {
 	}
 }
 
-func TestScannerError(t *testing.T) {
+func TestError(t *testing.T) {
 	baseErr := errors.New("base error")
 	scannerErr := NewScannerError("test-scanner", "execution", baseErr)
 
@@ -184,7 +184,7 @@ func TestScannerError(t *testing.T) {
 	assert.Equal(t, "test-scanner scanner execution error: base error", scannerErr.Error())
 
 	// Test unwrap
-	var se *ScannerError
+	var se *Error
 	assert.True(t, errors.As(scannerErr, &se))
 	assert.Equal(t, "test-scanner", se.Scanner)
 	assert.Equal(t, "execution", se.Phase)
@@ -229,7 +229,7 @@ func TestScannerInterface(t *testing.T) {
 	// Test with custom behavior
 	mock := &mockTestScanner{
 		BaseScanner: *NewBaseScanner("test", Config{}),
-		scanFunc: func(ctx context.Context) (*models.ScanResult, error) {
+		scanFunc: func(_ context.Context) (*models.ScanResult, error) {
 			return &models.ScanResult{
 				Scanner: "test",
 				Findings: []models.Finding{
@@ -244,7 +244,7 @@ func TestScannerInterface(t *testing.T) {
 				},
 			}, nil
 		},
-		parseFunc: func(raw []byte) ([]models.Finding, error) {
+		parseFunc: func(_ []byte) ([]models.Finding, error) {
 			return []models.Finding{
 				{
 					ID: "parsed-finding",

@@ -137,7 +137,7 @@ suppressions:
 			// Create temp file
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "config.yaml")
-			err := os.WriteFile(configFile, []byte(tt.yaml), 0644)
+			err := os.WriteFile(configFile, []byte(tt.yaml), 0600)
 			require.NoError(t, err)
 
 			// Load config

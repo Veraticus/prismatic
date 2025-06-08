@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"testing"
 
 	"github.com/Veraticus/prismatic/internal/models"
@@ -44,6 +45,7 @@ func TestTrivyScanner_ParseResults(t *testing.T) {
 			}`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				finding := findings[0]
 				assert.Equal(t, "vulnerability", finding.Type)
 				assert.Equal(t, "high", finding.Severity)
@@ -75,6 +77,7 @@ func TestTrivyScanner_ParseResults(t *testing.T) {
 			}`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				finding := findings[0]
 				assert.Equal(t, "misconfiguration", finding.Type)
 				assert.Equal(t, "medium", finding.Severity)
@@ -102,6 +105,7 @@ func TestTrivyScanner_ParseResults(t *testing.T) {
 			}`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				finding := findings[0]
 				assert.Equal(t, "secret", finding.Type)
 				assert.Equal(t, "critical", finding.Severity)
@@ -126,6 +130,7 @@ func TestTrivyScanner_ParseResults(t *testing.T) {
 			}`,
 			expected: 3,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Len(t, findings, 3)
 
 				// Check we have different types
@@ -163,6 +168,7 @@ func TestTrivyScanner_ParseResults(t *testing.T) {
 			}`,
 			expected: 2,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				// First finding with RFC3339 date
 				finding1 := findings[0]
 				assert.False(t, finding1.PublishedDate.IsZero())
@@ -194,12 +200,17 @@ func TestTrivyScanner_ParseResults_InvalidJSON(t *testing.T) {
 
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
-	assert.IsType(t, &ScannerError{}, err)
+	assert.IsType(t, &Error{}, err)
 }
 
 func TestTrivyScanner_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")
+	}
+
+	// Check if Trivy is installed
+	if _, err := exec.LookPath("trivy"); err != nil {
+		t.Skip("Trivy not found in PATH, skipping integration test")
 	}
 
 	// This test requires Trivy to be installed
@@ -264,5 +275,9 @@ func TestTrivyReport_ComplexStructure(t *testing.T) {
 	assert.Equal(t, "CVE-2023-1234", vuln.VulnerabilityID)
 	assert.Len(t, vuln.References, 2)
 	assert.NotNil(t, vuln.CVSS)
-	assert.Equal(t, 9.8, vuln.CVSS["nvd"].(map[string]interface{})["V3Score"])
+	if nvd, ok := vuln.CVSS["nvd"].(map[string]any); ok {
+		assert.Equal(t, 9.8, nvd["V3Score"])
+	} else {
+		t.Error("Expected CVSS nvd to be a map[string]any")
+	}
 }

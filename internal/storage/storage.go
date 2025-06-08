@@ -1,3 +1,4 @@
+// Package storage handles persistence of scan results and findings.
 package storage
 
 import (
@@ -26,12 +27,12 @@ func NewStorage(baseDir string) *Storage {
 // SaveScanResults saves scan results to the output directory.
 func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadata) error {
 	// Create output directory structure
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
 	rawDir := filepath.Join(outputDir, "raw")
-	if err := os.MkdirAll(rawDir, 0755); err != nil {
+	if err := os.MkdirAll(rawDir, 0750); err != nil {
 		return fmt.Errorf("creating raw directory: %w", err)
 	}
 
@@ -46,7 +47,7 @@ func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadat
 	for scanner, result := range metadata.Results {
 		if len(result.RawOutput) > 0 {
 			rawPath := filepath.Join(rawDir, fmt.Sprintf("%s.json", scanner))
-			if err := os.WriteFile(rawPath, result.RawOutput, 0644); err != nil {
+			if err := os.WriteFile(rawPath, result.RawOutput, 0600); err != nil {
 				logger.Warn("Failed to save raw output", "scanner", scanner, "error", err)
 			} else {
 				logger.Debug("Saved raw output", "scanner", scanner, "path", rawPath)
@@ -198,8 +199,8 @@ func (s *Storage) consolidateFindings(metadata *models.ScanMetadata) []models.Fi
 }
 
 // saveJSON saves data as JSON to a file.
-func (s *Storage) saveJSON(path string, data interface{}) (err error) {
-	file, err := os.Create(path)
+func (s *Storage) saveJSON(path string, data any) (err error) {
+	file, err := os.Create(path) //nolint:gosec // Path is internally generated and validated //nolint:gosec // Path is internally generated and validated
 	if err != nil {
 		return err
 	}
@@ -215,8 +216,8 @@ func (s *Storage) saveJSON(path string, data interface{}) (err error) {
 }
 
 // loadJSON loads JSON data from a file.
-func (s *Storage) loadJSON(path string, data interface{}) (err error) {
-	file, err := os.Open(path)
+func (s *Storage) loadJSON(path string, data any) (err error) {
+	file, err := os.Open(path) //nolint:gosec // Path is internally generated and validated
 	if err != nil {
 		return err
 	}
@@ -231,7 +232,7 @@ func (s *Storage) loadJSON(path string, data interface{}) (err error) {
 
 // saveScanLog saves a human-readable scan log.
 func (s *Storage) saveScanLog(path string, metadata *models.ScanMetadata) (err error) {
-	file, err := os.Create(path)
+	file, err := os.Create(path) //nolint:gosec // Path is internally generated and validated
 	if err != nil {
 		return err
 	}
@@ -242,7 +243,7 @@ func (s *Storage) saveScanLog(path string, metadata *models.ScanMetadata) (err e
 	}()
 
 	// Use a helper to check fprintf errors
-	w := func(format string, args ...interface{}) error {
+	w := func(format string, args ...any) error {
 		_, err := fmt.Fprintf(file, format, args...)
 		return err
 	}
@@ -262,34 +263,58 @@ func (s *Storage) saveScanLog(path string, metadata *models.ScanMetadata) (err e
 	if err := w("Start Time: %s\n", metadata.StartTime.Format("2006-01-02 15:04:05")); err != nil {
 		return fmt.Errorf("writing start time: %w", err)
 	}
-	fmt.Fprintf(file, "End Time: %s\n", metadata.EndTime.Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(file, "Duration: %s\n\n", metadata.EndTime.Sub(metadata.StartTime))
+	if err := w("End Time: %s\n", metadata.EndTime.Format("2006-01-02 15:04:05")); err != nil {
+		return fmt.Errorf("writing end time: %w", err)
+	}
+	if err := w("Duration: %s\n\n", metadata.EndTime.Sub(metadata.StartTime)); err != nil {
+		return fmt.Errorf("writing duration: %w", err)
+	}
 
-	fmt.Fprintf(file, "Scanners Run:\n")
+	if err := w("Scanners Run:\n"); err != nil {
+		return fmt.Errorf("writing scanners header: %w", err)
+	}
 	for _, scanner := range metadata.Scanners {
 		status := "✓"
 		if result, ok := metadata.Results[scanner]; ok && result.Error != "" {
 			status = "✗"
 		}
-		fmt.Fprintf(file, "  %s %s\n", status, scanner)
+		if err := w("  %s %s\n", status, scanner); err != nil {
+			return fmt.Errorf("writing scanner status: %w", err)
+		}
 	}
 
-	fmt.Fprintf(file, "\nSummary:\n")
-	fmt.Fprintf(file, "  Total Findings: %d\n", metadata.Summary.TotalFindings)
-	fmt.Fprintf(file, "  Suppressed: %d\n", metadata.Summary.SuppressedCount)
-	fmt.Fprintf(file, "\nBy Severity:\n")
+	if err := w("\nSummary:\n"); err != nil {
+		return fmt.Errorf("writing summary header: %w", err)
+	}
+	if err := w("  Total Findings: %d\n", metadata.Summary.TotalFindings); err != nil {
+		return fmt.Errorf("writing total findings: %w", err)
+	}
+	if err := w("  Suppressed: %d\n", metadata.Summary.SuppressedCount); err != nil {
+		return fmt.Errorf("writing suppressed count: %w", err)
+	}
+	if err := w("\nBy Severity:\n"); err != nil {
+		return fmt.Errorf("writing severity header: %w", err)
+	}
 	for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
 		if count, ok := metadata.Summary.BySeverity[sev]; ok && count > 0 {
-			fmt.Fprintf(file, "  %s: %d\n", sev, count)
+			if err := w("  %s: %d\n", sev, count); err != nil {
+				return fmt.Errorf("writing severity count: %w", err)
+			}
 		}
 	}
 
 	if len(metadata.Summary.FailedScanners) > 0 {
-		fmt.Fprintf(file, "\nFailed Scanners:\n")
+		if err := w("\nFailed Scanners:\n"); err != nil {
+			return fmt.Errorf("writing failed scanners header: %w", err)
+		}
 		for _, scanner := range metadata.Summary.FailedScanners {
-			fmt.Fprintf(file, "  - %s\n", scanner)
+			if err := w("  - %s\n", scanner); err != nil {
+				return fmt.Errorf("writing failed scanner: %w", err)
+			}
 			if result, ok := metadata.Results[scanner]; ok && result.Error != "" {
-				fmt.Fprintf(file, "    Error: %s\n", result.Error)
+				if err := w("    Error: %s\n", result.Error); err != nil {
+					return fmt.Errorf("writing scanner error: %w", err)
+				}
 			}
 		}
 	}

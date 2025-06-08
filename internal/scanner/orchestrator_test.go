@@ -255,7 +255,7 @@ func TestRunScans(t *testing.T) {
 	// Create test scanners
 	successScanner := &mockTestScanner{
 		BaseScanner: *NewBaseScanner("success-scanner", Config{}),
-		scanFunc: func(ctx context.Context) (*models.ScanResult, error) {
+		scanFunc: func(_ context.Context) (*models.ScanResult, error) {
 			return &models.ScanResult{
 				Scanner:   "success-scanner",
 				StartTime: time.Now(),
@@ -276,7 +276,7 @@ func TestRunScans(t *testing.T) {
 
 	failScanner := &mockTestScanner{
 		BaseScanner: *NewBaseScanner("fail-scanner", Config{}),
-		scanFunc: func(ctx context.Context) (*models.ScanResult, error) {
+		scanFunc: func(_ context.Context) (*models.ScanResult, error) {
 			return nil, errors.New("scanner failed")
 		},
 	}
@@ -542,6 +542,7 @@ func TestEnrichFindings(t *testing.T) {
 			},
 			expectedEnriched: 3,
 			verifyEnrichment: func(t *testing.T, enriched []models.EnrichedFinding) {
+				t.Helper()
 				// Check nginx enrichment
 				nginx := enriched[0]
 				assert.Equal(t, "nginx:latest", nginx.Resource)
@@ -602,6 +603,7 @@ func TestEnrichFindings(t *testing.T) {
 			},
 			expectedEnriched: 2,
 			verifyEnrichment: func(t *testing.T, enriched []models.EnrichedFinding) {
+				t.Helper()
 				// Both findings should be enriched, regardless of suppression status
 				for _, ef := range enriched {
 					assert.Equal(t, "web-team", ef.BusinessContext.Owner)

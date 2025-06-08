@@ -128,8 +128,7 @@ func TestDateParsing(t *testing.T) {
 			if tt.scanner == "trivy" {
 				// Test Trivy date parsing
 				vuln := TrivyVulnerability{
-					VulnerabilityID: "CVE-2023-1234",
-					PublishedDate:   tt.dateString,
+					PublishedDate: tt.dateString,
 				}
 
 				finding := models.NewFinding("trivy", "vulnerability", "test", "test")

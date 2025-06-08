@@ -161,7 +161,7 @@ func (s *NucleiScanner) resultToFinding(result nucleiResult) *models.Finding {
 		finding.Metadata["tags"] = result.Info.Tags
 	}
 
-	if result.ExtractedResults != nil && len(result.ExtractedResults) > 0 {
+	if len(result.ExtractedResults) > 0 {
 		finding.Metadata["extracted"] = strings.Join(result.ExtractedResults, ", ")
 	}
 
@@ -182,7 +182,7 @@ func (s *NucleiScanner) buildDescription(result nucleiResult) string {
 		parts = append(parts, fmt.Sprintf("Reference: %s", result.Info.Reference))
 	}
 
-	if result.ExtractedResults != nil && len(result.ExtractedResults) > 0 {
+	if len(result.ExtractedResults) > 0 {
 		parts = append(parts, fmt.Sprintf("Extracted: %s", strings.Join(result.ExtractedResults, ", ")))
 	}
 

@@ -79,7 +79,7 @@ suppressions:
 			// Create temp file
 			tmpDir := t.TempDir()
 			modsFile := filepath.Join(tmpDir, "modifications.yaml")
-			err := os.WriteFile(modsFile, []byte(tt.yaml), 0644)
+			err := os.WriteFile(modsFile, []byte(tt.yaml), 0600)
 			require.NoError(t, err)
 
 			// Load modifications
@@ -273,7 +273,7 @@ comments:
 
 	tmpDir := t.TempDir()
 	modsFile := filepath.Join(tmpDir, "mods.yaml")
-	err := os.WriteFile(modsFile, []byte(modsYAML), 0644)
+	err := os.WriteFile(modsFile, []byte(modsYAML), 0600)
 	require.NoError(t, err)
 
 	// Load and apply modifications

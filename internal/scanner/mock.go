@@ -12,7 +12,6 @@ import (
 
 // MockScanner generates realistic fake findings for testing.
 type MockScanner struct {
-	config interface{}
 	*BaseScanner
 	scannerType string
 }
@@ -31,7 +30,7 @@ func (m *MockScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 
 	// Simulate some scanning time
 	select {
-	case <-time.After(time.Duration(rand.Intn(3)+1) * time.Second):
+	case <-time.After(time.Duration(rand.Intn(3)+1) * time.Second): //nolint:gosec // Weak random is acceptable for mock delays
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -223,7 +222,7 @@ func (m *MockScanner) generateSecretsFindings() []models.Finding {
 	findings := []models.Finding{}
 
 	// Occasionally add a finding
-	if rand.Float32() < 0.3 {
+	if rand.Float32() < 0.3 { //nolint:gosec // Weak random is acceptable for mock data
 		finding := models.NewFinding("gitleaks", "generic-api-key", "src/config/config.js", "line 42")
 		finding.Severity = "high"
 		finding.Title = "Potential API key found in source code"
@@ -266,7 +265,7 @@ func (m *MockScanner) generateIaCFindings() []models.Finding {
 
 func (m *MockScanner) generateGenericFindings() []models.Finding {
 	severities := []string{"critical", "high", "medium", "low", "info"}
-	findings := make([]models.Finding, rand.Intn(5)+3)
+	findings := make([]models.Finding, rand.Intn(5)+3) //nolint:gosec // Weak random is acceptable for mock data
 
 	for i := range findings {
 		finding := models.NewFinding(
@@ -275,7 +274,7 @@ func (m *MockScanner) generateGenericFindings() []models.Finding {
 			fmt.Sprintf("resource-%d", i+1),
 			"",
 		)
-		finding.Severity = severities[rand.Intn(len(severities))]
+		finding.Severity = severities[rand.Intn(len(severities))] //nolint:gosec // Weak random is acceptable for mock data
 		finding.Title = fmt.Sprintf("Mock finding %d from %s", i+1, m.scannerType)
 		finding.Description = "This is a mock finding for testing purposes"
 		finding.Remediation = "No action needed - this is a mock finding"

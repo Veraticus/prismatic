@@ -92,6 +92,7 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 			}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				f := findings[0]
 				assert.Equal(t, "kubescape", f.Scanner)
 				assert.Equal(t, "forbidden-capabilities", f.Type)
@@ -151,6 +152,7 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 			}`,
 			expectedCount: 2,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Equal(t, "Pod/ns1/pod1", findings[0].Resource)
 				assert.Equal(t, "Pod/ns2/pod2", findings[1].Resource)
 				assert.Equal(t, "non-root-containers", findings[0].Type)
@@ -188,6 +190,7 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 			}`,
 			expectedCount: 2,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				// Low severity (score 3.0)
 				assert.Equal(t, "low", findings[0].Severity)
 				// Critical severity (score 9.5)
@@ -214,6 +217,7 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 			}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Contains(t, findings[0].Framework, "NSA")
 			},
 		},
@@ -236,6 +240,7 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 			}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Equal(t, "ClusterRoleBinding/cluster-admin-binding", findings[0].Resource)
 				assert.Equal(t, "", findings[0].Metadata["namespace"])
 			},
@@ -263,7 +268,7 @@ func TestKubescapeScanner_ParseResults_InvalidJSON(t *testing.T) {
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
 
-	var scannerErr *ScannerError
+	var scannerErr *Error
 	assert.ErrorAs(t, err, &scannerErr)
 	assert.Equal(t, "kubescape", scannerErr.Scanner)
 	assert.Equal(t, "parsing", scannerErr.Phase)

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // ProwlerScanner implements AWS security scanning using Prowler.
@@ -58,7 +60,7 @@ func (s *ProwlerScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		if err != nil {
 			// Log error but continue with other profiles
 			if s.config.Debug {
-				fmt.Printf("Prowler scan failed for profile %s: %v\n", profile, err)
+				logger.Warn("Prowler scan failed", "profile", profile, "error", err)
 			}
 			continue
 		}
@@ -66,7 +68,7 @@ func (s *ProwlerScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		findings, err := s.ParseResults(output)
 		if err != nil {
 			if s.config.Debug {
-				fmt.Printf("Failed to parse Prowler results for profile %s: %v\n", profile, err)
+				logger.Warn("Failed to parse Prowler results", "profile", profile, "error", err)
 			}
 			continue
 		}
@@ -93,7 +95,7 @@ func (s *ProwlerScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 // parseOCSFFormat parses Prowler v4 OCSF JSON output.
 func (s *ProwlerScanner) parseOCSFFormat(raw []byte) ([]models.Finding, error) {
 	// First check if this is OCSF format by looking for metadata field
-	var testFormat []map[string]interface{}
+	var testFormat []map[string]any
 	if err := json.Unmarshal(raw, &testFormat); err == nil && len(testFormat) > 0 {
 		if _, hasMetadata := testFormat[0]["metadata"]; !hasMetadata {
 			// This is not OCSF format
@@ -112,7 +114,8 @@ func (s *ProwlerScanner) parseOCSFFormat(raw []byte) ([]models.Finding, error) {
 		}
 	}
 
-	var findings []models.Finding
+	// Pre-allocate with total checks size to avoid reallocations during filtering
+	findings := make([]models.Finding, 0, len(checks))
 
 	for _, check := range checks {
 		// Only process failed checks
@@ -171,7 +174,8 @@ func (s *ProwlerScanner) parseNativeFormat(raw []byte) ([]models.Finding, error)
 		}
 	}
 
-	var findings []models.Finding
+	// Pre-allocate with total checks size to avoid reallocations during filtering
+	findings := make([]models.Finding, 0, len(checks))
 
 	for _, check := range checks {
 		// Only process failed checks
@@ -306,9 +310,9 @@ func (s *ProwlerScanner) scanProfile(ctx context.Context, profile string) ([]byt
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Prowler returns non-zero exit code when it finds issues, which is expected
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 3 {
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok || exitErr.ExitCode() != 3 {
 			// Exit code 3 means findings were found, which is expected
-		} else {
 			return nil, fmt.Errorf("prowler failed: %s", string(output))
 		}
 	}
@@ -324,7 +328,7 @@ func (s *ProwlerScanner) scanProfile(ctx context.Context, profile string) ([]byt
 	}
 
 	// Read the most recent output file
-	return exec.Command("cat", outputFiles[len(outputFiles)-1]).Output()
+	return os.ReadFile(outputFiles[len(outputFiles)-1])
 }
 
 // getVersion returns the Prowler version.

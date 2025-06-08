@@ -197,7 +197,7 @@ func (o *Orchestrator) RunScans(ctx context.Context) (*models.ScanMetadata, erro
 // processResult processes a single scanner result and updates metadata.
 func (o *Orchestrator) processResult(result *models.ScanResult, metadata *models.ScanMetadata) {
 	// Apply suppressions and severity overrides
-	var processedFindings []models.Finding
+	processedFindings := make([]models.Finding, 0, len(result.Findings))
 
 	for _, finding := range result.Findings {
 		// Check if suppressed using the finding's discovered date
@@ -250,7 +250,7 @@ func (o *Orchestrator) EnrichFindings(metadata *models.ScanMetadata) []models.En
 	var enrichedFindings []models.EnrichedFinding
 
 	// If no metadata enrichment is configured, return empty slice (not an error)
-	if o.config.MetadataEnrichment.Resources == nil || len(o.config.MetadataEnrichment.Resources) == 0 {
+	if len(o.config.MetadataEnrichment.Resources) == 0 {
 		return enrichedFindings
 	}
 

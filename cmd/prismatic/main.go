@@ -1,3 +1,7 @@
+// Package main is the entry point for the Prismatic security scanner CLI.
+// Prismatic orchestrates multiple open-source security tools to perform comprehensive
+// security assessments across AWS, Kubernetes, containers, infrastructure-as-code,
+// and web applications, then generates unified reports from the scan results.
 package main
 
 import (
@@ -44,7 +48,7 @@ func main() {
 	}
 
 	if showVersion {
-		fmt.Printf("prismatic version %s (built %s)\n", version, buildTime)
+		fmt.Printf("prismatic version %s (built %s)\n", version, buildTime) //nolint:forbidigo
 		os.Exit(0)
 	}
 
@@ -98,6 +102,7 @@ func main() {
 }
 
 func printUsage() {
+	//nolint:forbidigo
 	fmt.Println(`🔍 Prismatic Security Scanner
 
 Usage:

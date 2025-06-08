@@ -1,3 +1,7 @@
+// Package report provides functionality for generating HTML security reports from scan results.
+// It includes support for applying manual modifications (suppressions, severity overrides, and
+// comments) to findings, organizing findings by category and severity, and rendering
+// professional HTML reports with a "prismatic" theme optimized for AI readability.
 package report
 
 import (
@@ -9,8 +13,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/Veraticus/prismatic/internal/models"
 	"github.com/Veraticus/prismatic/internal/storage"
@@ -106,11 +112,11 @@ func (g *HTMLGenerator) Generate(outputPath string) error {
 	data := g.prepareTemplateData()
 
 	// Create output file
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+	if err = os.MkdirAll(filepath.Dir(outputPath), 0750); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
-	file, err := os.Create(outputPath)
+	file, err := os.Create(outputPath) //nolint:gosec // outputPath is validated by the caller
 	if err != nil {
 		return fmt.Errorf("creating output file: %w", err)
 	}
@@ -155,7 +161,7 @@ func (g *HTMLGenerator) templateFuncs() template.FuncMap {
 		"formatDuration": func(d time.Duration) string {
 			return d.Round(time.Second).String()
 		},
-		"title": strings.Title,
+		"title": cases.Title(language.English).String,
 		"truncate": func(s string, n int) string {
 			if len(s) <= n {
 				return s
@@ -291,8 +297,8 @@ func sortFindings(findings []models.Finding) {
 }
 
 // loadJSON is a helper to load JSON files.
-func loadJSON(path string, v interface{}) error {
-	data, err := os.ReadFile(path)
+func loadJSON(path string, v any) error {
+	data, err := os.ReadFile(path) //nolint:gosec // path is internally generated and validated
 	if err != nil {
 		return err
 	}

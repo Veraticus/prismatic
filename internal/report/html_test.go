@@ -18,7 +18,7 @@ func TestNewHTMLGenerator(t *testing.T) {
 
 	// Create data directory structure
 	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0755)
+	_ = os.MkdirAll(dataDir, 0750)
 
 	// Save current working directory and change to temp
 	oldWd, _ := os.Getwd()
@@ -96,7 +96,7 @@ func TestGenerate(t *testing.T) {
 
 	// Create data directory structure
 	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0755)
+	_ = os.MkdirAll(dataDir, 0750)
 
 	// Save current working directory and change to temp
 	oldWd, _ := os.Getwd()
@@ -308,7 +308,7 @@ func TestGenerate(t *testing.T) {
 	assert.FileExists(t, outputPath)
 
 	// Read and verify content
-	content, err := os.ReadFile(outputPath)
+	content, err := os.ReadFile(outputPath) //nolint:gosec // Test file path
 	require.NoError(t, err)
 
 	html := string(content)
@@ -348,12 +348,14 @@ func TestTemplateFuncs(t *testing.T) {
 	funcs := gen.templateFuncs()
 
 	// Test severityClass
-	severityClass := funcs["severityClass"].(func(string) string)
+	severityClass, ok := funcs["severityClass"].(func(string) string)
+	require.True(t, ok, "severityClass function should exist")
 	assert.Equal(t, "severity-critical", severityClass("critical"))
 	assert.Equal(t, "severity-high", severityClass("high"))
 
 	// Test severityIcon
-	severityIcon := funcs["severityIcon"].(func(string) string)
+	severityIcon, ok := funcs["severityIcon"].(func(string) string)
+	require.True(t, ok, "severityIcon function should exist")
 	assert.Equal(t, "🔴", severityIcon("critical"))
 	assert.Equal(t, "🟠", severityIcon("high"))
 	assert.Equal(t, "🟡", severityIcon("medium"))
@@ -362,17 +364,20 @@ func TestTemplateFuncs(t *testing.T) {
 	assert.Equal(t, "⚪", severityIcon("unknown"))
 
 	// Test formatTime
-	formatTime := funcs["formatTime"].(func(time.Time) string)
+	formatTime, ok := funcs["formatTime"].(func(time.Time) string)
+	require.True(t, ok, "formatTime function should exist")
 	testTime := time.Date(2024, 1, 1, 10, 30, 45, 0, time.UTC)
 	assert.Equal(t, "2024-01-01 10:30:45", formatTime(testTime))
 
 	// Test formatDuration
-	formatDuration := funcs["formatDuration"].(func(time.Duration) string)
+	formatDuration, ok := funcs["formatDuration"].(func(time.Duration) string)
+	require.True(t, ok, "formatDuration function should exist")
 	assert.Equal(t, "5m30s", formatDuration(5*time.Minute+30*time.Second))
 	assert.Equal(t, "1h0m0s", formatDuration(1*time.Hour))
 
 	// Test truncate
-	truncate := funcs["truncate"].(func(string, int) string)
+	truncate, ok := funcs["truncate"].(func(string, int) string)
+	require.True(t, ok, "truncate function should exist")
 	assert.Equal(t, "hello", truncate("hello", 10))
 	assert.Equal(t, "hello worl...", truncate("hello world test", 10))
 }
@@ -473,8 +478,8 @@ func TestSortFindings(t *testing.T) {
 }
 
 // saveJSONHelper is a test helper to save JSON data.
-func saveJSONHelper(path string, data interface{}) error {
-	file, err := os.Create(path)
+func saveJSONHelper(path string, data any) error {
+	file, err := os.Create(path) //nolint:gosec // Test helper function
 	if err != nil {
 		return err
 	}
@@ -514,7 +519,7 @@ func TestGenerateWithInvalidOutputPath(t *testing.T) {
 
 	// Create data directory structure
 	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0755)
+	_ = os.MkdirAll(dataDir, 0750)
 
 	// Save current working directory and change to temp
 	oldWd, _ := os.Getwd()

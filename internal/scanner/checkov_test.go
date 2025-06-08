@@ -52,6 +52,7 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			}`,
 			wantFindings: 1,
 			validateFirst: func(t *testing.T, f models.Finding) {
+				t.Helper()
 				assert.Equal(t, "checkov", f.Scanner)
 				assert.Equal(t, "aws-misconfiguration", f.Type)
 				assert.Equal(t, models.SeverityMedium, f.Severity)
@@ -92,6 +93,7 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			}`,
 			wantFindings: 1,
 			validateFirst: func(t *testing.T, f models.Finding) {
+				t.Helper()
 				assert.Equal(t, "kubernetes-misconfiguration", f.Type)
 				assert.Equal(t, models.SeverityHigh, f.Severity)
 				assert.Contains(t, f.Title, "PodSecurityPolicy")
@@ -125,6 +127,7 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			}`,
 			wantFindings: 1,
 			validateFirst: func(t *testing.T, f models.Finding) {
+				t.Helper()
 				assert.Equal(t, "container-misconfiguration", f.Type)
 				assert.Equal(t, models.SeverityLow, f.Severity)
 				assert.Contains(t, f.Title, "HEALTHCHECK")
@@ -148,6 +151,7 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			}`,
 			wantFindings: 1,
 			validateFirst: func(t *testing.T, f models.Finding) {
+				t.Helper()
 				assert.Equal(t, "exposed-secret", f.Type)
 				assert.Equal(t, models.SeverityHigh, f.Severity)
 				assert.Contains(t, f.Title, "Exposed Base64 High Entropy String")
@@ -196,6 +200,7 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			}`,
 			wantFindings: 2,
 			validateFirst: func(t *testing.T, f models.Finding) {
+				t.Helper()
 				// First finding should be terraform
 				assert.Equal(t, "aws-misconfiguration", f.Type)
 				assert.Equal(t, models.SeverityCritical, f.Severity)
@@ -227,6 +232,7 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			}`,
 			wantFindings: 1,
 			validateFirst: func(t *testing.T, f models.Finding) {
+				t.Helper()
 				assert.Equal(t, "encryption-misconfiguration", f.Type)
 				assert.Contains(t, f.Title, "encrypted at rest")
 			},
@@ -256,6 +262,7 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			}`,
 			wantFindings: 1,
 			validateFirst: func(t *testing.T, f models.Finding) {
+				t.Helper()
 				assert.Equal(t, "access-control-misconfiguration", f.Type)
 			},
 		},
@@ -362,7 +369,7 @@ resource "aws_security_group" "wide_open" {
   }
 }
 `
-	err = os.WriteFile(tmpDir+"/main.tf", []byte(tfContent), 0644)
+	err = os.WriteFile(tmpDir+"/main.tf", []byte(tfContent), 0600)
 	require.NoError(t, err)
 
 	// Create a sample Dockerfile with issues
@@ -371,7 +378,7 @@ RUN apt-get update && apt-get install -y curl
 EXPOSE 8080
 CMD ["bash"]
 `
-	err = os.WriteFile(tmpDir+"/Dockerfile", []byte(dockerContent), 0644)
+	err = os.WriteFile(tmpDir+"/Dockerfile", []byte(dockerContent), 0600)
 	require.NoError(t, err)
 
 	scanner := NewCheckovScanner(

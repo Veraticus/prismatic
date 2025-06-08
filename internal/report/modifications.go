@@ -41,7 +41,7 @@ type SeverityOverride struct {
 
 // LoadModifications loads modifications from a YAML file.
 func LoadModifications(path string) (*Modifications, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is from trusted user input
 	if err != nil {
 		return nil, fmt.Errorf("reading modifications file: %w", err)
 	}
@@ -144,7 +144,7 @@ func SaveModifications(path string, mods *Modifications) error {
 	}
 
 	// Write to file
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("writing modifications file: %w", err)
 	}
 

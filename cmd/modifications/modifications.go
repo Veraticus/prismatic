@@ -1,3 +1,6 @@
+// Package modifications provides the CLI command for generating example modifications files.
+// These files allow users to suppress false positives, override severity levels, and add
+// comments to security findings before generating reports.
 package modifications
 
 import (
@@ -40,7 +43,7 @@ Examples:
 
 	// Ensure output directory exists
 	if dir := filepath.Dir(outputPath); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("creating output directory: %w", err)
 		}
 	}
@@ -51,12 +54,12 @@ Examples:
 	}
 
 	logger.Info("Generated example modifications file", "path", outputPath)
-	fmt.Printf("✅ Example modifications file created: %s\n\n", outputPath)
-	fmt.Println("Edit this file to:")
-	fmt.Println("  - Suppress false positives")
-	fmt.Println("  - Override severity levels")
-	fmt.Println("  - Add comments to findings")
-	fmt.Println("\nThen use with: prismatic report --scan latest --modifications", outputPath)
+	logger.Info("✅ Example modifications file created", "path", outputPath)
+	logger.Info("Edit this file to:")
+	logger.Info("  - Suppress false positives")
+	logger.Info("  - Override severity levels")
+	logger.Info("  - Add comments to findings")
+	logger.Info("Then use with: prismatic report --scan latest --modifications", "path", outputPath)
 
 	return nil
 }

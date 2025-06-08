@@ -1,3 +1,4 @@
+// Package models contains data structures for Prismatic security findings.
 package models
 
 import (

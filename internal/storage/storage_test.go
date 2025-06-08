@@ -89,7 +89,7 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 
 	// Verify findings.json content
 	var findings []models.Finding
-	findingsData, err := os.ReadFile(filepath.Join(outputDir, "findings.json"))
+	findingsData, err := os.ReadFile(filepath.Join(outputDir, "findings.json")) //nolint:gosec // Test file path
 	require.NoError(t, err)
 	err = json.Unmarshal(findingsData, &findings)
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 	assert.Equal(t, "finding-1", findings[0].ID)
 
 	// Verify scan.log content
-	logContent, err := os.ReadFile(filepath.Join(outputDir, "scan.log"))
+	logContent, err := os.ReadFile(filepath.Join(outputDir, "scan.log")) //nolint:gosec // Test file path
 	require.NoError(t, err)
 	assert.Contains(t, string(logContent), "Client: test-client")
 	assert.Contains(t, string(logContent), "Environment: test-env")
@@ -153,7 +153,7 @@ func TestFindLatestScan(t *testing.T) {
 
 	// Create scans directory with some scan directories
 	scansDir := filepath.Join(tempDir, "scans")
-	require.NoError(t, os.MkdirAll(scansDir, 0755))
+	require.NoError(t, os.MkdirAll(scansDir, 0750))
 
 	// Create scan directories with different timestamps
 	scanDirs := []string{
@@ -164,11 +164,11 @@ func TestFindLatestScan(t *testing.T) {
 	}
 
 	for _, dir := range scanDirs {
-		require.NoError(t, os.MkdirAll(filepath.Join(scansDir, dir), 0755))
+		require.NoError(t, os.MkdirAll(filepath.Join(scansDir, dir), 0750))
 	}
 
 	// Also create a file (should be ignored)
-	require.NoError(t, os.WriteFile(filepath.Join(scansDir, "not-a-directory.txt"), []byte("test"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(scansDir, "not-a-directory.txt"), []byte("test"), 0600))
 
 	// Find latest scan
 	latest, err := storage.FindLatestScan()
@@ -177,7 +177,7 @@ func TestFindLatestScan(t *testing.T) {
 
 	// Test with empty scans directory
 	require.NoError(t, os.RemoveAll(scansDir))
-	require.NoError(t, os.MkdirAll(scansDir, 0755))
+	require.NoError(t, os.MkdirAll(scansDir, 0750))
 	_, err = storage.FindLatestScan()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no scan directories found")
@@ -189,7 +189,7 @@ func TestListScans(t *testing.T) {
 
 	// Create scans directory
 	scansDir := filepath.Join(tempDir, "scans")
-	require.NoError(t, os.MkdirAll(scansDir, 0755))
+	require.NoError(t, os.MkdirAll(scansDir, 0750))
 
 	// Create test scans
 	testScans := []struct {
@@ -237,14 +237,14 @@ func TestListScans(t *testing.T) {
 	// Create scan directories with metadata
 	for _, scan := range testScans {
 		scanDir := filepath.Join(scansDir, scan.dir)
-		require.NoError(t, os.MkdirAll(scanDir, 0755))
+		require.NoError(t, os.MkdirAll(scanDir, 0750))
 		require.NoError(t, storage.saveJSON(filepath.Join(scanDir, "metadata.json"), scan.metadata))
 	}
 
 	// Also create an invalid directory (should be skipped)
 	invalidDir := filepath.Join(scansDir, "invalid-scan")
-	require.NoError(t, os.MkdirAll(invalidDir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(invalidDir, "metadata.json"), []byte("invalid json"), 0644))
+	require.NoError(t, os.MkdirAll(invalidDir, 0750))
+	require.NoError(t, os.WriteFile(filepath.Join(invalidDir, "metadata.json"), []byte("invalid json"), 0600))
 
 	// Test listing all scans
 	scans, err := storage.ListScans("", 0)
@@ -278,7 +278,7 @@ func TestListScans(t *testing.T) {
 
 	// Test with non-existent directory
 	storage2 := NewStorage("/non/existent/path")
-	scans, err = storage2.ListScans("", 0)
+	_, err = storage2.ListScans("", 0)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "reading scans directory")
 }
@@ -331,7 +331,7 @@ func TestSaveLoadErrorHandling(t *testing.T) {
 
 	// Test loading invalid JSON
 	tempDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "metadata.json"), []byte("invalid json"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "metadata.json"), []byte("invalid json"), 0600))
 	_, err = storage.LoadScanResults(tempDir)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "loading metadata")

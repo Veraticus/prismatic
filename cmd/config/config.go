@@ -1,3 +1,4 @@
+// Package config implements the configuration validation command.
 package config
 
 import (
@@ -54,7 +55,7 @@ Examples:
 	}
 
 	// Load and validate configuration
-	fmt.Printf("🔍 Validating configuration: %s\n\n", configFile)
+	logger.Info("Validating configuration", "file", configFile)
 
 	cfg, err := config.LoadConfig(configFile)
 	if err != nil {
@@ -64,57 +65,57 @@ Examples:
 	// Display validation results
 	printValidationResults(cfg)
 
-	fmt.Println("\n✅ Configuration is valid!")
+	logger.Info("Configuration is valid!")
 	return nil
 }
 
 func printValidationResults(cfg *config.Config) {
 	// Client information
-	fmt.Println("📋 Client Information:")
-	fmt.Printf("   Name: %s\n", cfg.Client.Name)
-	fmt.Printf("   Environment: %s\n", cfg.Client.Environment)
+	logger.Info("Client Information",
+		"name", cfg.Client.Name,
+		"environment", cfg.Client.Environment)
 
 	// AWS configuration
 	if cfg.AWS != nil && (len(cfg.AWS.Profiles) > 0 || len(cfg.AWS.Regions) > 0) {
-		fmt.Println("\n☁️  AWS Configuration:")
+		logger.Info("AWS Configuration detected")
 		if len(cfg.AWS.Profiles) > 0 {
-			fmt.Printf("   Profiles: %s\n", strings.Join(cfg.AWS.Profiles, ", "))
+			logger.Info("  Profiles", "profiles", strings.Join(cfg.AWS.Profiles, ", "))
 		}
 		if len(cfg.AWS.Regions) > 0 {
-			fmt.Printf("   Regions: %s\n", strings.Join(cfg.AWS.Regions, ", "))
+			logger.Info("  Regions", "regions", strings.Join(cfg.AWS.Regions, ", "))
 		}
 	}
 
 	// Docker configuration
 	if cfg.Docker != nil && (len(cfg.Docker.Registries) > 0 || len(cfg.Docker.Containers) > 0) {
-		fmt.Println("\n🐳 Docker Configuration:")
+		logger.Info("Docker Configuration detected")
 		if len(cfg.Docker.Registries) > 0 {
-			fmt.Printf("   Registries: %s\n", strings.Join(cfg.Docker.Registries, ", "))
+			logger.Info("  Registries", "registries", strings.Join(cfg.Docker.Registries, ", "))
 		}
 		if len(cfg.Docker.Containers) > 0 {
-			fmt.Printf("   Containers: %d configured\n", len(cfg.Docker.Containers))
+			logger.Info("  Containers configured", "count", len(cfg.Docker.Containers))
 			for _, container := range cfg.Docker.Containers {
-				fmt.Printf("     - %s\n", container)
+				logger.Info("    Container", "name", container)
 			}
 		}
 	}
 
 	// Kubernetes configuration
 	if cfg.Kubernetes != nil && (len(cfg.Kubernetes.Contexts) > 0 || len(cfg.Kubernetes.Namespaces) > 0) {
-		fmt.Println("\n☸️  Kubernetes Configuration:")
+		logger.Info("Kubernetes Configuration detected")
 		if len(cfg.Kubernetes.Contexts) > 0 {
-			fmt.Printf("   Contexts: %s\n", strings.Join(cfg.Kubernetes.Contexts, ", "))
+			logger.Info("  Contexts", "contexts", strings.Join(cfg.Kubernetes.Contexts, ", "))
 		}
 		if len(cfg.Kubernetes.Namespaces) > 0 {
-			fmt.Printf("   Namespaces: %s\n", strings.Join(cfg.Kubernetes.Namespaces, ", "))
+			logger.Info("  Namespaces", "namespaces", strings.Join(cfg.Kubernetes.Namespaces, ", "))
 		}
 	}
 
 	// Web endpoints
 	if len(cfg.Endpoints) > 0 {
-		fmt.Println("\n🌐 Web Endpoints:")
+		logger.Info("Web Endpoints detected", "count", len(cfg.Endpoints))
 		for _, endpoint := range cfg.Endpoints {
-			fmt.Printf("   - %s\n", endpoint)
+			logger.Info("  Endpoint", "url", endpoint)
 		}
 	}
 
@@ -129,33 +130,33 @@ func printValidationResults(cfg *config.Config) {
 	}
 
 	if suppressionCount > 0 {
-		fmt.Printf("\n🔇 Suppressions: %d configured\n", suppressionCount)
+		logger.Info("Suppressions configured", "total", suppressionCount)
 		if cfg.Suppressions.Global.DateBefore != "" {
-			fmt.Printf("   Global: Ignore findings before %s\n", cfg.Suppressions.Global.DateBefore)
+			logger.Info("  Global suppression", "ignore_before", cfg.Suppressions.Global.DateBefore)
 		}
 		for scanner, items := range cfg.Suppressions.Scanners {
 			if len(items) > 0 {
-				fmt.Printf("   %s: %d suppressions\n", scanner, len(items))
+				logger.Info("  Scanner suppressions", "scanner", scanner, "count", len(items))
 			}
 		}
 	}
 
 	// Severity overrides
 	if len(cfg.SeverityOverrides) > 0 {
-		fmt.Printf("\n⚖️  Severity Overrides: %d configured\n", len(cfg.SeverityOverrides))
+		logger.Info("Severity Overrides configured", "count", len(cfg.SeverityOverrides))
 		for finding, severity := range cfg.SeverityOverrides {
-			fmt.Printf("   %s → %s\n", finding, severity)
+			logger.Info("  Override", "finding", finding, "severity", severity)
 		}
 	}
 
 	// Metadata enrichment
 	if len(cfg.MetadataEnrichment.Resources) > 0 {
-		fmt.Printf("\n🏷️  Metadata Enrichment: %d resources configured\n", len(cfg.MetadataEnrichment.Resources))
+		logger.Info("Metadata Enrichment configured", "resources", len(cfg.MetadataEnrichment.Resources))
 	}
 
 	// Scanners that will be used
 	scanners := determineEnabledScanners(cfg)
-	fmt.Printf("\n🔧 Enabled Scanners: %s\n", strings.Join(scanners, ", "))
+	logger.Info("Enabled Scanners", "scanners", strings.Join(scanners, ", "))
 }
 
 func determineEnabledScanners(cfg *config.Config) []string {

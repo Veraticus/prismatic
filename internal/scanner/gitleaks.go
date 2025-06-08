@@ -77,7 +77,7 @@ func (s *GitleaksScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 		return nil, NewScannerError(s.Name(), "parse", err)
 	}
 
-	var findings []models.Finding
+	findings := make([]models.Finding, 0, len(leaks))
 
 	for _, leak := range leaks {
 		location := leak.File

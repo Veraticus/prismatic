@@ -123,7 +123,7 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 	}
 
 	// Read the JSON output file
-	jsonOutput, err := os.ReadFile(outputFile)
+	jsonOutput, err := os.ReadFile(outputFile) //nolint:gosec // outputFile is a temp file we created
 	if err != nil {
 		return nil, NewScannerError(s.Name(), "reading results",
 			fmt.Errorf("failed to read output file: %w", err))
@@ -282,13 +282,14 @@ func (s *KubescapeScanner) mapControlToType(controlID string) string {
 // mapScoreToSeverityString maps Kubescape score to severity string.
 func (s *KubescapeScanner) mapScoreToSeverityString(score float64) string {
 	// Kubescape uses score-based severity (0-10)
-	if score >= 9 {
+	switch {
+	case score >= 9:
 		return "critical"
-	} else if score >= 7 {
+	case score >= 7:
 		return "high"
-	} else if score >= 4 {
+	case score >= 4:
 		return "medium"
-	} else {
+	default:
 		return "low"
 	}
 }

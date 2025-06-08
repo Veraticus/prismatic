@@ -1,3 +1,4 @@
+// Package report implements the report command for generating security scan reports.
 package report
 
 import (

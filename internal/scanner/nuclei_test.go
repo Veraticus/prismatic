@@ -37,6 +37,7 @@ func TestNucleiScanner_ParseResults(t *testing.T) {
 			input:         `{"template-id":"CVE-2021-44228","info":{"name":"Apache Log4j RCE","severity":"critical","description":"Apache Log4j2 <=2.14.1 JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints.","reference":"https://nvd.nist.gov/vuln/detail/CVE-2021-44228","tags":"cve,cve2021,rce,log4j"},"type":"http","host":"https://example.com","matched-at":"https://example.com/","ip":"93.184.216.34","timestamp":"2024-01-15T10:30:00Z"}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				f := findings[0]
 				assert.Equal(t, "nuclei", f.Scanner)
 				assert.Equal(t, "CVE", f.Type)
@@ -55,6 +56,7 @@ func TestNucleiScanner_ParseResults(t *testing.T) {
 			input:         `{"template-id":"sqli-error-based","info":{"name":"SQL Injection - Error Based","severity":"high","tags":"sqli,database,injection"},"type":"http","host":"https://vulnerable.app","matched-at":"https://vulnerable.app/search?q=1'","extracted-results":["You have an error in your SQL syntax"],"ip":"10.0.0.1","timestamp":"2024-01-15T11:00:00Z"}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				f := findings[0]
 				assert.Equal(t, "SQL Injection", f.Type)
 				assert.Equal(t, "SQL Injection - Error Based", f.Title)
@@ -67,6 +69,7 @@ func TestNucleiScanner_ParseResults(t *testing.T) {
 			input:         `{"template-id":"reflected-xss","info":{"name":"Reflected XSS","severity":"medium","tags":"xss,cross-site-scripting"},"type":"http","host":"https://app.com","matched-at":"https://app.com/comment","ip":"192.168.1.1","timestamp":"2024-01-15T12:00:00Z"}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				f := findings[0]
 				assert.Equal(t, "Cross-Site Scripting", f.Type)
 				assert.Equal(t, models.SeverityMedium, f.Severity)
@@ -77,6 +80,7 @@ func TestNucleiScanner_ParseResults(t *testing.T) {
 			input:         `{"template-id":"apache-detect","info":{"name":"Apache Detection","severity":"info"},"type":"http","host":"https://example.com","matched-at":"https://example.com/","ip":"93.184.216.34","timestamp":"2024-01-15T10:30:00Z"}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				f := findings[0]
 				assert.Equal(t, "Technology Detection", f.Type)
 				assert.Equal(t, models.SeverityInfo, f.Severity)
@@ -87,6 +91,7 @@ func TestNucleiScanner_ParseResults(t *testing.T) {
 			input:         `{"template-id":"wordpress-admin-panel","info":{"name":"WordPress Admin Panel","severity":"low","tags":"panel,wordpress"},"type":"http","host":"https://blog.com","matched-at":"https://blog.com/wp-admin","ip":"10.0.0.2","timestamp":"2024-01-15T13:00:00Z"}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				f := findings[0]
 				assert.Equal(t, "Admin Panel Exposure", f.Type)
 				assert.Equal(t, models.SeverityLow, f.Severity)
@@ -99,6 +104,7 @@ func TestNucleiScanner_ParseResults(t *testing.T) {
 {"template-id":"config-disclosure","info":{"name":"Config File Disclosure","severity":"low"},"type":"http","host":"https://example.com","matched-at":"https://example.com/.env","ip":"1.1.1.1","timestamp":"2024-01-15T10:02:00Z"}`,
 			expectedCount: 3,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Equal(t, "CVE", findings[0].Type)
 				assert.Equal(t, "SSRF", findings[1].Type)
 				assert.Equal(t, "Information Disclosure", findings[2].Type)

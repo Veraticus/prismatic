@@ -1,3 +1,4 @@
+// Package logger provides structured logging for Prismatic.
 package logger
 
 import (

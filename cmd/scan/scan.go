@@ -1,3 +1,4 @@
+// Package scan implements the scan command for Prismatic security scanner.
 package scan
 
 import (
@@ -8,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/Veraticus/prismatic/internal/config"
 	"github.com/Veraticus/prismatic/internal/models"
@@ -102,8 +106,8 @@ Examples:
 	orchestrator := scanner.NewOrchestrator(cfg, opts.OutputDir, opts.Mock)
 
 	// Initialize scanners
-	if err := orchestrator.InitializeScanners(opts.OnlyScanners); err != nil {
-		return fmt.Errorf("initializing scanners: %w", err)
+	if initErr := orchestrator.InitializeScanners(opts.OnlyScanners); initErr != nil {
+		return fmt.Errorf("initializing scanners: %w", initErr)
 	}
 
 	// Run scans
@@ -130,20 +134,20 @@ Examples:
 }
 
 func printScanProgress(msg string) {
-	fmt.Printf("\n➜ %s\n", msg)
+	logger.Info("➜ %s", msg)
 }
 
 func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
-	fmt.Println("\n🔍 Prismatic Security Scanner v1.0.0")
-	fmt.Printf("📋 Configuration: %s\n", opts.ConfigFile)
-	fmt.Printf("📁 Output: %s\n", opts.OutputDir)
+	logger.Info("🔍 Prismatic Security Scanner v1.0.0")
+	logger.Info("📋 Configuration: %s", opts.ConfigFile)
+	logger.Info("📁 Output: %s", opts.OutputDir)
 
 	if opts.Mock {
-		fmt.Println("\n⚠️  Running in MOCK mode - no real scans performed")
+		logger.Info("⚠️  Running in MOCK mode - no real scans performed")
 	}
 
 	// Print scanner results
-	fmt.Println("\n📊 Scanner Results:")
+	logger.Info("📊 Scanner Results:")
 	for i, scannerName := range metadata.Scanners {
 		result, ok := metadata.Results[scannerName]
 		if !ok {
@@ -164,41 +168,41 @@ func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
 			}
 		}
 
-		fmt.Printf("[%d/%d] %s %s...\n", i+1, len(metadata.Scanners), status, scannerName)
-		fmt.Printf("      ⏱  %s\n", result.EndTime.Sub(result.StartTime).Round(time.Millisecond))
+		logger.Info("[%d/%d] %s %s...", i+1, len(metadata.Scanners), status, scannerName)
+		logger.Info("      ⏱  %s", result.EndTime.Sub(result.StartTime).Round(time.Millisecond))
 
 		if result.Error == "" && len(result.Findings) > 0 {
 			criticalHigh := severityCounts["critical"] + severityCounts["high"]
 			if criticalHigh > 0 {
-				fmt.Printf("      🚨 %d findings (%d critical/high)\n", len(result.Findings), criticalHigh)
+				logger.Info("      🚨 %d findings (%d critical/high)", len(result.Findings), criticalHigh)
 			} else {
-				fmt.Printf("      ✨ %s\n", statusMsg)
+				logger.Info("      ✨ %s", statusMsg)
 			}
 		} else if result.Error != "" {
-			fmt.Printf("      ❗ %s\n", result.Error)
+			logger.Info("      ❗ %s", result.Error)
 		}
 	}
 
 	// Print overall summary
-	fmt.Println("\n✅ Scan Summary:")
-	fmt.Printf("   Total Findings: %d", metadata.Summary.TotalFindings)
+	logger.Info("✅ Scan Summary:")
 	if metadata.Summary.SuppressedCount > 0 {
-		fmt.Printf(" (+ %d suppressed)", metadata.Summary.SuppressedCount)
+		logger.Info("   Total Findings: %d (+ %d suppressed)", metadata.Summary.TotalFindings, metadata.Summary.SuppressedCount)
+	} else {
+		logger.Info("   Total Findings: %d", metadata.Summary.TotalFindings)
 	}
-	fmt.Println()
 
 	// Print severity breakdown
 	severityOrder := []string{"critical", "high", "medium", "low"}
 	severityDisplay := []string{}
 	for _, sev := range severityOrder {
 		if count, ok := metadata.Summary.BySeverity[sev]; ok && count > 0 {
-			severityDisplay = append(severityDisplay, fmt.Sprintf("%s: %d", strings.Title(sev), count))
+			severityDisplay = append(severityDisplay, fmt.Sprintf("%s: %d", cases.Title(language.English).String(sev), count))
 		}
 	}
 	if len(severityDisplay) > 0 {
-		fmt.Printf("   %s\n", strings.Join(severityDisplay, " | "))
+		logger.Info("   %s", strings.Join(severityDisplay, " | "))
 	}
 
-	fmt.Printf("\n✨ Scan complete! Results saved to: %s\n", opts.OutputDir)
-	fmt.Println("🎯 Run 'prismatic report --scan latest' to generate report")
+	logger.Info("✨ Scan complete! Results saved to: %s", opts.OutputDir)
+	logger.Info("🎯 Run 'prismatic report --scan latest' to generate report")
 }

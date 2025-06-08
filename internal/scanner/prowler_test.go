@@ -53,6 +53,7 @@ func TestProwlerScanner_ParseResults(t *testing.T) {
 			}]`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				finding := findings[0]
 				assert.Equal(t, "internet-exposed", finding.Type)
 				assert.Equal(t, "high", finding.Severity)
@@ -92,6 +93,7 @@ func TestProwlerScanner_ParseResults(t *testing.T) {
 			}]`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				finding := findings[0]
 				assert.Equal(t, "iam", finding.Type)
 				assert.Equal(t, "critical", finding.Severity)
@@ -108,6 +110,7 @@ func TestProwlerScanner_ParseResults(t *testing.T) {
 {"metadata":{"event_code":"rds_instance_encryption_enabled","product":{"name":"Prowler","version":"4.0.0"}},"severity":"High","status":"FAIL","resources":[{"uid":"arn:aws:rds:us-east-1:123456789012:db:mydb","type":"AwsRdsDbInstance","region":"us-east-1"}],"finding":{"type":"encryption","title":"RDS instances should be encrypted","desc":"RDS instance is not encrypted","remediation":{"desc":"Enable encryption for RDS instances"}}}`,
 			expected: 2,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Len(t, findings, 2)
 
 				// Check first finding
@@ -128,6 +131,7 @@ func TestProwlerScanner_ParseResults(t *testing.T) {
 			]`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Len(t, findings, 1)
 				assert.Contains(t, findings[0].Metadata["check_id"], "public_write")
 			},
@@ -157,7 +161,7 @@ func TestProwlerScanner_ParseResults_InvalidJSON(t *testing.T) {
 
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
-	assert.IsType(t, &ScannerError{}, err)
+	assert.IsType(t, &Error{}, err)
 }
 
 func TestProwlerScanner_MapCheckToType(t *testing.T) {

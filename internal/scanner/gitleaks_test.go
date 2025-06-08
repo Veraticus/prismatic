@@ -41,6 +41,7 @@ func TestGitleaksScanner_ParseResults(t *testing.T) {
 			}]`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				finding := findings[0]
 				assert.Equal(t, "secret", finding.Type)
 				assert.Equal(t, "critical", finding.Severity)
@@ -76,6 +77,7 @@ func TestGitleaksScanner_ParseResults(t *testing.T) {
 			]`,
 			expected: 2,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				assert.Len(t, findings, 2)
 
 				// Check first finding
@@ -97,6 +99,7 @@ func TestGitleaksScanner_ParseResults(t *testing.T) {
 			}]`,
 			expected: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
+				t.Helper()
 				finding := findings[0]
 				assert.Equal(t, "id_rsa", finding.Resource)
 				assert.Equal(t, "id_rsa", finding.Location) // No line number
@@ -123,7 +126,7 @@ func TestGitleaksScanner_ParseResults_InvalidJSON(t *testing.T) {
 
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
-	assert.IsType(t, &ScannerError{}, err)
+	assert.IsType(t, &Error{}, err)
 }
 
 func TestGitleaksScanner_RedactSecret(t *testing.T) {

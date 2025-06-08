@@ -1,3 +1,4 @@
+// Package list implements the list command for viewing previous scans.
 package list
 
 import (
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/storage"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // Options represents list command options.
@@ -60,9 +62,9 @@ Examples:
 
 	if len(scans) == 0 {
 		if opts.Client != "" {
-			fmt.Printf("No scans found for client: %s\n", opts.Client)
+			logger.Info("No scans found for client", "client", opts.Client)
 		} else {
-			fmt.Println("No scans found.")
+			logger.Info("No scans found")
 		}
 		return nil
 	}
@@ -123,7 +125,7 @@ func displayTable(scans []storage.ScanInfo) error {
 	}
 
 	// Print footer with usage hint
-	fmt.Printf("\n💡 Use 'prismatic report --scan %s' to generate a report\n", scans[0].ID)
+	logger.Info("💡 Use 'prismatic report --scan' to generate a report", "scan", scans[0].ID)
 
 	return nil
 }
@@ -132,6 +134,7 @@ func displayJSON(scans []storage.ScanInfo) error {
 	// For JSON output, we'll implement this when we implement the report command
 	// For now, just show a simple implementation
 	for _, scan := range scans {
+		//nolint:forbidigo // JSON output format
 		fmt.Printf(`{
   "id": "%s",
   "client": "%s",

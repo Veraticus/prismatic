@@ -79,24 +79,24 @@ func ValidateFinding(f *models.Finding) error {
 	return nil
 }
 
-// ScannerError represents an error from a scanner.
-type ScannerError struct {
+// Error represents an error from a scanner.
+type Error struct {
 	Err     error
 	Scanner string
 	Phase   string
 }
 
-func (e *ScannerError) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("%s scanner %s error: %v", e.Scanner, e.Phase, e.Err)
 }
 
-func (e *ScannerError) Unwrap() error {
+func (e *Error) Unwrap() error {
 	return e.Err
 }
 
 // NewScannerError creates a new scanner error.
 func NewScannerError(scanner, phase string, err error) error {
-	return &ScannerError{
+	return &Error{
 		Scanner: scanner,
 		Phase:   phase,
 		Err:     err,

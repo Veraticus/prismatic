@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // TrivyScanner implements container and image vulnerability scanning.
@@ -48,7 +49,7 @@ func (s *TrivyScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		if err != nil {
 			// Log error but continue with other targets
 			if s.config.Debug {
-				fmt.Printf("Trivy scan failed for %s: %v\n", target, err)
+				logger.Debug("Trivy scan failed for %s: %v", target, err)
 			}
 			continue
 		}
@@ -56,7 +57,7 @@ func (s *TrivyScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		findings, err := s.ParseResults(output)
 		if err != nil {
 			if s.config.Debug {
-				fmt.Printf("Failed to parse Trivy results for %s: %v\n", target, err)
+				logger.Debug("Failed to parse Trivy results for %s: %v", target, err)
 			}
 			continue
 		}
@@ -208,13 +209,14 @@ func (s *TrivyScanner) scanTarget(ctx context.Context, target string) ([]byte, e
 	}
 
 	// Determine scan type based on target
-	if strings.Contains(target, ":") || strings.Contains(target, "/") {
+	switch {
+	case strings.Contains(target, ":") || strings.Contains(target, "/"):
 		// Image scan
 		args = append(args, "image", target)
-	} else if strings.HasSuffix(target, ".tar") {
+	case strings.HasSuffix(target, ".tar"):
 		// Archive scan
 		args = append(args, "image", "--input", target)
-	} else {
+	default:
 		// Filesystem/repo scan
 		args = append(args, "fs", target)
 	}
@@ -265,6 +267,7 @@ type TrivyReport struct {
 	Results      []TrivyResult `json:"Results"`
 }
 
+// TrivyResult represents a single result from a Trivy scan.
 type TrivyResult struct {
 	Target            string                  `json:"Target"`
 	Type              string                  `json:"Type"`
@@ -273,20 +276,22 @@ type TrivyResult struct {
 	Secrets           []TrivySecret           `json:"Secrets"`
 }
 
+// TrivyVulnerability represents a vulnerability found by Trivy.
 type TrivyVulnerability struct {
-	CVSS             map[string]interface{} `json:"CVSS"`
-	VulnerabilityID  string                 `json:"VulnerabilityID"`
-	PkgName          string                 `json:"PkgName"`
-	InstalledVersion string                 `json:"InstalledVersion"`
-	FixedVersion     string                 `json:"FixedVersion"`
-	Severity         string                 `json:"Severity"`
-	Description      string                 `json:"Description"`
-	PrimaryURL       string                 `json:"PrimaryURL"`
-	PublishedDate    string                 `json:"PublishedDate"`
-	LastModifiedDate string                 `json:"LastModifiedDate"`
-	References       []string               `json:"References"`
+	CVSS             map[string]any `json:"CVSS"`
+	VulnerabilityID  string         `json:"VulnerabilityID"`
+	PkgName          string         `json:"PkgName"`
+	InstalledVersion string         `json:"InstalledVersion"`
+	FixedVersion     string         `json:"FixedVersion"`
+	Severity         string         `json:"Severity"`
+	Description      string         `json:"Description"`
+	PrimaryURL       string         `json:"PrimaryURL"`
+	PublishedDate    string         `json:"PublishedDate"`
+	LastModifiedDate string         `json:"LastModifiedDate"`
+	References       []string       `json:"References"`
 }
 
+// TrivyMisconfiguration represents a misconfiguration found by Trivy.
 type TrivyMisconfiguration struct {
 	Type        string `json:"Type"`
 	ID          string `json:"ID"`
@@ -300,6 +305,7 @@ type TrivyMisconfiguration struct {
 	EndLine     int    `json:"EndLine"`
 }
 
+// TrivySecret represents a secret found by Trivy.
 type TrivySecret struct {
 	RuleID    string `json:"RuleID"`
 	Severity  string `json:"Severity"`

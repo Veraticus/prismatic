@@ -1,3 +1,4 @@
+// Package scanner provides security scanner implementations for Prismatic.
 package scanner
 
 import (
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // CheckovScanner implements Infrastructure-as-Code security scanning.
@@ -49,7 +51,7 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		if err != nil {
 			// Log error but continue with other targets
 			if s.config.Debug {
-				fmt.Printf("Checkov scan failed for %s: %v\n", target, err)
+				logger.Warn("Checkov scan failed for %s: %v", target, err)
 			}
 			continue
 		}
@@ -57,7 +59,7 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		findings, err := s.ParseResults(output)
 		if err != nil {
 			if s.config.Debug {
-				fmt.Printf("Failed to parse Checkov results for %s: %v\n", target, err)
+				logger.Warn("Failed to parse Checkov results for %s: %v", target, err)
 			}
 			continue
 		}
@@ -76,7 +78,13 @@ func (s *CheckovScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 		return nil, NewScannerError(s.Name(), "parse", err)
 	}
 
-	var findings []models.Finding
+	// Pre-calculate total number of failed checks
+	totalFailedChecks := 0
+	for _, results := range report.Results {
+		totalFailedChecks += len(results.FailedChecks)
+	}
+
+	findings := make([]models.Finding, 0, totalFailedChecks)
 
 	// Process failed checks from all check types
 	for checkType, results := range report.Results {
@@ -188,7 +196,7 @@ func (s *CheckovScanner) createFindingFromCheck(checkType string, check CheckovF
 			if cb != "" {
 				finding.Metadata["code_block"] = cb
 			}
-		case []interface{}:
+		case []any:
 			// Handle array format - just store as string representation
 			finding.Metadata["code_block"] = fmt.Sprintf("%v", cb)
 		}
@@ -324,28 +332,31 @@ type CheckovReport struct {
 	Summary             CheckovSummary                 `json:"summary"`
 }
 
+// CheckovCheckResults represents results from a Checkov scan.
 type CheckovCheckResults struct {
 	CheckType     string               `json:"check_type"`
 	FailedChecks  []CheckovFailedCheck `json:"failed_checks"`
-	PassedChecks  []interface{}        `json:"passed_checks"`
-	SkippedChecks []interface{}        `json:"skipped_checks"`
+	PassedChecks  []any                `json:"passed_checks"`
+	SkippedChecks []any                `json:"skipped_checks"`
 }
 
+// CheckovFailedCheck represents a failed check from Checkov.
 type CheckovFailedCheck struct {
-	CodeBlock       interface{}            `json:"code_block"`
-	CheckResult     map[string]interface{} `json:"check_result"`
-	CheckID         string                 `json:"check_id"`
-	CheckName       string                 `json:"check_name"`
-	CheckClass      string                 `json:"check_class"`
-	Description     string                 `json:"description"`
-	FilePath        string                 `json:"file_path"`
-	Resource        string                 `json:"resource"`
-	ResourceAddress string                 `json:"resource_address"`
-	Severity        string                 `json:"severity"`
-	Guideline       string                 `json:"guideline"`
-	FileLineRange   []int                  `json:"file_line_range"`
+	CodeBlock       any            `json:"code_block"`
+	CheckResult     map[string]any `json:"check_result"`
+	CheckID         string         `json:"check_id"`
+	CheckName       string         `json:"check_name"`
+	CheckClass      string         `json:"check_class"`
+	Description     string         `json:"description"`
+	FilePath        string         `json:"file_path"`
+	Resource        string         `json:"resource"`
+	ResourceAddress string         `json:"resource_address"`
+	Severity        string         `json:"severity"`
+	Guideline       string         `json:"guideline"`
+	FileLineRange   []int          `json:"file_line_range"`
 }
 
+// CheckovSecretCheck represents a secret detected by Checkov.
 type CheckovSecretCheck struct {
 	CheckID    string `json:"check_id"`
 	CheckName  string `json:"check_name"`
@@ -354,6 +365,7 @@ type CheckovSecretCheck struct {
 	LineNumber int    `json:"line_number"`
 }
 
+// CheckovSummary represents the summary of a Checkov scan.
 type CheckovSummary struct {
 	Passed  int `json:"passed"`
 	Failed  int `json:"failed"`
