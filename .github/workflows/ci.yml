@@ -63,14 +63,14 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
-    - name: Run tests
-      run: make test
+    - name: Run tests (skip integration)
+      run: go test -short -count=1 ./...
 
-    - name: Run tests with race detector
-      run: make test-race
+    - name: Run tests with race detector (skip integration)
+      run: go test -short -race -count=1 ./...
 
     - name: Generate coverage report
-      run: make test-coverage
+      run: go test -short -count=1 -coverprofile=coverage.out -covermode=atomic ./...
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -114,47 +114,9 @@ jobs:
         name: prismatic-${{ matrix.os }}-${{ matrix.arch }}
         path: prismatic-${{ matrix.os }}-${{ matrix.arch }}
 
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    continue-on-error: true  # Don't fail the build if integration tests fail
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Install test dependencies
-      run: |
-        # Install security scanning tools for integration tests
-        # Note: These may fail to install, which is why integration tests are optional
-        
-        # Install Trivy
-        sudo apt-get update
-        sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
-        sudo apt-get update
-        sudo apt-get install -y trivy || echo "Failed to install Trivy"
-        
-        # Install Checkov
-        pip3 install checkov || echo "Failed to install Checkov"
-        
-        # Install other tools as needed...
-
-    - name: Run integration tests
-      run: go test -v ./... -run Integration
+  # Integration tests are currently skipped in CI
+  # They require external tools that aren't reliably available in CI environment
+  # To run integration tests locally, use: go test -v ./... -run Integration
 
   all-tests-pass:
     name: All tests pass

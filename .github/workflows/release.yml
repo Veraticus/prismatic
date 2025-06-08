@@ -35,8 +35,8 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Run tests
-      run: make test
+    - name: Run tests (skip integration)
+      run: go test -short ./...
 
     - name: Install GoReleaser
       uses: goreleaser/goreleaser-action@v5
