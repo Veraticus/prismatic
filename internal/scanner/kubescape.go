@@ -23,13 +23,18 @@ type KubescapeScanner struct {
 
 // NewKubescapeScanner creates a new Kubescape scanner instance.
 func NewKubescapeScanner(config Config, contexts, namespaces []string) *KubescapeScanner {
+	return NewKubescapeScannerWithLogger(config, contexts, namespaces, logger.GetGlobalLogger())
+}
+
+// NewKubescapeScannerWithLogger creates a new Kubescape scanner instance with a custom logger.
+func NewKubescapeScannerWithLogger(config Config, contexts, namespaces []string, log logger.Logger) *KubescapeScanner {
 	// Default to current context if none specified
 	if len(contexts) == 0 {
 		contexts = []string{"current-context"}
 	}
 
 	return &KubescapeScanner{
-		BaseScanner: NewBaseScanner("kubescape", config),
+		BaseScanner: NewBaseScannerWithLogger("kubescape", config, log),
 		contexts:    contexts,
 		namespaces:  namespaces,
 	}
@@ -61,7 +66,7 @@ func (s *KubescapeScanner) Scan(ctx context.Context) (*models.ScanResult, error)
 		output, err := s.scanContext(ctx, context, outputFile)
 		if err != nil {
 			// Log error but continue with other contexts
-			logger.Warn("Kubescape scan failed for context",
+			s.logger.Warn("Kubescape scan failed for context",
 				"context", context,
 				"error", err)
 			continue
@@ -70,7 +75,7 @@ func (s *KubescapeScanner) Scan(ctx context.Context) (*models.ScanResult, error)
 		// Parse results
 		findings, err := s.ParseResults(output)
 		if err != nil {
-			logger.Warn("Failed to parse Kubescape results",
+			s.logger.Warn("Failed to parse Kubescape results",
 				"context", context,
 				"error", err)
 			continue
@@ -115,7 +120,7 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 	}
 
 	// Execute scan
-	logger.Debug("Running Kubescape scan", "context", kubeContext, "args", args)
+	s.logger.Debug("Running Kubescape scan", "context", kubeContext, "args", args)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, NewScannerError(s.Name(), "execution",
@@ -123,7 +128,8 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 	}
 
 	// Read the JSON output file
-	jsonOutput, err := os.ReadFile(outputFile) //nolint:gosec // outputFile is a temp file we created
+	// outputFile is a temporary file path we created internally with a timestamp
+	jsonOutput, err := os.ReadFile(outputFile)
 	if err != nil {
 		return nil, NewScannerError(s.Name(), "reading results",
 			fmt.Errorf("failed to read output file: %w", err))
@@ -136,7 +142,7 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 func (s *KubescapeScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 	var report KubescapeReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, NewScannerError(s.Name(), "parsing", err)
+		return nil, NewScannerError(s.Name(), "parse", err)
 	}
 
 	var findings []models.Finding

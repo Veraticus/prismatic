@@ -21,6 +21,7 @@ import (
 	"github.com/Veraticus/prismatic/internal/models"
 	"github.com/Veraticus/prismatic/internal/storage"
 	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/Veraticus/prismatic/pkg/pathutil"
 )
 
 //go:embed templates/*
@@ -28,15 +29,23 @@ var templateFS embed.FS
 
 // HTMLGenerator generates HTML reports from scan results.
 type HTMLGenerator struct {
-	scanPath string
-	metadata *models.ScanMetadata
-	findings []models.Finding
+	logger           logger.Logger
+	metadata         *models.ScanMetadata
+	scanPath         string
+	findings         []models.Finding
+	enrichedFindings []models.EnrichedFinding
+	useEnriched      bool
 }
 
 // NewHTMLGenerator creates a new HTML report generator.
 func NewHTMLGenerator(scanPath string) (*HTMLGenerator, error) {
+	return NewHTMLGeneratorWithLogger(scanPath, logger.GetGlobalLogger())
+}
+
+// NewHTMLGeneratorWithLogger creates a new HTML report generator with a custom logger.
+func NewHTMLGeneratorWithLogger(scanPath string, log logger.Logger) (*HTMLGenerator, error) {
 	// Load scan results
-	store := storage.NewStorage("data")
+	store := storage.NewStorageWithLogger("data", log)
 
 	// Resolve scan path
 	if scanPath == "latest" {
@@ -60,11 +69,22 @@ func NewHTMLGenerator(scanPath string) (*HTMLGenerator, error) {
 		return nil, fmt.Errorf("loading findings: %w", err)
 	}
 
-	return &HTMLGenerator{
+	// Check if enriched findings are available
+	generator := &HTMLGenerator{
 		scanPath: scanPath,
 		metadata: metadata,
 		findings: findings,
-	}, nil
+		logger:   log,
+	}
+
+	// Load enriched findings if available
+	if len(metadata.EnrichedFindings) > 0 {
+		generator.enrichedFindings = metadata.EnrichedFindings
+		generator.useEnriched = true
+		log.Info("Using enriched findings for report", "count", len(metadata.EnrichedFindings))
+	}
+
+	return generator, nil
 }
 
 // GetScanPath returns the scan path.
@@ -90,9 +110,9 @@ func (g *HTMLGenerator) ApplyModifications(modsPath string) error {
 	}
 
 	// Apply modifications
-	g.findings = mods.ApplyModifications(g.findings)
+	g.findings = mods.ApplyModificationsWithLogger(g.findings, g.logger)
 
-	logger.Info("Applied modifications",
+	g.logger.Info("Applied modifications",
 		"file", modsPath,
 		"suppressions", len(mods.Suppressions),
 		"overrides", len(mods.Overrides))
@@ -102,6 +122,12 @@ func (g *HTMLGenerator) ApplyModifications(modsPath string) error {
 
 // Generate creates the HTML report.
 func (g *HTMLGenerator) Generate(outputPath string) error {
+	// Validate and clean the output path
+	validOutputPath, err := pathutil.ValidateOutputPath(outputPath)
+	if err != nil {
+		return fmt.Errorf("invalid output path: %w", err)
+	}
+
 	// Parse templates
 	tmpl, err := template.New("report").Funcs(g.templateFuncs()).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -112,11 +138,11 @@ func (g *HTMLGenerator) Generate(outputPath string) error {
 	data := g.prepareTemplateData()
 
 	// Create output file
-	if err = os.MkdirAll(filepath.Dir(outputPath), 0750); err != nil {
+	if err = os.MkdirAll(filepath.Dir(validOutputPath), 0750); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
-	file, err := os.Create(outputPath) //nolint:gosec // outputPath is validated by the caller
+	file, err := os.Create(validOutputPath)
 	if err != nil {
 		return fmt.Errorf("creating output file: %w", err)
 	}
@@ -131,7 +157,7 @@ func (g *HTMLGenerator) Generate(outputPath string) error {
 		return fmt.Errorf("executing template: %w", err)
 	}
 
-	logger.Info("Generated HTML report", "path", outputPath)
+	g.logger.Info("Generated HTML report", "path", outputPath)
 	return nil
 }
 
@@ -176,23 +202,31 @@ func (g *HTMLGenerator) templateFuncs() template.FuncMap {
 
 // TemplateData holds all data for the report template.
 type TemplateData struct {
-	GeneratedAt        time.Time
-	Metadata           *models.ScanMetadata
-	AWSFindings        []models.Finding
-	TopRisks           []models.Finding
-	IaCFindings        []models.Finding
-	SecretsFindings    []models.Finding
-	WebFindings        []models.Finding
-	KubernetesFindings []models.Finding
-	ContainerFindings  []models.Finding
-	TotalSuppressed    int
-	InfoCount          int
-	LowCount           int
-	MediumCount        int
-	HighCount          int
-	CriticalCount      int
-	TotalActive        int
-	ScanDuration       time.Duration
+	GeneratedAt                time.Time
+	Metadata                   *models.ScanMetadata
+	AWSFindings                []models.Finding
+	TopRisks                   []models.Finding
+	IaCFindings                []models.Finding
+	SecretsFindings            []models.Finding
+	WebFindings                []models.Finding
+	KubernetesFindings         []models.Finding
+	ContainerFindings          []models.Finding
+	AWSEnrichedFindings        []models.EnrichedFinding
+	TopEnrichedRisks           []models.EnrichedFinding
+	IaCEnrichedFindings        []models.EnrichedFinding
+	SecretsEnrichedFindings    []models.EnrichedFinding
+	WebEnrichedFindings        []models.EnrichedFinding
+	KubernetesEnrichedFindings []models.EnrichedFinding
+	ContainerEnrichedFindings  []models.EnrichedFinding
+	TotalSuppressed            int
+	InfoCount                  int
+	LowCount                   int
+	MediumCount                int
+	HighCount                  int
+	CriticalCount              int
+	TotalActive                int
+	ScanDuration               time.Duration
+	UseEnriched                bool
 }
 
 // prepareTemplateData organizes data for the template.
@@ -201,8 +235,22 @@ func (g *HTMLGenerator) prepareTemplateData() *TemplateData {
 		Metadata:     g.metadata,
 		GeneratedAt:  time.Now(),
 		ScanDuration: g.metadata.EndTime.Sub(g.metadata.StartTime),
+		UseEnriched:  g.useEnriched,
 	}
 
+	if g.useEnriched {
+		// Process enriched findings
+		g.prepareEnrichedData(data)
+	} else {
+		// Process regular findings
+		g.prepareRegularData(data)
+	}
+
+	return data
+}
+
+// prepareRegularData processes regular findings for the template.
+func (g *HTMLGenerator) prepareRegularData(data *TemplateData) {
 	// Count findings by severity
 	activeFindingsBySeverity := make(map[string][]models.Finding)
 
@@ -264,8 +312,71 @@ func (g *HTMLGenerator) prepareTemplateData() *TemplateData {
 	sortFindings(data.WebFindings)
 	sortFindings(data.SecretsFindings)
 	sortFindings(data.IaCFindings)
+}
 
-	return data
+// prepareEnrichedData processes enriched findings for the template.
+func (g *HTMLGenerator) prepareEnrichedData(data *TemplateData) {
+	// Count findings by severity
+	activeFindingsBySeverity := make(map[string][]models.EnrichedFinding)
+
+	for _, finding := range g.enrichedFindings {
+		if finding.Suppressed {
+			data.TotalSuppressed++
+			continue
+		}
+
+		data.TotalActive++
+		activeFindingsBySeverity[finding.Severity] = append(activeFindingsBySeverity[finding.Severity], finding)
+
+		// Categorize by scanner type
+		switch finding.Scanner {
+		case "prowler", "mock-prowler":
+			data.AWSEnrichedFindings = append(data.AWSEnrichedFindings, finding)
+		case "trivy", "mock-trivy":
+			data.ContainerEnrichedFindings = append(data.ContainerEnrichedFindings, finding)
+		case "kubescape", "mock-kubescape":
+			data.KubernetesEnrichedFindings = append(data.KubernetesEnrichedFindings, finding)
+		case "nuclei", "mock-nuclei":
+			data.WebEnrichedFindings = append(data.WebEnrichedFindings, finding)
+		case "gitleaks", "mock-gitleaks":
+			data.SecretsEnrichedFindings = append(data.SecretsEnrichedFindings, finding)
+		case "checkov", "mock-checkov":
+			data.IaCEnrichedFindings = append(data.IaCEnrichedFindings, finding)
+		}
+	}
+
+	// Set severity counts
+	data.CriticalCount = len(activeFindingsBySeverity["critical"])
+	data.HighCount = len(activeFindingsBySeverity["high"])
+	data.MediumCount = len(activeFindingsBySeverity["medium"])
+	data.LowCount = len(activeFindingsBySeverity["low"])
+	data.InfoCount = len(activeFindingsBySeverity["info"])
+
+	// Get top 10 risks (critical and high severity)
+	var topRisks []models.EnrichedFinding
+	topRisks = append(topRisks, activeFindingsBySeverity["critical"]...)
+	topRisks = append(topRisks, activeFindingsBySeverity["high"]...)
+
+	// Sort by severity (critical first) and limit to 10
+	sort.Slice(topRisks, func(i, j int) bool {
+		if topRisks[i].Severity == topRisks[j].Severity {
+			return topRisks[i].Title < topRisks[j].Title
+		}
+		return severityOrder(topRisks[i].Severity) < severityOrder(topRisks[j].Severity)
+	})
+
+	if len(topRisks) > 10 {
+		topRisks = topRisks[:10]
+	}
+	data.TopEnrichedRisks = topRisks
+
+	// Sort findings within each category by severity
+	sortEnrichedFindings(data.AWSEnrichedFindings)
+	sortEnrichedFindings(data.ContainerEnrichedFindings)
+	sortEnrichedFindings(data.KubernetesEnrichedFindings)
+	sortEnrichedFindings(data.WebEnrichedFindings)
+	sortEnrichedFindings(data.SecretsEnrichedFindings)
+	sortEnrichedFindings(data.IaCEnrichedFindings)
 }
 
 // severityOrder returns the sort order for severities.
@@ -296,9 +407,20 @@ func sortFindings(findings []models.Finding) {
 	})
 }
 
+// sortEnrichedFindings sorts enriched findings by severity and title.
+func sortEnrichedFindings(findings []models.EnrichedFinding) {
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].Severity == findings[j].Severity {
+			return findings[i].Title < findings[j].Title
+		}
+		return severityOrder(findings[i].Severity) < severityOrder(findings[j].Severity)
+	})
+}
+
 // loadJSON is a helper to load JSON files.
+// The path should already be validated by the caller.
 func loadJSON(path string, v any) error {
-	data, err := os.ReadFile(path) //nolint:gosec // path is internally generated and validated
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}

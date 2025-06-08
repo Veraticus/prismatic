@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // NucleiScanner implements web vulnerability scanning using Nuclei.
@@ -19,8 +20,13 @@ type NucleiScanner struct {
 
 // NewNucleiScanner creates a new Nuclei scanner instance.
 func NewNucleiScanner(cfg Config, endpoints []string) *NucleiScanner {
+	return NewNucleiScannerWithLogger(cfg, endpoints, logger.GetGlobalLogger())
+}
+
+// NewNucleiScannerWithLogger creates a new Nuclei scanner instance with a custom logger.
+func NewNucleiScannerWithLogger(cfg Config, endpoints []string, log logger.Logger) *NucleiScanner {
 	return &NucleiScanner{
-		BaseScanner: NewBaseScanner("nuclei", cfg),
+		BaseScanner: NewBaseScannerWithLogger("nuclei", cfg, log),
 		endpoints:   endpoints,
 	}
 }

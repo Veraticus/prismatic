@@ -308,7 +308,8 @@ func TestGenerate(t *testing.T) {
 	assert.FileExists(t, outputPath)
 
 	// Read and verify content
-	content, err := os.ReadFile(outputPath) //nolint:gosec // Test file path
+	// Path is safe - constructed from test temp directory
+	content, err := os.ReadFile(outputPath)
 	require.NoError(t, err)
 
 	html := string(content)
@@ -479,7 +480,8 @@ func TestSortFindings(t *testing.T) {
 
 // saveJSONHelper is a test helper to save JSON data.
 func saveJSONHelper(path string, data any) error {
-	file, err := os.Create(path) //nolint:gosec // Test helper function
+	// Path is safe - only used in tests with temp directories
+	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}

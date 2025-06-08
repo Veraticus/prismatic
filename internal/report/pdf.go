@@ -10,6 +10,11 @@ import (
 
 // ConvertHTMLToPDF converts an HTML file to PDF using available tools.
 func ConvertHTMLToPDF(htmlPath, pdfPath string) error {
+	return ConvertHTMLToPDFWithLogger(htmlPath, pdfPath, logger.GetGlobalLogger())
+}
+
+// ConvertHTMLToPDFWithLogger converts an HTML file to PDF using available tools with a custom logger.
+func ConvertHTMLToPDFWithLogger(htmlPath, pdfPath string, log logger.Logger) error {
 	// Try different PDF conversion tools in order of preference
 	converters := []struct {
 		name    string
@@ -63,15 +68,15 @@ func ConvertHTMLToPDF(htmlPath, pdfPath string) error {
 	// Try each converter
 	for _, conv := range converters {
 		if _, err := exec.LookPath(conv.command); err != nil {
-			logger.Debug("PDF converter not found", "converter", conv.name)
+			log.Debug("PDF converter not found", "converter", conv.name)
 			continue
 		}
 
-		logger.Info("Converting HTML to PDF", "converter", conv.name)
+		log.Info("Converting HTML to PDF", "converter", conv.name)
 		cmd := exec.Command(conv.command, conv.args...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			logger.Debug("Converter failed",
+			log.Debug("Converter failed",
 				"converter", conv.name,
 				"error", err,
 				"output", string(output))

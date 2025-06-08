@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // GitleaksScanner implements secret detection in git repositories.
@@ -20,11 +21,16 @@ type GitleaksScanner struct {
 
 // NewGitleaksScanner creates a new Gitleaks scanner instance.
 func NewGitleaksScanner(config Config, targetPath string) *GitleaksScanner {
+	return NewGitleaksScannerWithLogger(config, targetPath, logger.GetGlobalLogger())
+}
+
+// NewGitleaksScannerWithLogger creates a new Gitleaks scanner instance with a custom logger.
+func NewGitleaksScannerWithLogger(config Config, targetPath string, log logger.Logger) *GitleaksScanner {
 	if targetPath == "" {
 		targetPath = "."
 	}
 	return &GitleaksScanner{
-		BaseScanner: NewBaseScanner("gitleaks", config),
+		BaseScanner: NewBaseScannerWithLogger("gitleaks", config, log),
 		targetPath:  targetPath,
 	}
 }

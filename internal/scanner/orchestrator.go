@@ -13,20 +13,44 @@ import (
 
 // Orchestrator manages multiple scanners and coordinates their execution.
 type Orchestrator struct {
-	config    *config.Config
-	outputDir string
-	scanners  []Scanner
-	useMock   bool
+	logger      logger.Logger
+	config      *config.Config
+	outputDir   string
+	scanners    []Scanner
+	maxWorkers  int
+	scanTimeout time.Duration
+	useMock     bool
 }
 
 // NewOrchestrator creates a new scanner orchestrator.
 func NewOrchestrator(cfg *config.Config, outputDir string, useMock bool) *Orchestrator {
+	return NewOrchestratorWithLogger(cfg, outputDir, useMock, logger.GetGlobalLogger())
+}
+
+// NewOrchestratorWithLogger creates a new scanner orchestrator with a custom logger.
+func NewOrchestratorWithLogger(cfg *config.Config, outputDir string, useMock bool, log logger.Logger) *Orchestrator {
 	return &Orchestrator{
-		config:    cfg,
-		outputDir: outputDir,
-		useMock:   useMock,
-		scanners:  []Scanner{},
+		config:      cfg,
+		outputDir:   outputDir,
+		useMock:     useMock,
+		scanners:    []Scanner{},
+		maxWorkers:  3, // Default to 3 concurrent scanners
+		scanTimeout: 10 * time.Minute,
+		logger:      log,
 	}
+}
+
+// SetMaxWorkers sets the maximum number of concurrent scanner workers.
+func (o *Orchestrator) SetMaxWorkers(max int) {
+	if max < 1 {
+		max = 1
+	}
+	o.maxWorkers = max
+}
+
+// SetScanTimeout sets the timeout for individual scanner execution.
+func (o *Orchestrator) SetScanTimeout(timeout time.Duration) {
+	o.scanTimeout = timeout
 }
 
 // InitializeScanners sets up scanners based on configuration.
@@ -37,63 +61,24 @@ func (o *Orchestrator) InitializeScanners(onlyScanners []string) error {
 		Debug:      false,
 	}
 
+	// Create scanner factory
+	factory := NewScannerFactoryWithLogger(baseConfig, o, o.outputDir, o.useMock, o.logger)
+
 	// Determine which scanners to initialize
-	scannerTypes := o.determineScanners(onlyScanners)
+	detector := NewScannerTypeDetector(o)
+	scannerTypes := detector.DetectScanners(onlyScanners)
 
-	// Initialize appropriate scanners
+	// Initialize scanners using factory
 	for _, scannerType := range scannerTypes {
-		var scanner Scanner
-
-		if o.useMock {
-			scanner = NewMockScanner(scannerType, baseConfig)
-		} else {
-			// Initialize real scanners
-			switch scannerType {
-			case "trivy":
-				targets := o.getTrivyTargets()
-				if len(targets) == 0 {
-					logger.Warn("No targets configured for Trivy")
-					continue
-				}
-				scanner = NewTrivyScanner(baseConfig, targets)
-			case "prowler":
-				profiles, regions, services := o.getProwlerConfig()
-				if len(profiles) == 0 {
-					logger.Warn("No AWS profiles configured for Prowler")
-					continue
-				}
-				scanner = NewProwlerScanner(baseConfig, profiles, regions, services)
-			case "kubescape":
-				contexts, namespaces := o.getKubescapeConfig()
-				if len(contexts) == 0 {
-					logger.Warn("No Kubernetes contexts configured for Kubescape")
-					continue
-				}
-				scanner = NewKubescapeScanner(baseConfig, contexts, namespaces)
-			case "nuclei":
-				endpoints := o.config.Endpoints
-				if len(endpoints) == 0 {
-					logger.Warn("No endpoints configured for Nuclei")
-					continue
-				}
-				scanner = NewNucleiScanner(baseConfig, endpoints)
-			case "gitleaks":
-				scanner = NewGitleaksScanner(baseConfig, o.getGitleaksTarget())
-			case "checkov":
-				targets := o.getCheckovTargets()
-				if len(targets) == 0 {
-					logger.Warn("No targets configured for Checkov")
-					continue
-				}
-				scanner = NewCheckovScanner(baseConfig, targets)
-			default:
-				logger.Warn("Unknown scanner type", "scanner", scannerType)
-				continue
-			}
+		scanner, err := factory.CreateScanner(scannerType)
+		if err != nil {
+			// Skip scanners that can't be initialized (e.g., no config)
+			o.logger.Debug("Skipping scanner", "type", scannerType, "reason", err)
+			continue
 		}
 
 		o.scanners = append(o.scanners, scanner)
-		logger.Debug("Initialized scanner", "name", scanner.Name(), "type", scannerType)
+		o.logger.Debug("Initialized scanner", "name", scanner.Name(), "type", scannerType)
 	}
 
 	if len(o.scanners) == 0 {
@@ -103,39 +88,7 @@ func (o *Orchestrator) InitializeScanners(onlyScanners []string) error {
 	return nil
 }
 
-// determineScanners returns which scanner types to use based on config and filters.
-func (o *Orchestrator) determineScanners(onlyScanners []string) []string {
-	var scanners []string
-
-	// If specific scanners requested, use only those
-	if len(onlyScanners) > 0 {
-		return onlyScanners
-	}
-
-	// Otherwise, determine based on configuration
-	if o.config.AWS != nil && len(o.config.AWS.Profiles) > 0 {
-		scanners = append(scanners, "prowler")
-	}
-
-	if o.config.Docker != nil && len(o.config.Docker.Containers) > 0 {
-		scanners = append(scanners, "trivy")
-	}
-
-	if o.config.Kubernetes != nil && len(o.config.Kubernetes.Contexts) > 0 {
-		scanners = append(scanners, "kubescape")
-	}
-
-	if len(o.config.Endpoints) > 0 {
-		scanners = append(scanners, "nuclei")
-	}
-
-	// Always include these if not filtered
-	scanners = append(scanners, "gitleaks", "checkov")
-
-	return scanners
-}
-
-// RunScans executes all scanners in parallel.
+// RunScans executes all scanners with resource management using worker pool.
 func (o *Orchestrator) RunScans(ctx context.Context) (*models.ScanMetadata, error) {
 	metadata := &models.ScanMetadata{
 		StartTime:   time.Now(),
@@ -148,50 +101,84 @@ func (o *Orchestrator) RunScans(ctx context.Context) (*models.ScanMetadata, erro
 		},
 	}
 
-	// Channel for results
-	resultsChan := make(chan *models.ScanResult, len(o.scanners))
+	// Create worker pool
+	jobs := make(chan Scanner, len(o.scanners))
+	results := make(chan *models.ScanResult, len(o.scanners))
+
+	// Start workers
 	var wg sync.WaitGroup
-
-	// Run scanners in parallel
-	for _, scanner := range o.scanners {
+	for i := 0; i < o.maxWorkers && i < len(o.scanners); i++ {
 		wg.Add(1)
-		go func(s Scanner) {
-			defer wg.Done()
-
-			logger.Info("Running scanner", "name", s.Name())
-			result, err := s.Scan(ctx)
-
-			if err != nil {
-				logger.Error("Scanner failed", "name", s.Name(), "error", err)
-				result = &models.ScanResult{
-					Scanner:   s.Name(),
-					StartTime: time.Now(),
-					EndTime:   time.Now(),
-					Error:     err.Error(),
-					Findings:  []models.Finding{},
-				}
-				metadata.Summary.FailedScanners = append(metadata.Summary.FailedScanners, s.Name())
-			}
-
-			resultsChan <- result
-		}(scanner)
+		go o.worker(ctx, &wg, jobs, results)
 	}
 
-	// Wait for all scanners and close channel
+	// Send jobs to workers
+	go func() {
+		for _, scanner := range o.scanners {
+			select {
+			case jobs <- scanner:
+			case <-ctx.Done():
+				close(jobs)
+				return
+			}
+		}
+		close(jobs)
+	}()
+
+	// Wait for workers to finish and close results
 	go func() {
 		wg.Wait()
-		close(resultsChan)
+		close(results)
 	}()
 
 	// Collect results
-	for result := range resultsChan {
+	for result := range results {
 		o.processResult(result, metadata)
 	}
 
 	metadata.EndTime = time.Now()
 	metadata.Scanners = o.getScannerNames()
 
+	// Enrich findings with business context if configured
+	enrichedFindings := o.EnrichFindings(metadata)
+	if len(enrichedFindings) > 0 {
+		metadata.EnrichedFindings = enrichedFindings
+		o.logger.Info("Enriched findings with business context", "count", len(enrichedFindings))
+	}
+
 	return metadata, nil
+}
+
+// worker processes scanner jobs from the jobs channel.
+func (o *Orchestrator) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Scanner, results chan<- *models.ScanResult) {
+	defer wg.Done()
+
+	for scanner := range jobs {
+		// Create scanner-specific context with timeout
+		scanCtx, cancel := context.WithTimeout(ctx, o.scanTimeout)
+
+		o.logger.Info("Running scanner", "name", scanner.Name())
+		result, err := scanner.Scan(scanCtx)
+
+		cancel() // Clean up the context
+
+		if err != nil {
+			o.logger.Error("Scanner failed", "name", scanner.Name(), "error", err)
+			result = &models.ScanResult{
+				Scanner:   scanner.Name(),
+				StartTime: time.Now(),
+				EndTime:   time.Now(),
+				Error:     err.Error(),
+				Findings:  []models.Finding{},
+			}
+		}
+
+		select {
+		case results <- result:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // processResult processes a single scanner result and updates metadata.
@@ -222,7 +209,7 @@ func (o *Orchestrator) processResult(result *models.ScanResult, metadata *models
 
 		// Validate and normalize
 		if err := ValidateFinding(&finding); err != nil {
-			logger.Warn("Invalid finding skipped",
+			o.logger.Warn("Invalid finding skipped",
 				"scanner", finding.Scanner,
 				"type", finding.Type,
 				"error", err,
@@ -242,6 +229,11 @@ func (o *Orchestrator) processResult(result *models.ScanResult, metadata *models
 	result.Findings = processedFindings
 	metadata.Results[result.Scanner] = result
 	metadata.Summary.ByScanner[result.Scanner] = len(processedFindings)
+
+	// Track failed scanners
+	if result.Error != "" {
+		metadata.Summary.FailedScanners = append(metadata.Summary.FailedScanners, result.Scanner)
+	}
 }
 
 // EnrichFindings adds business context to findings if metadata enrichment is configured.
@@ -270,7 +262,7 @@ func (o *Orchestrator) EnrichFindings(metadata *models.ScanMetadata) []models.En
 				}
 				enrichedFinding.SetBusinessContext(businessContext)
 
-				logger.Debug("Enriched finding with business context",
+				o.logger.Debug("Enriched finding with business context",
 					"resource", finding.Resource,
 					"owner", resourceMetadata.Owner,
 				)
@@ -280,7 +272,7 @@ func (o *Orchestrator) EnrichFindings(metadata *models.ScanMetadata) []models.En
 		}
 	}
 
-	logger.Info("Completed finding enrichment",
+	o.logger.Info("Completed finding enrichment",
 		"total_findings", len(enrichedFindings),
 		"resources_with_metadata", len(o.config.MetadataEnrichment.Resources),
 	)
@@ -304,11 +296,6 @@ func (o *Orchestrator) getTrivyTargets() []string {
 	// Add Docker containers
 	if o.config.Docker != nil {
 		targets = append(targets, o.config.Docker.Containers...)
-	}
-
-	// Add current directory for filesystem scanning if no specific targets
-	if len(targets) == 0 {
-		targets = append(targets, ".")
 	}
 
 	return targets
@@ -362,4 +349,31 @@ func (o *Orchestrator) getCheckovTargets() []string {
 	// Could be extended to read from config.IaC.Directories or similar
 	// For now, return current directory which will scan all IaC files recursively
 	return targets
+}
+
+// ClientConfig interface implementation
+
+// GetAWSConfig returns AWS configuration for scanners.
+func (o *Orchestrator) GetAWSConfig() (profiles []string, regions []string, services []string) {
+	return o.getProwlerConfig()
+}
+
+// GetDockerTargets returns Docker targets for scanners.
+func (o *Orchestrator) GetDockerTargets() []string {
+	return o.getTrivyTargets()
+}
+
+// GetKubernetesConfig returns Kubernetes configuration for scanners.
+func (o *Orchestrator) GetKubernetesConfig() (contexts []string, namespaces []string) {
+	return o.getKubescapeConfig()
+}
+
+// GetEndpoints returns web endpoints for scanners.
+func (o *Orchestrator) GetEndpoints() []string {
+	return o.config.Endpoints
+}
+
+// GetCheckovTargets returns targets for Checkov scanner.
+func (o *Orchestrator) GetCheckovTargets() []string {
+	return o.getCheckovTargets()
 }

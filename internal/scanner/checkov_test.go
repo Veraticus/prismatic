@@ -201,9 +201,16 @@ func TestCheckovScanner_ParseResults(t *testing.T) {
 			wantFindings: 2,
 			validateFirst: func(t *testing.T, f models.Finding) {
 				t.Helper()
-				// First finding should be terraform
-				assert.Equal(t, "aws-misconfiguration", f.Type)
-				assert.Equal(t, models.SeverityCritical, f.Severity)
+				// Check that we have one of the expected findings
+				// They might come in any order
+				validTypes := []string{"aws-misconfiguration", "container-misconfiguration"}
+				assert.Contains(t, validTypes, f.Type)
+
+				if f.Type == "aws-misconfiguration" {
+					assert.Equal(t, models.SeverityCritical, f.Severity)
+				} else {
+					assert.Equal(t, models.SeverityMedium, f.Severity)
+				}
 			},
 		},
 		{

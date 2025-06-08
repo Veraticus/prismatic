@@ -268,10 +268,10 @@ func TestKubescapeScanner_ParseResults_InvalidJSON(t *testing.T) {
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
 
-	var scannerErr *Error
+	var scannerErr *ScannerError
 	assert.ErrorAs(t, err, &scannerErr)
 	assert.Equal(t, "kubescape", scannerErr.Scanner)
-	assert.Equal(t, "parsing", scannerErr.Phase)
+	assert.Equal(t, ErrorTypeParse, scannerErr.Type)
 }
 
 func TestKubescapeScanner_MapControlToType(t *testing.T) {

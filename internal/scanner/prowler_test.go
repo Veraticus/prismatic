@@ -161,7 +161,7 @@ func TestProwlerScanner_ParseResults_InvalidJSON(t *testing.T) {
 
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
-	assert.IsType(t, &Error{}, err)
+	assert.IsType(t, &ScannerError{}, err)
 }
 
 func TestProwlerScanner_MapCheckToType(t *testing.T) {

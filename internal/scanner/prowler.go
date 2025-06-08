@@ -24,13 +24,18 @@ type ProwlerScanner struct {
 
 // NewProwlerScanner creates a new Prowler scanner instance.
 func NewProwlerScanner(config Config, profiles, regions, services []string) *ProwlerScanner {
+	return NewProwlerScannerWithLogger(config, profiles, regions, services, logger.GetGlobalLogger())
+}
+
+// NewProwlerScannerWithLogger creates a new Prowler scanner instance with a custom logger.
+func NewProwlerScannerWithLogger(config Config, profiles, regions, services []string, log logger.Logger) *ProwlerScanner {
 	// Default to all regions if none specified
 	if len(regions) == 0 {
 		regions = []string{"all"}
 	}
 
 	return &ProwlerScanner{
-		BaseScanner: NewBaseScanner("prowler", config),
+		BaseScanner: NewBaseScannerWithLogger("prowler", config, log),
 		profiles:    profiles,
 		regions:     regions,
 		services:    services,
@@ -60,7 +65,7 @@ func (s *ProwlerScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		if err != nil {
 			// Log error but continue with other profiles
 			if s.config.Debug {
-				logger.Warn("Prowler scan failed", "profile", profile, "error", err)
+				s.logger.Warn("Prowler scan failed", "profile", profile, "error", err)
 			}
 			continue
 		}
@@ -68,7 +73,7 @@ func (s *ProwlerScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		findings, err := s.ParseResults(output)
 		if err != nil {
 			if s.config.Debug {
-				logger.Warn("Failed to parse Prowler results", "profile", profile, "error", err)
+				s.logger.Warn("Failed to parse Prowler results", "profile", profile, "error", err)
 			}
 			continue
 		}

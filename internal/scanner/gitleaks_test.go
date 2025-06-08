@@ -126,7 +126,7 @@ func TestGitleaksScanner_ParseResults_InvalidJSON(t *testing.T) {
 
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
-	assert.IsType(t, &Error{}, err)
+	assert.IsType(t, &ScannerError{}, err)
 }
 
 func TestGitleaksScanner_RedactSecret(t *testing.T) {

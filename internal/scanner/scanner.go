@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // Scanner defines the interface that all security scanners must implement.
@@ -29,6 +30,7 @@ type Config struct {
 
 // BaseScanner provides common functionality for all scanners.
 type BaseScanner struct {
+	logger  logger.Logger
 	name    string
 	version string
 	config  Config
@@ -36,9 +38,15 @@ type BaseScanner struct {
 
 // NewBaseScanner creates a new base scanner instance.
 func NewBaseScanner(name string, config Config) *BaseScanner {
+	return NewBaseScannerWithLogger(name, config, logger.GetGlobalLogger())
+}
+
+// NewBaseScannerWithLogger creates a new base scanner instance with a custom logger.
+func NewBaseScannerWithLogger(name string, config Config, log logger.Logger) *BaseScanner {
 	return &BaseScanner{
 		name:   name,
 		config: config,
+		logger: log,
 	}
 }
 
@@ -77,28 +85,4 @@ func ValidateFinding(f *models.Finding) error {
 	}
 
 	return nil
-}
-
-// Error represents an error from a scanner.
-type Error struct {
-	Err     error
-	Scanner string
-	Phase   string
-}
-
-func (e *Error) Error() string {
-	return fmt.Sprintf("%s scanner %s error: %v", e.Scanner, e.Phase, e.Err)
-}
-
-func (e *Error) Unwrap() error {
-	return e.Err
-}
-
-// NewScannerError creates a new scanner error.
-func NewScannerError(scanner, phase string, err error) error {
-	return &Error{
-		Scanner: scanner,
-		Phase:   phase,
-		Err:     err,
-	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // MockScanner generates realistic fake findings for testing.
@@ -18,8 +19,16 @@ type MockScanner struct {
 
 // NewMockScanner creates a mock scanner that mimics a real scanner.
 func NewMockScanner(scannerType string, config Config) *MockScanner {
+	return NewMockScannerWithLogger(scannerType, config, nil)
+}
+
+// NewMockScannerWithLogger creates a mock scanner with a custom logger.
+func NewMockScannerWithLogger(scannerType string, config Config, log logger.Logger) *MockScanner {
+	if log == nil {
+		log = logger.GetGlobalLogger()
+	}
 	return &MockScanner{
-		BaseScanner: NewBaseScanner("mock-"+scannerType, config),
+		BaseScanner: NewBaseScannerWithLogger("mock-"+scannerType, config, log),
 		scannerType: scannerType,
 	}
 }

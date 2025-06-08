@@ -10,63 +10,103 @@ import (
 
 	"github.com/Veraticus/prismatic/internal/models"
 	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/Veraticus/prismatic/pkg/pathutil"
 )
 
 // Storage handles saving and loading scan results.
 type Storage struct {
+	logger  logger.Logger
 	baseDir string
 }
 
 // NewStorage creates a new storage instance.
 func NewStorage(baseDir string) *Storage {
+	return NewStorageWithLogger(baseDir, logger.GetGlobalLogger())
+}
+
+// NewStorageWithLogger creates a new storage instance with a custom logger.
+func NewStorageWithLogger(baseDir string, log logger.Logger) *Storage {
 	return &Storage{
 		baseDir: baseDir,
+		logger:  log,
 	}
 }
 
 // SaveScanResults saves scan results to the output directory.
 func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadata) error {
+	// Validate output directory path is safe (no directory traversal)
+	validOutputDir, err := pathutil.ValidateDataPath(outputDir, "")
+	if err != nil {
+		return fmt.Errorf("invalid output directory: %w", err)
+	}
+
 	// Create output directory structure
-	if err := os.MkdirAll(outputDir, 0750); err != nil {
+	if err := os.MkdirAll(validOutputDir, 0750); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
-	rawDir := filepath.Join(outputDir, "raw")
+	rawDir := filepath.Join(validOutputDir, "raw")
 	if err := os.MkdirAll(rawDir, 0750); err != nil {
 		return fmt.Errorf("creating raw directory: %w", err)
 	}
 
 	// Save metadata
-	metadataPath := filepath.Join(outputDir, "metadata.json")
+	metadataPath, err := pathutil.JoinAndValidate(validOutputDir, "metadata.json")
+	if err != nil {
+		return fmt.Errorf("invalid metadata path: %w", err)
+	}
 	if err := s.saveJSON(metadataPath, metadata); err != nil {
 		return fmt.Errorf("saving metadata: %w", err)
 	}
-	logger.Debug("Saved metadata", "path", metadataPath)
+	s.logger.Debug("Saved metadata", "path", metadataPath)
 
 	// Save raw scanner outputs
 	for scanner, result := range metadata.Results {
 		if len(result.RawOutput) > 0 {
-			rawPath := filepath.Join(rawDir, fmt.Sprintf("%s.json", scanner))
+			rawPath, err := pathutil.JoinAndValidate(rawDir, fmt.Sprintf("%s.json", scanner))
+			if err != nil {
+				s.logger.Warn("Invalid raw output path", "scanner", scanner, "error", err)
+				continue
+			}
 			if err := os.WriteFile(rawPath, result.RawOutput, 0600); err != nil {
-				logger.Warn("Failed to save raw output", "scanner", scanner, "error", err)
+				s.logger.Warn("Failed to save raw output", "scanner", scanner, "error", err)
 			} else {
-				logger.Debug("Saved raw output", "scanner", scanner, "path", rawPath)
+				s.logger.Debug("Saved raw output", "scanner", scanner, "path", rawPath)
 			}
 		}
 	}
 
 	// Save consolidated findings
 	allFindings := s.consolidateFindings(metadata)
-	findingsPath := filepath.Join(outputDir, "findings.json")
+	findingsPath, err := pathutil.JoinAndValidate(validOutputDir, "findings.json")
+	if err != nil {
+		return fmt.Errorf("invalid findings path: %w", err)
+	}
 	if err := s.saveJSON(findingsPath, allFindings); err != nil {
 		return fmt.Errorf("saving findings: %w", err)
 	}
-	logger.Debug("Saved findings", "path", findingsPath, "count", len(allFindings))
+	s.logger.Debug("Saved findings", "path", findingsPath, "count", len(allFindings))
+
+	// Save enriched findings if available
+	if len(metadata.EnrichedFindings) > 0 {
+		enrichedPath, err := pathutil.JoinAndValidate(validOutputDir, "enriched_findings.json")
+		if err != nil {
+			return fmt.Errorf("invalid enriched findings path: %w", err)
+		}
+		if err := s.saveJSON(enrichedPath, metadata.EnrichedFindings); err != nil {
+			return fmt.Errorf("saving enriched findings: %w", err)
+		}
+		s.logger.Debug("Saved enriched findings", "path", enrichedPath, "count", len(metadata.EnrichedFindings))
+	}
 
 	// Save scan log
-	logPath := filepath.Join(outputDir, "scan.log")
+	logPath, err := pathutil.JoinAndValidate(validOutputDir, "scan.log")
+	if err != nil {
+		s.logger.Warn("Invalid scan log path", "error", err)
+		return nil
+	}
 	if err := s.saveScanLog(logPath, metadata); err != nil {
-		logger.Warn("Failed to save scan log", "error", err)
+		s.logger.Warn("Failed to save scan log", "error", err)
 	}
 
 	return nil
@@ -74,19 +114,43 @@ func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadat
 
 // LoadScanResults loads scan results from a directory.
 func (s *Storage) LoadScanResults(scanDir string) (*models.ScanMetadata, error) {
+	// Validate scan directory path is safe (no directory traversal)
+	validScanDir, err := pathutil.ValidateDataPath(scanDir, "")
+	if err != nil {
+		return nil, fmt.Errorf("invalid scan directory: %w", err)
+	}
+
 	// Load metadata
-	metadataPath := filepath.Join(scanDir, "metadata.json")
+	metadataPath, err := pathutil.JoinAndValidate(validScanDir, "metadata.json")
+	if err != nil {
+		return nil, fmt.Errorf("invalid metadata path: %w", err)
+	}
 	var metadata models.ScanMetadata
 	if err := s.loadJSON(metadataPath, &metadata); err != nil {
 		return nil, fmt.Errorf("loading metadata: %w", err)
 	}
 
 	// Load findings
-	findingsPath := filepath.Join(scanDir, "findings.json")
+	findingsPath, err := pathutil.JoinAndValidate(validScanDir, "findings.json")
+	if err != nil {
+		s.logger.Warn("Invalid findings path", "error", err)
+		// Not fatal - metadata might still be useful
+	}
 	var findings []models.Finding
 	if err := s.loadJSON(findingsPath, &findings); err != nil {
-		logger.Warn("Failed to load findings", "error", err)
+		s.logger.Warn("Failed to load findings", "error", err)
 		// Not fatal - metadata might still be useful
+	}
+
+	// Load enriched findings if available
+	enrichedPath, err := pathutil.JoinAndValidate(validScanDir, "enriched_findings.json")
+	if err != nil {
+		s.logger.Debug("Invalid enriched findings path", "error", err)
+	}
+	var enrichedFindings []models.EnrichedFinding
+	if err := s.loadJSON(enrichedPath, &enrichedFindings); err == nil {
+		metadata.EnrichedFindings = enrichedFindings
+		s.logger.Debug("Loaded enriched findings", "count", len(enrichedFindings))
 	}
 
 	// Reconstruct results if needed
@@ -144,10 +208,14 @@ func (s *Storage) ListScans(client string, limit int) ([]ScanInfo, error) {
 		}
 
 		// Load metadata
-		metadataPath := filepath.Join(scansDir, entry.Name(), "metadata.json")
+		metadataPath, err := pathutil.JoinAndValidate(scansDir, entry.Name(), "metadata.json")
+		if err != nil {
+			s.logger.Debug("Invalid metadata path", "dir", entry.Name(), "error", err)
+			continue
+		}
 		var metadata models.ScanMetadata
 		if err := s.loadJSON(metadataPath, &metadata); err != nil {
-			logger.Debug("Skipping invalid scan directory", "dir", entry.Name(), "error", err)
+			s.logger.Debug("Skipping invalid scan directory", "dir", entry.Name(), "error", err)
 			continue
 		}
 
@@ -200,7 +268,8 @@ func (s *Storage) consolidateFindings(metadata *models.ScanMetadata) []models.Fi
 
 // saveJSON saves data as JSON to a file.
 func (s *Storage) saveJSON(path string, data any) (err error) {
-	file, err := os.Create(path) //nolint:gosec // Path is internally generated and validated //nolint:gosec // Path is internally generated and validated
+	// Path should already be validated by caller
+	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
@@ -217,7 +286,8 @@ func (s *Storage) saveJSON(path string, data any) (err error) {
 
 // loadJSON loads JSON data from a file.
 func (s *Storage) loadJSON(path string, data any) (err error) {
-	file, err := os.Open(path) //nolint:gosec // Path is internally generated and validated
+	// Path should already be validated by caller
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
@@ -232,7 +302,8 @@ func (s *Storage) loadJSON(path string, data any) (err error) {
 
 // saveScanLog saves a human-readable scan log.
 func (s *Storage) saveScanLog(path string, metadata *models.ScanMetadata) (err error) {
-	file, err := os.Create(path) //nolint:gosec // Path is internally generated and validated
+	// Path should already be validated by caller
+	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}

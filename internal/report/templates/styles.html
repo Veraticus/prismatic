@@ -548,6 +548,48 @@ footer p {
     }
 }
 
+/* Business Context Styling */
+.business-context {
+    background: rgba(110, 90, 255, 0.05);
+    border: 1px solid rgba(110, 90, 255, 0.2);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 16px 0;
+}
+
+.business-context h5 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    margin: 0 0 12px 0;
+}
+
+.context-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.context-item {
+    font-size: 0.875rem;
+}
+
+.context-item strong {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.owner-tag {
+    background: rgba(106, 90, 205, 0.1);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    margin-left: 8px;
+}
+
 /* Print Styles */
 @media print {
     body {

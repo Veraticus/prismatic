@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Veraticus/prismatic/pkg/pathutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -71,7 +72,13 @@ type ResourceMetadata struct {
 
 // LoadConfig reads and parses a YAML configuration file.
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // Path is from trusted source (config file)
+	// Validate the config file path
+	validPath, err := pathutil.ValidateConfigPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid config path: %w", err)
+	}
+
+	data, err := os.ReadFile(validPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file: %w", err)
 	}

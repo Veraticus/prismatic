@@ -89,7 +89,8 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 
 	// Verify findings.json content
 	var findings []models.Finding
-	findingsData, err := os.ReadFile(filepath.Join(outputDir, "findings.json")) //nolint:gosec // Test file path
+	// Path is safe - constructed from test temp directory
+	findingsData, err := os.ReadFile(filepath.Join(outputDir, "findings.json"))
 	require.NoError(t, err)
 	err = json.Unmarshal(findingsData, &findings)
 	require.NoError(t, err)
@@ -97,7 +98,8 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 	assert.Equal(t, "finding-1", findings[0].ID)
 
 	// Verify scan.log content
-	logContent, err := os.ReadFile(filepath.Join(outputDir, "scan.log")) //nolint:gosec // Test file path
+	// Path is safe - constructed from test temp directory
+	logContent, err := os.ReadFile(filepath.Join(outputDir, "scan.log"))
 	require.NoError(t, err)
 	assert.Contains(t, string(logContent), "Client: test-client")
 	assert.Contains(t, string(logContent), "Environment: test-env")

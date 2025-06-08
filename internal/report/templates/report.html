@@ -97,19 +97,37 @@
                 </div>
             </div>
 
-            {{if .TopRisks}}
-            <div class="top-risks">
-                <h3>Top Security Risks</h3>
-                <ol class="risk-list">
-                    {{range .TopRisks}}
-                    <li class="risk-item">
-                        <span class="severity-badge {{severityClass .Severity}}">{{title .Severity}}</span>
-                        <strong>{{.Title}}</strong>
-                        <span class="resource">{{truncate .Resource 60}}</span>
-                    </li>
-                    {{end}}
-                </ol>
-            </div>
+            {{if .UseEnriched}}
+                {{if .TopEnrichedRisks}}
+                <div class="top-risks">
+                    <h3>Top Security Risks</h3>
+                    <ol class="risk-list">
+                        {{range .TopEnrichedRisks}}
+                        <li class="risk-item">
+                            <span class="severity-badge {{severityClass .Severity}}">{{title .Severity}}</span>
+                            <strong>{{.Title}}</strong>
+                            <span class="resource">{{truncate .Resource 60}}</span>
+                            {{if .BusinessContext.Owner}}<span class="owner-tag">Owner: {{.BusinessContext.Owner}}</span>{{end}}
+                        </li>
+                        {{end}}
+                    </ol>
+                </div>
+                {{end}}
+            {{else}}
+                {{if .TopRisks}}
+                <div class="top-risks">
+                    <h3>Top Security Risks</h3>
+                    <ol class="risk-list">
+                        {{range .TopRisks}}
+                        <li class="risk-item">
+                            <span class="severity-badge {{severityClass .Severity}}">{{title .Severity}}</span>
+                            <strong>{{.Title}}</strong>
+                            <span class="resource">{{truncate .Resource 60}}</span>
+                        </li>
+                        {{end}}
+                    </ol>
+                </div>
+                {{end}}
             {{end}}
         </section>
 
@@ -117,58 +135,124 @@
         <section class="detailed-findings">
             <h2>Detailed Findings</h2>
             
-            {{if .AWSFindings}}
-            <div class="findings-category">
-                <h3>🔧 AWS Infrastructure</h3>
-                {{range .AWSFindings}}
-                {{template "finding-card.html" .}}
+            {{if .UseEnriched}}
+                {{if .AWSEnrichedFindings}}
+                <div class="findings-category">
+                    <h3>🔧 AWS Infrastructure</h3>
+                    {{range .AWSEnrichedFindings}}
+                    {{template "enriched-finding-card.html" .}}
+                    {{end}}
+                </div>
                 {{end}}
-            </div>
+            {{else}}
+                {{if .AWSFindings}}
+                <div class="findings-category">
+                    <h3>🔧 AWS Infrastructure</h3>
+                    {{range .AWSFindings}}
+                    {{template "finding-card.html" .}}
+                    {{end}}
+                </div>
+                {{end}}
             {{end}}
             
-            {{if .ContainerFindings}}
-            <div class="findings-category">
-                <h3>🐳 Container Security</h3>
-                {{range .ContainerFindings}}
-                {{template "finding-card.html" .}}
+            {{if .UseEnriched}}
+                {{if .ContainerEnrichedFindings}}
+                <div class="findings-category">
+                    <h3>🐳 Container Security</h3>
+                    {{range .ContainerEnrichedFindings}}
+                    {{template "enriched-finding-card.html" .}}
+                    {{end}}
+                </div>
                 {{end}}
-            </div>
+            {{else}}
+                {{if .ContainerFindings}}
+                <div class="findings-category">
+                    <h3>🐳 Container Security</h3>
+                    {{range .ContainerFindings}}
+                    {{template "finding-card.html" .}}
+                    {{end}}
+                </div>
+                {{end}}
             {{end}}
             
-            {{if .KubernetesFindings}}
-            <div class="findings-category">
-                <h3>☸️ Kubernetes Security</h3>
-                {{range .KubernetesFindings}}
-                {{template "finding-card.html" .}}
+            {{if .UseEnriched}}
+                {{if .KubernetesEnrichedFindings}}
+                <div class="findings-category">
+                    <h3>☸️ Kubernetes Security</h3>
+                    {{range .KubernetesEnrichedFindings}}
+                    {{template "enriched-finding-card.html" .}}
+                    {{end}}
+                </div>
                 {{end}}
-            </div>
+            {{else}}
+                {{if .KubernetesFindings}}
+                <div class="findings-category">
+                    <h3>☸️ Kubernetes Security</h3>
+                    {{range .KubernetesFindings}}
+                    {{template "finding-card.html" .}}
+                    {{end}}
+                </div>
+                {{end}}
             {{end}}
             
-            {{if .WebFindings}}
-            <div class="findings-category">
-                <h3>🌐 Web Endpoints</h3>
-                {{range .WebFindings}}
-                {{template "finding-card.html" .}}
+            {{if .UseEnriched}}
+                {{if .WebEnrichedFindings}}
+                <div class="findings-category">
+                    <h3>🌐 Web Endpoints</h3>
+                    {{range .WebEnrichedFindings}}
+                    {{template "enriched-finding-card.html" .}}
+                    {{end}}
+                </div>
                 {{end}}
-            </div>
+            {{else}}
+                {{if .WebFindings}}
+                <div class="findings-category">
+                    <h3>🌐 Web Endpoints</h3>
+                    {{range .WebFindings}}
+                    {{template "finding-card.html" .}}
+                    {{end}}
+                </div>
+                {{end}}
             {{end}}
             
-            {{if .SecretsFindings}}
-            <div class="findings-category">
-                <h3>🔑 Secrets & Credentials</h3>
-                {{range .SecretsFindings}}
-                {{template "finding-card.html" .}}
+            {{if .UseEnriched}}
+                {{if .SecretsEnrichedFindings}}
+                <div class="findings-category">
+                    <h3>🔑 Secrets & Credentials</h3>
+                    {{range .SecretsEnrichedFindings}}
+                    {{template "enriched-finding-card.html" .}}
+                    {{end}}
+                </div>
                 {{end}}
-            </div>
+            {{else}}
+                {{if .SecretsFindings}}
+                <div class="findings-category">
+                    <h3>🔑 Secrets & Credentials</h3>
+                    {{range .SecretsFindings}}
+                    {{template "finding-card.html" .}}
+                    {{end}}
+                </div>
+                {{end}}
             {{end}}
             
-            {{if .IaCFindings}}
-            <div class="findings-category">
-                <h3>📋 Infrastructure as Code</h3>
-                {{range .IaCFindings}}
-                {{template "finding-card.html" .}}
+            {{if .UseEnriched}}
+                {{if .IaCEnrichedFindings}}
+                <div class="findings-category">
+                    <h3>📋 Infrastructure as Code</h3>
+                    {{range .IaCEnrichedFindings}}
+                    {{template "enriched-finding-card.html" .}}
+                    {{end}}
+                </div>
                 {{end}}
-            </div>
+            {{else}}
+                {{if .IaCFindings}}
+                <div class="findings-category">
+                    <h3>📋 Infrastructure as Code</h3>
+                    {{range .IaCFindings}}
+                    {{template "finding-card.html" .}}
+                    {{end}}
+                </div>
+                {{end}}
             {{end}}
         </section>
 

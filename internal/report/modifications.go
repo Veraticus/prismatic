@@ -7,6 +7,7 @@ import (
 
 	"github.com/Veraticus/prismatic/internal/models"
 	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/Veraticus/prismatic/pkg/pathutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -41,7 +42,13 @@ type SeverityOverride struct {
 
 // LoadModifications loads modifications from a YAML file.
 func LoadModifications(path string) (*Modifications, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path is from trusted user input
+	// Validate the modifications file path
+	validPath, err := pathutil.ValidateConfigPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid modifications file path: %w", err)
+	}
+
+	data, err := os.ReadFile(validPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading modifications file: %w", err)
 	}
@@ -69,6 +76,11 @@ func LoadModifications(path string) (*Modifications, error) {
 
 // ApplyModifications applies manual modifications to findings.
 func (m *Modifications) ApplyModifications(findings []models.Finding) []models.Finding {
+	return m.ApplyModificationsWithLogger(findings, logger.GetGlobalLogger())
+}
+
+// ApplyModificationsWithLogger applies manual modifications to findings with a custom logger.
+func (m *Modifications) ApplyModificationsWithLogger(findings []models.Finding, log logger.Logger) []models.Finding {
 	// Create maps for efficient lookups
 	suppressionMap := make(map[string]Suppression)
 	for _, s := range m.Suppressions {
@@ -91,14 +103,14 @@ func (m *Modifications) ApplyModifications(findings []models.Finding) []models.F
 		if suppression, exists := suppressionMap[finding.ID]; exists {
 			// Check if suppression has expired
 			if suppression.ExpiresAt != nil && suppression.ExpiresAt.Before(time.Now()) {
-				logger.Warn("Suppression expired",
+				log.Warn("Suppression expired",
 					"finding_id", finding.ID,
 					"expired_at", suppression.ExpiresAt)
 			} else {
 				modified[i].Suppressed = true
 				modified[i].SuppressionReason = suppression.Reason
 				modCount++
-				logger.Debug("Applied suppression",
+				log.Debug("Applied suppression",
 					"finding_id", finding.ID,
 					"reason", suppression.Reason)
 			}
@@ -110,7 +122,7 @@ func (m *Modifications) ApplyModifications(findings []models.Finding) []models.F
 			modified[i].Severity = override.NewSeverity
 			modified[i].OriginalSeverity = originalSeverity
 			modCount++
-			logger.Debug("Applied severity override",
+			log.Debug("Applied severity override",
 				"finding_id", finding.ID,
 				"original", originalSeverity,
 				"new", override.NewSeverity)
@@ -122,7 +134,7 @@ func (m *Modifications) ApplyModifications(findings []models.Finding) []models.F
 		}
 	}
 
-	logger.Info("Applied manual modifications",
+	log.Info("Applied manual modifications",
 		"total_findings", len(findings),
 		"modifications", modCount)
 
@@ -131,6 +143,12 @@ func (m *Modifications) ApplyModifications(findings []models.Finding) []models.F
 
 // SaveModifications saves modifications to a YAML file.
 func SaveModifications(path string, mods *Modifications) error {
+	// Validate the output path
+	validPath, err := pathutil.ValidateOutputPath(path)
+	if err != nil {
+		return fmt.Errorf("invalid output path: %w", err)
+	}
+
 	// Update metadata
 	mods.LastModified = time.Now()
 	if mods.Version == "" {
@@ -144,7 +162,7 @@ func SaveModifications(path string, mods *Modifications) error {
 	}
 
 	// Write to file
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(validPath, data, 0600); err != nil {
 		return fmt.Errorf("writing modifications file: %w", err)
 	}
 

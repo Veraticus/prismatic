@@ -15,58 +15,46 @@ import (
 // TrivyScanner implements container and image vulnerability scanning.
 type TrivyScanner struct {
 	*BaseScanner
-	targets []string
+	executor *ScannerExecutor
+	targets  []string
 }
 
 // NewTrivyScanner creates a new Trivy scanner instance.
 func NewTrivyScanner(config Config, targets []string) *TrivyScanner {
+	return NewTrivyScannerWithLogger(config, targets, logger.GetGlobalLogger())
+}
+
+// NewTrivyScannerWithLogger creates a new Trivy scanner instance with a custom logger.
+func NewTrivyScannerWithLogger(config Config, targets []string, log logger.Logger) *TrivyScanner {
 	return &TrivyScanner{
-		BaseScanner: NewBaseScanner("trivy", config),
+		BaseScanner: NewBaseScannerWithLogger("trivy", config, log),
 		targets:     targets,
+		executor:    NewScannerExecutor(5 * time.Minute),
 	}
 }
 
 // Scan executes Trivy against configured targets.
 func (s *TrivyScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
-	startTime := time.Now()
-
-	result := &models.ScanResult{
-		Scanner:   s.Name(),
-		Version:   s.getVersion(ctx),
-		StartTime: startTime,
-		Findings:  []models.Finding{},
-	}
-
-	// Scan each target
-	for _, target := range s.targets {
-		if err := ctx.Err(); err != nil {
-			result.EndTime = time.Now()
-			result.Error = fmt.Sprintf("scan canceled: %v", err)
-			return result, nil
+	return s.executor.Execute(ctx, s, func(scanCtx context.Context) (*models.ScanResult, error) {
+		result := &models.ScanResult{
+			Scanner:   s.Name(),
+			Version:   s.getVersion(scanCtx),
+			StartTime: time.Now(),
+			Findings:  []models.Finding{},
 		}
 
-		output, err := s.scanTarget(ctx, target)
-		if err != nil {
-			// Log error but continue with other targets
-			if s.config.Debug {
-				logger.Debug("Trivy scan failed for %s: %v", target, err)
-			}
-			continue
+		// Use MultiTargetExecutor for processing multiple targets
+		mte := &MultiTargetExecutor{
+			Scanner:   s.Name(),
+			ParseFunc: s.ParseResults,
 		}
 
-		findings, err := s.ParseResults(output)
-		if err != nil {
-			if s.config.Debug {
-				logger.Debug("Failed to parse Trivy results for %s: %v", target, err)
-			}
-			continue
-		}
+		mte.ProcessTargets(s.targets, func(target string) ([]byte, error) {
+			return s.scanTarget(scanCtx, target)
+		}, result)
 
-		result.Findings = append(result.Findings, findings...)
-	}
-
-	result.EndTime = time.Now()
-	return result, nil
+		return result, nil
+	})
 }
 
 // ParseResults converts Trivy JSON output to normalized findings.

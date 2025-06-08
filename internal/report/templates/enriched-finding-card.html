@@ -1,0 +1,82 @@
+{{define "enriched-finding-card.html"}}
+<div class="finding-card {{severityClass .Severity}}{{if .Suppressed}} suppressed{{end}}">
+    <div class="finding-header">
+        <h4 class="finding-title">{{.Title}}</h4>
+        <div class="badges">
+            <span class="severity-badge {{severityClass .Severity}}">{{title .Severity}}</span>
+            {{if .OriginalSeverity}}
+            <span class="original-severity">was: {{title .OriginalSeverity}}</span>
+            {{end}}
+            {{if .Suppressed}}
+            <span class="suppressed-badge">Suppressed</span>
+            {{end}}
+        </div>
+    </div>
+    
+    <div class="finding-meta">
+        <span class="meta-tag">{{.Type}}</span>
+        <span class="meta-tag">{{.Resource}}</span>
+        {{if .Location}}
+        <span class="meta-tag">📍 {{.Location}}</span>
+        {{end}}
+        {{if .Framework}}
+        <span class="meta-tag">🏛️ {{.Framework}}</span>
+        {{end}}
+    </div>
+    
+    {{if .BusinessContext}}
+    <div class="business-context">
+        <h5>Business Context</h5>
+        <div class="context-grid">
+            {{if .BusinessContext.Owner}}
+            <div class="context-item">
+                <strong>Owner:</strong> {{.BusinessContext.Owner}}
+            </div>
+            {{end}}
+            {{if .BusinessContext.DataClassification}}
+            <div class="context-item">
+                <strong>Data Classification:</strong> {{.BusinessContext.DataClassification}}
+            </div>
+            {{end}}
+            {{if .BusinessContext.BusinessImpact}}
+            <div class="context-item">
+                <strong>Business Impact:</strong> {{.BusinessContext.BusinessImpact}}
+            </div>
+            {{end}}
+            {{if .BusinessContext.ComplianceImpact}}
+            <div class="context-item">
+                <strong>Compliance Impact:</strong> {{range $i, $v := .BusinessContext.ComplianceImpact}}{{if $i}}, {{end}}{{$v}}{{end}}
+            </div>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+    
+    <p class="finding-description">{{.Description}}</p>
+    
+    {{if .Impact}}
+    <div class="finding-impact">
+        <strong>Impact:</strong> {{.Impact}}
+    </div>
+    {{end}}
+    
+    {{if .Remediation}}
+    <div class="finding-remediation">
+        <h4>Remediation</h4>
+        <p>{{.Remediation}}</p>
+    </div>
+    {{end}}
+    
+    {{if .SuppressionReason}}
+    <div class="suppression-reason">
+        <strong>Suppression Reason:</strong> {{.SuppressionReason}}
+    </div>
+    {{end}}
+    
+    {{if .Comment}}
+    <div class="finding-comment">
+        <strong>Comment:</strong> {{.Comment}}
+    </div>
+    {{end}}
+</div>
+{{end}}

@@ -115,9 +115,19 @@ Examples:
 				return fmt.Errorf("generating HTML report: %w", err)
 			}
 		case "pdf":
-			// TODO: Implement PDF generation from HTML
-			logger.Warn("PDF generation not yet implemented")
-			continue
+			// First generate HTML to a temporary file
+			htmlFile := strings.TrimSuffix(outputFile, ".pdf") + ".html"
+			if err := generator.Generate(htmlFile); err != nil {
+				return fmt.Errorf("generating HTML for PDF: %w", err)
+			}
+
+			// Convert HTML to PDF
+			if err := report.ConvertHTMLToPDF(htmlFile, outputFile); err != nil {
+				return fmt.Errorf("converting HTML to PDF: %w", err)
+			}
+
+			// Optionally remove the intermediate HTML file
+			// os.Remove(htmlFile)
 		}
 
 		logger.Info("Generated report", "format", format, "file", outputFile)

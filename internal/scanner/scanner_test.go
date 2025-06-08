@@ -184,15 +184,15 @@ func TestError(t *testing.T) {
 	assert.Equal(t, "test-scanner scanner execution error: base error", scannerErr.Error())
 
 	// Test unwrap
-	var se *Error
+	var se *ScannerError
 	assert.True(t, errors.As(scannerErr, &se))
 	assert.Equal(t, "test-scanner", se.Scanner)
-	assert.Equal(t, "execution", se.Phase)
+	assert.Equal(t, ErrorTypeExecution, se.Type)
 	assert.Equal(t, baseErr, se.Unwrap())
 
 	// Test with parsing phase
-	parseErr := NewScannerError("another-scanner", "parsing", errors.New("parse failed"))
-	assert.Contains(t, parseErr.Error(), "parsing")
+	parseErr := NewScannerError("another-scanner", "parse", errors.New("parse failed"))
+	assert.Contains(t, parseErr.Error(), "parse")
 	assert.Contains(t, parseErr.Error(), "parse failed")
 }
 

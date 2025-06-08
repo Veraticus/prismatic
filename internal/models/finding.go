@@ -45,15 +45,16 @@ type ScanResult struct {
 
 // ScanMetadata represents overall scan information.
 type ScanMetadata struct {
-	ID          string                 `json:"id"`
-	StartTime   time.Time              `json:"start_time"`
-	EndTime     time.Time              `json:"end_time"`
-	ClientName  string                 `json:"client_name"`
-	Environment string                 `json:"environment"`
-	ConfigFile  string                 `json:"config_file"`
-	Scanners    []string               `json:"scanners"`
-	Results     map[string]*ScanResult `json:"results"`
-	Summary     ScanSummary            `json:"summary"`
+	StartTime        time.Time              `json:"start_time"`
+	EndTime          time.Time              `json:"end_time"`
+	Results          map[string]*ScanResult `json:"results"`
+	ID               string                 `json:"id"`
+	ClientName       string                 `json:"client_name"`
+	Environment      string                 `json:"environment"`
+	ConfigFile       string                 `json:"config_file"`
+	Scanners         []string               `json:"scanners"`
+	EnrichedFindings []EnrichedFinding      `json:"enriched_findings,omitempty"`
+	Summary          ScanSummary            `json:"summary"`
 }
 
 // ScanSummary provides high-level statistics.

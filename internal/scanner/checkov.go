@@ -22,8 +22,13 @@ type CheckovScanner struct {
 
 // NewCheckovScanner creates a new Checkov scanner instance.
 func NewCheckovScanner(config Config, targets []string) *CheckovScanner {
+	return NewCheckovScannerWithLogger(config, targets, logger.GetGlobalLogger())
+}
+
+// NewCheckovScannerWithLogger creates a new Checkov scanner instance with a custom logger.
+func NewCheckovScannerWithLogger(config Config, targets []string, log logger.Logger) *CheckovScanner {
 	return &CheckovScanner{
-		BaseScanner: NewBaseScanner("checkov", config),
+		BaseScanner: NewBaseScannerWithLogger("checkov", config, log),
 		targets:     targets,
 	}
 }
@@ -51,7 +56,7 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		if err != nil {
 			// Log error but continue with other targets
 			if s.config.Debug {
-				logger.Warn("Checkov scan failed for %s: %v", target, err)
+				s.logger.Warn("Checkov scan failed", "target", target, "error", err)
 			}
 			continue
 		}
@@ -59,7 +64,7 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		findings, err := s.ParseResults(output)
 		if err != nil {
 			if s.config.Debug {
-				logger.Warn("Failed to parse Checkov results for %s: %v", target, err)
+				s.logger.Warn("Failed to parse Checkov results", "target", target, "error", err)
 			}
 			continue
 		}
