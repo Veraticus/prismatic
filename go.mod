@@ -3,7 +3,7 @@ module github.com/Veraticus/prismatic
 go 1.24.3
 
 require (
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.10.0
 	golang.org/x/text v0.26.0
 	gopkg.in/yaml.v3 v3.0.1
 )
