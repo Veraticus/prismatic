@@ -87,17 +87,8 @@ func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadat
 	}
 	s.logger.Debug("Saved findings", "path", findingsPath, "count", len(allFindings))
 
-	// Save enriched findings if available
-	if len(metadata.EnrichedFindings) > 0 {
-		enrichedPath, err := pathutil.JoinAndValidate(validOutputDir, "enriched_findings.json")
-		if err != nil {
-			return fmt.Errorf("invalid enriched findings path: %w", err)
-		}
-		if err := s.saveJSON(enrichedPath, metadata.EnrichedFindings); err != nil {
-			return fmt.Errorf("saving enriched findings: %w", err)
-		}
-		s.logger.Debug("Saved enriched findings", "path", enrichedPath, "count", len(metadata.EnrichedFindings))
-	}
+	// Note: EnrichedFindings are no longer saved separately.
+	// Business context is now part of the Finding struct itself.
 
 	// Save scan log
 	logPath, err := pathutil.JoinAndValidate(validOutputDir, "scan.log")
@@ -142,16 +133,8 @@ func (s *Storage) LoadScanResults(scanDir string) (*models.ScanMetadata, error) 
 		// Not fatal - metadata might still be useful
 	}
 
-	// Load enriched findings if available
-	enrichedPath, err := pathutil.JoinAndValidate(validScanDir, "enriched_findings.json")
-	if err != nil {
-		s.logger.Debug("Invalid enriched findings path", "error", err)
-	}
-	var enrichedFindings []models.EnrichedFinding
-	if err := s.loadJSON(enrichedPath, &enrichedFindings); err == nil {
-		metadata.EnrichedFindings = enrichedFindings
-		s.logger.Debug("Loaded enriched findings", "count", len(enrichedFindings))
-	}
+	// Note: EnrichedFindings are no longer loaded separately.
+	// Business context is now part of the Finding struct itself.
 
 	// Reconstruct results if needed
 	if metadata.Results == nil {

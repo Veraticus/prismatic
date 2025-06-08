@@ -123,16 +123,14 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 	s.logger.Debug("Running Kubescape scan", "context", kubeContext, "args", args)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, NewScannerError(s.Name(), "execution",
-			fmt.Errorf("failed to scan context %s: %w\nOutput: %s", kubeContext, err, string(output)))
+		return nil, fmt.Errorf("%s scan failed: failed to scan context %s: %w\nOutput: %s", s.Name(), kubeContext, err, string(output))
 	}
 
 	// Read the JSON output file
 	// outputFile is a temporary file path we created internally with a timestamp
 	jsonOutput, err := os.ReadFile(outputFile)
 	if err != nil {
-		return nil, NewScannerError(s.Name(), "reading results",
-			fmt.Errorf("failed to read output file: %w", err))
+		return nil, fmt.Errorf("%s scan failed: failed to read output file: %w", s.Name(), err)
 	}
 
 	return jsonOutput, nil
@@ -142,7 +140,7 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 func (s *KubescapeScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 	var report KubescapeReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, NewScannerError(s.Name(), "parse", err)
+		return nil, NewStructuredError(s.Name(), ErrorTypeParse, err)
 	}
 
 	var findings []models.Finding
@@ -161,13 +159,10 @@ func (s *KubescapeScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 				s.mapControlToType(result.ControlID),
 				s.formatResourceName(resource),
 				"", // Kubescape doesn't provide specific location
-			)
+			).WithSeverity(s.mapScoreToSeverityString(result.Score))
 
 			finding.Title = result.Name
 			finding.Description = s.formatDescription(result)
-			// Map score-based severity to string, then normalize
-			severity := s.mapScoreToSeverityString(result.Score)
-			finding.Severity = models.NormalizeSeverity(severity)
 			finding.Framework = s.extractFramework(result)
 			finding.Impact = s.formatImpact(result)
 			finding.Remediation = result.Remediation

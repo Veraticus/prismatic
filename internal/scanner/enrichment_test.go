@@ -14,11 +14,11 @@ import (
 
 func TestEnrichFindingsWithBusinessContext(t *testing.T) {
 	tests := []struct {
-		config           *config.Config
-		validateFirst    func(t *testing.T, ef models.EnrichedFinding)
-		name             string
-		findings         []models.Finding
-		expectedEnriched int
+		config                *config.Config
+		validateFirst         func(t *testing.T, f *models.Finding)
+		name                  string
+		findings              []models.Finding
+		expectedEnrichedCount int
 	}{
 		{
 			name: "enrich findings with metadata",
@@ -70,14 +70,16 @@ func TestEnrichFindingsWithBusinessContext(t *testing.T) {
 					Resource: "https://test.example.com",
 				},
 			},
-			expectedEnriched: 3, // All findings are enriched, 2 have metadata
-			validateFirst: func(t *testing.T, ef models.EnrichedFinding) {
-				assert.Equal(t, "finding-1", ef.ID)
-				assert.Equal(t, "data-team", ef.BusinessContext.Owner)
-				assert.Equal(t, "confidential", ef.BusinessContext.DataClassification)
-				assert.Equal(t, "Critical data storage", ef.BusinessContext.BusinessImpact)
-				assert.Contains(t, ef.BusinessContext.ComplianceImpact, "SOC2")
-				assert.Contains(t, ef.BusinessContext.ComplianceImpact, "GDPR")
+			expectedEnrichedCount: 2, // 2 findings have matching metadata
+			validateFirst: func(t *testing.T, f *models.Finding) {
+				t.Helper()
+				assert.Equal(t, "finding-1", f.ID)
+				require.NotNil(t, f.BusinessContext)
+				assert.Equal(t, "data-team", f.BusinessContext.Owner)
+				assert.Equal(t, "confidential", f.BusinessContext.DataClassification)
+				assert.Equal(t, "Critical data storage", f.BusinessContext.BusinessImpact)
+				assert.Contains(t, f.BusinessContext.ComplianceImpact, "SOC2")
+				assert.Contains(t, f.BusinessContext.ComplianceImpact, "GDPR")
 			},
 		},
 		{
@@ -98,7 +100,7 @@ func TestEnrichFindingsWithBusinessContext(t *testing.T) {
 					Resource: "arn:aws:s3:::test-bucket",
 				},
 			},
-			expectedEnriched: 0,
+			expectedEnrichedCount: 0,
 		},
 		{
 			name: "partial enrichment",
@@ -134,13 +136,15 @@ func TestEnrichFindingsWithBusinessContext(t *testing.T) {
 					Resource: "logs-bucket",
 				},
 			},
-			expectedEnriched: 2, // All findings enriched, 1 has metadata
-			validateFirst: func(t *testing.T, ef models.EnrichedFinding) {
-				assert.Equal(t, "database-team", ef.BusinessContext.Owner)
-				assert.Equal(t, "restricted", ef.BusinessContext.DataClassification)
+			expectedEnrichedCount: 1, // 1 finding has matching metadata
+			validateFirst: func(t *testing.T, f *models.Finding) {
+				t.Helper()
+				require.NotNil(t, f.BusinessContext)
+				assert.Equal(t, "database-team", f.BusinessContext.Owner)
+				assert.Equal(t, "restricted", f.BusinessContext.DataClassification)
 				// BusinessImpact and ComplianceImpact should be empty
-				assert.Empty(t, ef.BusinessContext.BusinessImpact)
-				assert.Empty(t, ef.BusinessContext.ComplianceImpact)
+				assert.Empty(t, f.BusinessContext.BusinessImpact)
+				assert.Empty(t, f.BusinessContext.ComplianceImpact)
 			},
 		},
 	}
@@ -163,18 +167,31 @@ func TestEnrichFindingsWithBusinessContext(t *testing.T) {
 			}
 
 			// Enrich findings
-			enrichedFindings := orch.EnrichFindings(metadata)
+			orch.EnrichFindings(metadata)
+
+			// Count enriched findings
+			enrichedCount := 0
+			for _, result := range metadata.Results {
+				for _, f := range result.Findings {
+					if f.BusinessContext != nil {
+						enrichedCount++
+					}
+				}
+			}
 
 			// Verify count
-			assert.Len(t, enrichedFindings, tt.expectedEnriched)
+			assert.Equal(t, tt.expectedEnrichedCount, enrichedCount)
 
 			// Validate enriched findings with business context
-			if tt.expectedEnriched > 0 && tt.validateFirst != nil {
+			if tt.expectedEnrichedCount > 0 && tt.validateFirst != nil {
 				// Find the first finding with business context
-				for _, ef := range enrichedFindings {
-					if ef.BusinessContext.Owner != "" {
-						tt.validateFirst(t, ef)
-						break
+				for _, result := range metadata.Results {
+					for i := range result.Findings {
+						f := &result.Findings[i]
+						if f.BusinessContext != nil && f.BusinessContext.Owner != "" {
+							tt.validateFirst(t, f)
+							return
+						}
 					}
 				}
 			}
@@ -225,11 +242,9 @@ func TestEnrichmentIntegration(t *testing.T) {
 	metadata, err := orch.RunScans(ctx)
 	require.NoError(t, err)
 
-	// Verify enriched findings were created
-	assert.NotEmpty(t, metadata.EnrichedFindings)
-
-	// Since mock findings don't match our enrichment config, just verify the process works
-	// In a real scenario, findings would match the configured resources
+	// Verify the process works - mock findings won't match our enrichment config
+	assert.NotNil(t, metadata)
+	assert.NotEmpty(t, metadata.Results)
 }
 
 func TestEnrichmentWithSuppression(t *testing.T) {
@@ -284,16 +299,26 @@ func TestEnrichmentWithSuppression(t *testing.T) {
 		},
 	}
 
-	enrichedFindings := orch.EnrichFindings(metadata)
+	orch.EnrichFindings(metadata)
 
 	// Should enrich both suppressed and active findings
-	assert.Len(t, enrichedFindings, 2)
+	enrichedCount := 0
+	for _, result := range metadata.Results {
+		for _, f := range result.Findings {
+			if f.BusinessContext != nil {
+				enrichedCount++
+			}
+		}
+	}
+	assert.Equal(t, 2, enrichedCount)
 
 	// Verify suppressed finding retains suppression status
-	for _, ef := range enrichedFindings {
-		if ef.ID == "finding-1" {
-			assert.True(t, ef.Suppressed)
-			assert.Equal(t, "test-team", ef.BusinessContext.Owner)
+	for _, result := range metadata.Results {
+		for _, f := range result.Findings {
+			if f.ID == "finding-1" {
+				assert.True(t, f.Suppressed)
+				assert.Equal(t, "test-team", f.BusinessContext.Owner)
+			}
 		}
 	}
 }

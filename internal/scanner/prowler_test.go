@@ -200,8 +200,6 @@ func TestNewProwlerScanner(t *testing.T) {
 }
 
 func TestProwlerScanner_ParseNDJSON(t *testing.T) {
-	scanner := NewProwlerScanner(Config{}, []string{}, []string{}, nil)
-
 	// Test OCSF format
 	inputOCSF := `{"metadata":{"event_code":"test1"},"status":"FAIL"}
 {"metadata":{"event_code":"test2"},"status":"FAIL"}
@@ -209,7 +207,9 @@ func TestProwlerScanner_ParseNDJSON(t *testing.T) {
 {"metadata":{"event_code":"test3"},"status":"PASS"}
 invalid line`
 
-	resultsOCSF := scanner.parseNDJSONOCSF([]byte(inputOCSF))
+	var resultsOCSF []ProwlerOCSFCheck
+	err := ParseNDJSON([]byte(inputOCSF), &resultsOCSF)
+	assert.NoError(t, err)
 	assert.Len(t, resultsOCSF, 3)
 	assert.Equal(t, "test1", resultsOCSF[0].Metadata.EventCode)
 
@@ -219,7 +219,9 @@ invalid line`
 invalid line
 {"CheckID":"check3","Status":"PASS"}`
 
-	resultsNative := scanner.parseNDJSONNative([]byte(inputNative))
+	var resultsNative []ProwlerNativeCheck
+	err = ParseNDJSON([]byte(inputNative), &resultsNative)
+	assert.NoError(t, err)
 	assert.Len(t, resultsNative, 3)
 	assert.Equal(t, "check1", resultsNative[0].CheckID)
 }

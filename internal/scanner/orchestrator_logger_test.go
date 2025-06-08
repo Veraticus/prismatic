@@ -45,7 +45,6 @@ func TestScannerFactoryWithLogger(t *testing.T) {
 		Config{},
 		&mockClientConfig{},
 		"/tmp/test",
-		false,
 		mockLogger,
 	)
 

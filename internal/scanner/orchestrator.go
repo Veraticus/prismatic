@@ -61,12 +61,19 @@ func (o *Orchestrator) InitializeScanners(onlyScanners []string) error {
 		Debug:      false,
 	}
 
-	// Create scanner factory
-	factory := NewScannerFactoryWithLogger(baseConfig, o, o.outputDir, o.useMock, o.logger)
+	// Create appropriate factory based on mock flag
+	var factory interface {
+		CreateScanner(string) (Scanner, error)
+	}
+
+	if o.useMock {
+		factory = NewMockScannerFactory(baseConfig, o.logger)
+	} else {
+		factory = NewScannerFactoryWithLogger(baseConfig, o, o.outputDir, o.logger)
+	}
 
 	// Determine which scanners to initialize
-	detector := NewScannerTypeDetector(o)
-	scannerTypes := detector.DetectScanners(onlyScanners)
+	scannerTypes := o.detectScanners(onlyScanners)
 
 	// Initialize scanners using factory
 	for _, scannerType := range scannerTypes {
@@ -140,11 +147,7 @@ func (o *Orchestrator) RunScans(ctx context.Context) (*models.ScanMetadata, erro
 	metadata.Scanners = o.getScannerNames()
 
 	// Enrich findings with business context if configured
-	enrichedFindings := o.EnrichFindings(metadata)
-	if len(enrichedFindings) > 0 {
-		metadata.EnrichedFindings = enrichedFindings
-		o.logger.Info("Enriched findings with business context", "count", len(enrichedFindings))
-	}
+	o.EnrichFindings(metadata)
 
 	return metadata, nil
 }
@@ -204,7 +207,8 @@ func (o *Orchestrator) processResult(result *models.ScanResult, metadata *models
 		// Apply severity override
 		if newSeverity, ok := o.config.GetSeverityOverride(finding.Type); ok {
 			finding.OriginalSeverity = finding.Severity
-			finding.Severity = models.NormalizeSeverity(newSeverity)
+			// Use WithSeverity to normalize the override
+			finding.WithSeverity(newSeverity)
 		}
 
 		// Validate and normalize
@@ -238,46 +242,42 @@ func (o *Orchestrator) processResult(result *models.ScanResult, metadata *models
 
 // EnrichFindings adds business context to findings if metadata enrichment is configured.
 // This is an optional post-processing step that runs after all scanners complete.
-func (o *Orchestrator) EnrichFindings(metadata *models.ScanMetadata) []models.EnrichedFinding {
-	var enrichedFindings []models.EnrichedFinding
-
-	// If no metadata enrichment is configured, return empty slice (not an error)
+// It modifies findings in-place rather than creating new objects.
+func (o *Orchestrator) EnrichFindings(metadata *models.ScanMetadata) {
+	// If no metadata enrichment is configured, return early
 	if len(o.config.MetadataEnrichment.Resources) == 0 {
-		return enrichedFindings
+		return
 	}
+
+	enrichedCount := 0
 
 	// Process each scanner's results
 	for _, result := range metadata.Results {
-		for _, finding := range result.Findings {
-			// Create base enriched finding
-			enrichedFinding := models.EnrichFinding(finding)
+		for i := range result.Findings {
+			finding := &result.Findings[i]
 
 			// Try to match resource metadata
 			if resourceMetadata, ok := o.config.GetResourceMetadata(finding.Resource); ok {
-				businessContext := models.BusinessContext{
+				finding.BusinessContext = &models.BusinessContext{
 					Owner:              resourceMetadata.Owner,
 					DataClassification: resourceMetadata.DataClassification,
 					BusinessImpact:     resourceMetadata.BusinessImpact,
 					ComplianceImpact:   resourceMetadata.ComplianceImpact,
 				}
-				enrichedFinding.SetBusinessContext(businessContext)
+				enrichedCount++
 
 				o.logger.Debug("Enriched finding with business context",
 					"resource", finding.Resource,
 					"owner", resourceMetadata.Owner,
 				)
 			}
-
-			enrichedFindings = append(enrichedFindings, *enrichedFinding)
 		}
 	}
 
 	o.logger.Info("Completed finding enrichment",
-		"total_findings", len(enrichedFindings),
+		"enriched_count", enrichedCount,
 		"resources_with_metadata", len(o.config.MetadataEnrichment.Resources),
 	)
-
-	return enrichedFindings
 }
 
 // getScannerNames returns the names of all configured scanners.
@@ -299,13 +299,6 @@ func (o *Orchestrator) getTrivyTargets() []string {
 	}
 
 	return targets
-}
-
-// getGitleaksTarget returns the target path for Gitleaks scanning.
-func (o *Orchestrator) getGitleaksTarget() string {
-	// For now, always scan the current directory
-	// In the future, this could be configurable
-	return "."
 }
 
 // getProwlerConfig returns Prowler configuration from the main config.
@@ -376,4 +369,40 @@ func (o *Orchestrator) GetEndpoints() []string {
 // GetCheckovTargets returns targets for Checkov scanner.
 func (o *Orchestrator) GetCheckovTargets() []string {
 	return o.getCheckovTargets()
+}
+
+// detectScanners determines which scanners to use based on configuration.
+func (o *Orchestrator) detectScanners(onlyScanners []string) []string {
+	// If specific scanners requested, use only those
+	if len(onlyScanners) > 0 {
+		return onlyScanners
+	}
+
+	// Otherwise, determine based on configuration
+	var scanners []string
+
+	// Check AWS config
+	if profiles, _, _ := o.GetAWSConfig(); len(profiles) > 0 {
+		scanners = append(scanners, "prowler")
+	}
+
+	// Check Docker config
+	if targets := o.GetDockerTargets(); len(targets) > 0 {
+		scanners = append(scanners, "trivy")
+	}
+
+	// Check Kubernetes config
+	if contexts, _ := o.GetKubernetesConfig(); len(contexts) > 0 {
+		scanners = append(scanners, "kubescape")
+	}
+
+	// Check endpoints
+	if endpoints := o.GetEndpoints(); len(endpoints) > 0 {
+		scanners = append(scanners, "nuclei")
+	}
+
+	// Always include these scanners if not filtered
+	scanners = append(scanners, "gitleaks", "checkov")
+
+	return scanners
 }

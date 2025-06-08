@@ -80,7 +80,7 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 func (s *CheckovScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 	var report CheckovReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, NewScannerError(s.Name(), "parse", err)
+		return nil, fmt.Errorf("parsing %s results: %w", s.Name(), err)
 	}
 
 	// Pre-calculate total number of failed checks
@@ -120,9 +120,7 @@ func (s *CheckovScanner) createFindingFromCheck(checkType string, check CheckovF
 			"exposed-secret",
 			check.FilePath,
 			location,
-		)
-
-		finding.Severity = models.NormalizeSeverity(check.Severity)
+		).WithSeverity(check.Severity)
 		finding.Title = fmt.Sprintf("Exposed %s", check.CheckName)
 		finding.Description = fmt.Sprintf("Found potential %s at line %d in %s",
 			check.CheckName, check.FileLineRange[0], check.FilePath)
@@ -157,9 +155,7 @@ func (s *CheckovScanner) createFindingFromCheck(checkType string, check CheckovF
 		s.mapCheckIDToType(check.CheckID),
 		resource,
 		location,
-	)
-
-	finding.Severity = models.NormalizeSeverity(check.Severity)
+	).WithSeverity(check.Severity)
 	finding.Title = check.CheckName
 	if finding.Title == "" {
 		finding.Title = fmt.Sprintf("%s: %s", check.CheckID, check.CheckName)

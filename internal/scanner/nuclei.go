@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -88,7 +87,7 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 	if err != nil {
 		// Nuclei returns non-zero exit code if vulnerabilities are found
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
-			return nil, NewScannerError(s.Name(), "nuclei not found", err)
+			return nil, fmt.Errorf("%s scan failed: nuclei not found: %w", s.Name(), err)
 		}
 		// For other non-zero exit codes, we might still have findings
 	}
@@ -102,23 +101,15 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 
 // ParseResults parses Nuclei's JSON output into findings.
 func (s *NucleiScanner) ParseResults(raw []byte) ([]models.Finding, error) {
+	var results []nucleiResult
+
+	// Use the common NDJSON parser
+	if err := ParseNDJSON(raw, &results); err != nil {
+		return nil, err
+	}
+
 	var findings []models.Finding
-
-	// Nuclei outputs one JSON object per line (NDJSON format)
-	lines := strings.Split(string(raw), "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		var result nucleiResult
-		if err := json.Unmarshal([]byte(line), &result); err != nil {
-			// Skip malformed lines
-			continue
-		}
-
+	for _, result := range results {
 		finding := s.resultToFinding(result)
 		if err := finding.IsValid(); err == nil {
 			findings = append(findings, *finding)
@@ -140,10 +131,9 @@ func (s *NucleiScanner) resultToFinding(result nucleiResult) *models.Finding {
 		findingType,
 		result.Host,
 		fmt.Sprintf("%s:%s", result.Host, result.MatchedAt),
-	)
+	).WithSeverity(result.Info.Severity)
 	finding.Title = result.Info.Name
 	finding.Description = s.buildDescription(result)
-	finding.Severity = models.NormalizeSeverity(result.Info.Severity)
 
 	// Add metadata
 	finding.Metadata = map[string]string{

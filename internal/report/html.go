@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"golang.org/x/text/cases"
@@ -27,14 +28,28 @@ import (
 //go:embed templates/*
 var templateFS embed.FS
 
+// scannerCategories maps scanner names to their categories.
+var scannerCategories = map[string]string{
+	"prowler":        "aws",
+	"mock-prowler":   "aws",
+	"trivy":          "container",
+	"mock-trivy":     "container",
+	"kubescape":      "kubernetes",
+	"mock-kubescape": "kubernetes",
+	"nuclei":         "web",
+	"mock-nuclei":    "web",
+	"gitleaks":       "secrets",
+	"mock-gitleaks":  "secrets",
+	"checkov":        "iac",
+	"mock-checkov":   "iac",
+}
+
 // HTMLGenerator generates HTML reports from scan results.
 type HTMLGenerator struct {
-	logger           logger.Logger
-	metadata         *models.ScanMetadata
-	scanPath         string
-	findings         []models.Finding
-	enrichedFindings []models.EnrichedFinding
-	useEnriched      bool
+	logger   logger.Logger
+	metadata *models.ScanMetadata
+	scanPath string
+	findings []models.Finding
 }
 
 // NewHTMLGenerator creates a new HTML report generator.
@@ -69,19 +84,11 @@ func NewHTMLGeneratorWithLogger(scanPath string, log logger.Logger) (*HTMLGenera
 		return nil, fmt.Errorf("loading findings: %w", err)
 	}
 
-	// Check if enriched findings are available
 	generator := &HTMLGenerator{
 		scanPath: scanPath,
 		metadata: metadata,
 		findings: findings,
 		logger:   log,
-	}
-
-	// Load enriched findings if available
-	if len(metadata.EnrichedFindings) > 0 {
-		generator.enrichedFindings = metadata.EnrichedFindings
-		generator.useEnriched = true
-		log.Info("Using enriched findings for report", "count", len(metadata.EnrichedFindings))
 	}
 
 	return generator, nil
@@ -188,6 +195,7 @@ func (g *HTMLGenerator) templateFuncs() template.FuncMap {
 			return d.Round(time.Second).String()
 		},
 		"title": cases.Title(language.English).String,
+		"join":  strings.Join,
 		"truncate": func(s string, n int) string {
 			if len(s) <= n {
 				return s
@@ -202,31 +210,27 @@ func (g *HTMLGenerator) templateFuncs() template.FuncMap {
 
 // TemplateData holds all data for the report template.
 type TemplateData struct {
-	GeneratedAt                time.Time
-	Metadata                   *models.ScanMetadata
-	AWSFindings                []models.Finding
-	TopRisks                   []models.Finding
-	IaCFindings                []models.Finding
-	SecretsFindings            []models.Finding
-	WebFindings                []models.Finding
-	KubernetesFindings         []models.Finding
-	ContainerFindings          []models.Finding
-	AWSEnrichedFindings        []models.EnrichedFinding
-	TopEnrichedRisks           []models.EnrichedFinding
-	IaCEnrichedFindings        []models.EnrichedFinding
-	SecretsEnrichedFindings    []models.EnrichedFinding
-	WebEnrichedFindings        []models.EnrichedFinding
-	KubernetesEnrichedFindings []models.EnrichedFinding
-	ContainerEnrichedFindings  []models.EnrichedFinding
-	TotalSuppressed            int
-	InfoCount                  int
-	LowCount                   int
-	MediumCount                int
-	HighCount                  int
-	CriticalCount              int
-	TotalActive                int
-	ScanDuration               time.Duration
-	UseEnriched                bool
+	GeneratedAt time.Time
+	Metadata    *models.ScanMetadata
+	// Map-based fields for cleaner code
+	FindingsByCategory map[string][]models.Finding
+	SeverityCounts     map[string]int
+	// Legacy fields for backward compatibility with existing templates
+	AWSFindings        []models.Finding
+	TopRisks           []models.Finding
+	IaCFindings        []models.Finding
+	SecretsFindings    []models.Finding
+	WebFindings        []models.Finding
+	KubernetesFindings []models.Finding
+	ContainerFindings  []models.Finding
+	TotalSuppressed    int
+	InfoCount          int
+	LowCount           int
+	MediumCount        int
+	HighCount          int
+	CriticalCount      int
+	TotalActive        int
+	ScanDuration       time.Duration
 }
 
 // prepareTemplateData organizes data for the template.
@@ -235,23 +239,19 @@ func (g *HTMLGenerator) prepareTemplateData() *TemplateData {
 		Metadata:     g.metadata,
 		GeneratedAt:  time.Now(),
 		ScanDuration: g.metadata.EndTime.Sub(g.metadata.StartTime),
-		UseEnriched:  g.useEnriched,
 	}
 
-	if g.useEnriched {
-		// Process enriched findings
-		g.prepareEnrichedData(data)
-	} else {
-		// Process regular findings
-		g.prepareRegularData(data)
-	}
+	// Process findings - no need to differentiate between enriched and regular
+	g.prepareData(data)
 
 	return data
 }
 
-// prepareRegularData processes regular findings for the template.
-func (g *HTMLGenerator) prepareRegularData(data *TemplateData) {
-	// Count findings by severity
+// prepareData processes findings for the template.
+func (g *HTMLGenerator) prepareData(data *TemplateData) {
+	// Initialize maps
+	data.FindingsByCategory = make(map[string][]models.Finding)
+	data.SeverityCounts = make(map[string]int)
 	activeFindingsBySeverity := make(map[string][]models.Finding)
 
 	for _, finding := range g.findings {
@@ -261,31 +261,23 @@ func (g *HTMLGenerator) prepareRegularData(data *TemplateData) {
 		}
 
 		data.TotalActive++
+
+		// Automatic severity counting
+		data.SeverityCounts[finding.Severity]++
 		activeFindingsBySeverity[finding.Severity] = append(activeFindingsBySeverity[finding.Severity], finding)
 
-		// Categorize by scanner type
-		switch finding.Scanner {
-		case "prowler", "mock-prowler":
-			data.AWSFindings = append(data.AWSFindings, finding)
-		case "trivy", "mock-trivy":
-			data.ContainerFindings = append(data.ContainerFindings, finding)
-		case "kubescape", "mock-kubescape":
-			data.KubernetesFindings = append(data.KubernetesFindings, finding)
-		case "nuclei", "mock-nuclei":
-			data.WebFindings = append(data.WebFindings, finding)
-		case "gitleaks", "mock-gitleaks":
-			data.SecretsFindings = append(data.SecretsFindings, finding)
-		case "checkov", "mock-checkov":
-			data.IaCFindings = append(data.IaCFindings, finding)
+		// Automatic categorization using map
+		if category, exists := scannerCategories[finding.Scanner]; exists {
+			data.FindingsByCategory[category] = append(data.FindingsByCategory[category], finding)
 		}
 	}
 
-	// Set severity counts
-	data.CriticalCount = len(activeFindingsBySeverity["critical"])
-	data.HighCount = len(activeFindingsBySeverity["high"])
-	data.MediumCount = len(activeFindingsBySeverity["medium"])
-	data.LowCount = len(activeFindingsBySeverity["low"])
-	data.InfoCount = len(activeFindingsBySeverity["info"])
+	// Set legacy severity counts for backward compatibility
+	data.CriticalCount = data.SeverityCounts["critical"]
+	data.HighCount = data.SeverityCounts["high"]
+	data.MediumCount = data.SeverityCounts["medium"]
+	data.LowCount = data.SeverityCounts["low"]
+	data.InfoCount = data.SeverityCounts["info"]
 
 	// Get top 10 risks (critical and high severity)
 	var topRisks []models.Finding
@@ -305,78 +297,18 @@ func (g *HTMLGenerator) prepareRegularData(data *TemplateData) {
 	}
 	data.TopRisks = topRisks
 
-	// Sort findings within each category by severity
-	sortFindings(data.AWSFindings)
-	sortFindings(data.ContainerFindings)
-	sortFindings(data.KubernetesFindings)
-	sortFindings(data.WebFindings)
-	sortFindings(data.SecretsFindings)
-	sortFindings(data.IaCFindings)
-}
-
-// prepareEnrichedData processes enriched findings for the template.
-func (g *HTMLGenerator) prepareEnrichedData(data *TemplateData) {
-	// Count findings by severity
-	activeFindingsBySeverity := make(map[string][]models.EnrichedFinding)
-
-	for _, finding := range g.enrichedFindings {
-		if finding.Suppressed {
-			data.TotalSuppressed++
-			continue
-		}
-
-		data.TotalActive++
-		activeFindingsBySeverity[finding.Severity] = append(activeFindingsBySeverity[finding.Severity], finding)
-
-		// Categorize by scanner type
-		switch finding.Scanner {
-		case "prowler", "mock-prowler":
-			data.AWSEnrichedFindings = append(data.AWSEnrichedFindings, finding)
-		case "trivy", "mock-trivy":
-			data.ContainerEnrichedFindings = append(data.ContainerEnrichedFindings, finding)
-		case "kubescape", "mock-kubescape":
-			data.KubernetesEnrichedFindings = append(data.KubernetesEnrichedFindings, finding)
-		case "nuclei", "mock-nuclei":
-			data.WebEnrichedFindings = append(data.WebEnrichedFindings, finding)
-		case "gitleaks", "mock-gitleaks":
-			data.SecretsEnrichedFindings = append(data.SecretsEnrichedFindings, finding)
-		case "checkov", "mock-checkov":
-			data.IaCEnrichedFindings = append(data.IaCEnrichedFindings, finding)
-		}
+	// Sort each category
+	for category := range data.FindingsByCategory {
+		sortFindings(data.FindingsByCategory[category])
 	}
 
-	// Set severity counts
-	data.CriticalCount = len(activeFindingsBySeverity["critical"])
-	data.HighCount = len(activeFindingsBySeverity["high"])
-	data.MediumCount = len(activeFindingsBySeverity["medium"])
-	data.LowCount = len(activeFindingsBySeverity["low"])
-	data.InfoCount = len(activeFindingsBySeverity["info"])
-
-	// Get top 10 risks (critical and high severity)
-	var topRisks []models.EnrichedFinding
-	topRisks = append(topRisks, activeFindingsBySeverity["critical"]...)
-	topRisks = append(topRisks, activeFindingsBySeverity["high"]...)
-
-	// Sort by severity (critical first) and limit to 10
-	sort.Slice(topRisks, func(i, j int) bool {
-		if topRisks[i].Severity == topRisks[j].Severity {
-			return topRisks[i].Title < topRisks[j].Title
-		}
-		return severityOrder(topRisks[i].Severity) < severityOrder(topRisks[j].Severity)
-	})
-
-	if len(topRisks) > 10 {
-		topRisks = topRisks[:10]
-	}
-	data.TopEnrichedRisks = topRisks
-
-	// Sort findings within each category by severity
-	sortEnrichedFindings(data.AWSEnrichedFindings)
-	sortEnrichedFindings(data.ContainerEnrichedFindings)
-	sortEnrichedFindings(data.KubernetesEnrichedFindings)
-	sortEnrichedFindings(data.WebEnrichedFindings)
-	sortEnrichedFindings(data.SecretsEnrichedFindings)
-	sortEnrichedFindings(data.IaCEnrichedFindings)
+	// Set legacy fields for backward compatibility
+	data.AWSFindings = data.FindingsByCategory["aws"]
+	data.ContainerFindings = data.FindingsByCategory["container"]
+	data.KubernetesFindings = data.FindingsByCategory["kubernetes"]
+	data.WebFindings = data.FindingsByCategory["web"]
+	data.SecretsFindings = data.FindingsByCategory["secrets"]
+	data.IaCFindings = data.FindingsByCategory["iac"]
 }
 
 // severityOrder returns the sort order for severities.
@@ -399,16 +331,6 @@ func severityOrder(severity string) int {
 
 // sortFindings sorts findings by severity and title.
 func sortFindings(findings []models.Finding) {
-	sort.Slice(findings, func(i, j int) bool {
-		if findings[i].Severity == findings[j].Severity {
-			return findings[i].Title < findings[j].Title
-		}
-		return severityOrder(findings[i].Severity) < severityOrder(findings[j].Severity)
-	})
-}
-
-// sortEnrichedFindings sorts enriched findings by severity and title.
-func sortEnrichedFindings(findings []models.EnrichedFinding) {
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].Severity == findings[j].Severity {
 			return findings[i].Title < findings[j].Title

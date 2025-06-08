@@ -104,7 +104,7 @@ func (s *ProwlerScanner) parseOCSFFormat(raw []byte) ([]models.Finding, error) {
 	if err := json.Unmarshal(raw, &testFormat); err == nil && len(testFormat) > 0 {
 		if _, hasMetadata := testFormat[0]["metadata"]; !hasMetadata {
 			// This is not OCSF format
-			return nil, NewScannerError(s.Name(), "parse", fmt.Errorf("not OCSF format"))
+			return nil, NewStructuredErrorf(s.Name(), ErrorTypeParse, "not OCSF format")
 		}
 	}
 
@@ -113,9 +113,11 @@ func (s *ProwlerScanner) parseOCSFFormat(raw []byte) ([]models.Finding, error) {
 	// Try parsing as array first
 	if err := json.Unmarshal(raw, &checks); err != nil {
 		// Try parsing as NDJSON (newline-delimited)
-		checks = s.parseNDJSONOCSF(raw)
+		if err := ParseNDJSON(raw, &checks); err != nil {
+			return nil, NewStructuredError(s.Name(), ErrorTypeParse, fmt.Errorf("failed to parse OCSF format: %w", err))
+		}
 		if len(checks) == 0 {
-			return nil, NewScannerError(s.Name(), "parse", fmt.Errorf("failed to parse OCSF format"))
+			return nil, NewStructuredErrorf(s.Name(), ErrorTypeParse, "no OCSF checks found")
 		}
 	}
 
@@ -141,9 +143,7 @@ func (s *ProwlerScanner) parseOCSFFormat(raw []byte) ([]models.Finding, error) {
 			check.Finding.Type,
 			resource,
 			location,
-		)
-
-		finding.Severity = models.NormalizeSeverity(check.Severity)
+		).WithSeverity(check.Severity)
 		finding.Title = check.Finding.Title
 		finding.Description = check.Finding.Desc
 		finding.Remediation = check.Finding.Remediation.Desc
@@ -173,9 +173,11 @@ func (s *ProwlerScanner) parseNativeFormat(raw []byte) ([]models.Finding, error)
 	// Try parsing as array first
 	if err := json.Unmarshal(raw, &checks); err != nil {
 		// Try parsing as NDJSON (newline-delimited)
-		checks = s.parseNDJSONNative(raw)
+		if err := ParseNDJSON(raw, &checks); err != nil {
+			return nil, NewStructuredError(s.Name(), ErrorTypeParse, fmt.Errorf("failed to parse native format: %w", err))
+		}
 		if len(checks) == 0 {
-			return nil, NewScannerError(s.Name(), "parse", fmt.Errorf("failed to parse native format"))
+			return nil, NewStructuredErrorf(s.Name(), ErrorTypeParse, "no native checks found")
 		}
 	}
 
@@ -202,9 +204,7 @@ func (s *ProwlerScanner) parseNativeFormat(raw []byte) ([]models.Finding, error)
 			s.mapCheckToType(check.CheckID),
 			resource,
 			fmt.Sprintf("%s:%s", check.Region, check.ResourceType),
-		)
-
-		finding.Severity = models.NormalizeSeverity(check.Severity)
+		).WithSeverity(check.Severity)
 		finding.Title = check.CheckTitle
 		finding.Description = check.Description
 		finding.Impact = check.Risk
@@ -236,46 +236,6 @@ func (s *ProwlerScanner) parseNativeFormat(raw []byte) ([]models.Finding, error)
 	}
 
 	return findings, nil
-}
-
-// parseNDJSONOCSF parses newline-delimited JSON for OCSF format.
-func (s *ProwlerScanner) parseNDJSONOCSF(raw []byte) []ProwlerOCSFCheck {
-	var results []ProwlerOCSFCheck
-	lines := strings.Split(string(raw), "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		var item ProwlerOCSFCheck
-		if err := json.Unmarshal([]byte(line), &item); err == nil {
-			results = append(results, item)
-		}
-	}
-
-	return results
-}
-
-// parseNDJSONNative parses newline-delimited JSON for native format.
-func (s *ProwlerScanner) parseNDJSONNative(raw []byte) []ProwlerNativeCheck {
-	var results []ProwlerNativeCheck
-	lines := strings.Split(string(raw), "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		var item ProwlerNativeCheck
-		if err := json.Unmarshal([]byte(line), &item); err == nil {
-			results = append(results, item)
-		}
-	}
-
-	return results
 }
 
 // scanProfile runs Prowler against a single AWS profile.

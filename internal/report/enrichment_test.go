@@ -17,11 +17,13 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "report-enrichment-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
 
-	// Create scan data with enriched findings
+	// Create scan data with findings that have business context
 	scanDir := filepath.Join(tmpDir, "data", "scans", "test-scan")
-	err = os.MkdirAll(scanDir, 0755)
+	err = os.MkdirAll(scanDir, 0750)
 	require.NoError(t, err)
 
 	metadata := &models.ScanMetadata{
@@ -45,6 +47,12 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 						Resource:    "arn:aws:s3:::acme-customer-data",
 						Remediation: "Remove public read permissions from the bucket policy",
 						Impact:      "Potential data breach of customer information",
+						BusinessContext: &models.BusinessContext{
+							Owner:              "data-analytics-team",
+							DataClassification: "highly-confidential",
+							BusinessImpact:     "Contains 5 years of customer purchase history and PII",
+							ComplianceImpact:   []string{"GDPR", "CCPA", "PCI-DSS"},
+						},
 					},
 				},
 			},
@@ -62,6 +70,12 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 						Location:    "libssl1.1",
 						Remediation: "Update to libssl 1.1.1w or later",
 						Impact:      "Remote attackers could execute arbitrary code",
+						BusinessContext: &models.BusinessContext{
+							Owner:              "platform-team",
+							DataClassification: "internal",
+							BusinessImpact:     "Main customer-facing API - processes 10k requests/minute",
+							ComplianceImpact:   []string{"SOC2", "ISO27001"},
+						},
 					},
 				},
 			},
@@ -76,47 +90,6 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 				"trivy":   1,
 			},
 			TotalFindings: 2,
-		},
-		EnrichedFindings: []models.EnrichedFinding{
-			{
-				Finding: models.Finding{
-					ID:          "aws-finding-1",
-					Scanner:     "prowler",
-					Type:        "aws-misconfiguration",
-					Severity:    "high",
-					Title:       "S3 bucket has public read access",
-					Description: "The S3 bucket allows public read access which could expose sensitive data",
-					Resource:    "arn:aws:s3:::acme-customer-data",
-					Remediation: "Remove public read permissions from the bucket policy",
-					Impact:      "Potential data breach of customer information",
-				},
-				BusinessContext: models.BusinessContext{
-					Owner:              "data-analytics-team",
-					DataClassification: "highly-confidential",
-					BusinessImpact:     "Contains 5 years of customer purchase history and PII",
-					ComplianceImpact:   []string{"GDPR", "CCPA", "PCI-DSS"},
-				},
-			},
-			{
-				Finding: models.Finding{
-					ID:          "container-finding-1",
-					Scanner:     "trivy",
-					Type:        "vulnerability",
-					Severity:    "critical",
-					Title:       "CVE-2024-1234: Remote Code Execution in libssl",
-					Description: "A critical vulnerability in OpenSSL allows remote code execution",
-					Resource:    "api-service:v2.1.0",
-					Location:    "libssl1.1",
-					Remediation: "Update to libssl 1.1.1w or later",
-					Impact:      "Remote attackers could execute arbitrary code",
-				},
-				BusinessContext: models.BusinessContext{
-					Owner:              "platform-team",
-					DataClassification: "internal",
-					BusinessImpact:     "Main customer-facing API - processes 10k requests/minute",
-					ComplianceImpact:   []string{"SOC2", "ISO27001"},
-				},
-			},
 		},
 	}
 
@@ -139,9 +112,6 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 
 	html := string(content)
 
-	// Verify that enriched findings are being used
-	assert.True(t, generator.useEnriched, "Generator should use enriched findings")
-
 	// Check for business context in the report
 	assert.Contains(t, html, "Business Context", "Report should include business context section")
 	assert.Contains(t, html, "data-analytics-team", "Should show owner")
@@ -156,19 +126,20 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 	assert.Contains(t, html, "Main customer-facing API", "Should show API business impact")
 	assert.Contains(t, html, "SOC2", "Should show SOC2 compliance")
 
-	// Verify the enriched-finding-card template is being used
+	// Verify the business context elements are being used
 	assert.Contains(t, html, "business-context", "Should have business context CSS class")
-	assert.Contains(t, html, "context-grid", "Should have context grid for layout")
 }
 
 func TestHTMLReportWithoutEnrichment(t *testing.T) {
 	// Test that report works correctly without enrichment
 	tmpDir, err := os.MkdirTemp("", "report-no-enrichment-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
 
 	scanDir := filepath.Join(tmpDir, "data", "scans", "test-scan")
-	err = os.MkdirAll(scanDir, 0755)
+	err = os.MkdirAll(scanDir, 0750)
 	require.NoError(t, err)
 
 	metadata := &models.ScanMetadata{
@@ -190,6 +161,7 @@ func TestHTMLReportWithoutEnrichment(t *testing.T) {
 						Description: "Found AWS access key in config file",
 						Resource:    "src/config/aws.js",
 						Location:    "line 42",
+						// No BusinessContext - this is a regular finding
 					},
 				},
 			},
@@ -220,76 +192,66 @@ func TestHTMLReportWithoutEnrichment(t *testing.T) {
 
 	html := string(content)
 
-	// Should not use enriched findings
-	assert.False(t, generator.useEnriched, "Generator should not use enriched findings")
-
 	// Should still show the finding
 	assert.Contains(t, html, "AWS Access Key exposed", "Should show finding title")
 	assert.Contains(t, html, "src/config/aws.js", "Should show resource")
 
-	// Should NOT contain business context elements
-	assert.NotContains(t, html, "<h5>Business Context</h5>", "Should not have business context section")
-	assert.NotContains(t, html, `class="business-context"`, "Should not have business context CSS class")
+	// Should NOT contain business context elements for findings without context
+	assert.NotContains(t, html, "data-analytics-team", "Should not have team owner")
+	assert.NotContains(t, html, "highly-confidential", "Should not have data classification")
 }
 
-func TestPrepareEnrichedData(t *testing.T) {
+func TestPrepareData(t *testing.T) {
 	generator := &HTMLGenerator{
 		metadata: &models.ScanMetadata{
 			ClientName:  "Test Corp",
 			Environment: "Production",
 		},
-		enrichedFindings: []models.EnrichedFinding{
+		findings: []models.Finding{
 			{
-				Finding: models.Finding{
-					ID:         "f1",
-					Scanner:    "prowler",
-					Type:       "aws-misconfiguration",
-					Severity:   "critical",
-					Title:      "Critical AWS Issue",
-					Resource:   "aws-resource",
-					Suppressed: false,
-				},
-				BusinessContext: models.BusinessContext{
+				ID:         "f1",
+				Scanner:    "prowler",
+				Type:       "aws-misconfiguration",
+				Severity:   "critical",
+				Title:      "Critical AWS Issue",
+				Resource:   "aws-resource",
+				Suppressed: false,
+				BusinessContext: &models.BusinessContext{
 					Owner: "cloud-team",
 				},
 			},
 			{
-				Finding: models.Finding{
-					ID:         "f2",
-					Scanner:    "prowler",
-					Type:       "aws-misconfiguration",
-					Severity:   "high",
-					Title:      "High AWS Issue",
-					Resource:   "aws-resource-2",
-					Suppressed: true,
-				},
-				BusinessContext: models.BusinessContext{
+				ID:         "f2",
+				Scanner:    "prowler",
+				Type:       "aws-misconfiguration",
+				Severity:   "high",
+				Title:      "High AWS Issue",
+				Resource:   "aws-resource-2",
+				Suppressed: true,
+				BusinessContext: &models.BusinessContext{
 					Owner: "cloud-team",
 				},
 			},
 			{
-				Finding: models.Finding{
-					ID:         "f3",
-					Scanner:    "trivy",
-					Type:       "vulnerability",
-					Severity:   "medium",
-					Title:      "Container Vulnerability",
-					Resource:   "app:latest",
-					Suppressed: false,
-				},
-				BusinessContext: models.BusinessContext{
+				ID:         "f3",
+				Scanner:    "trivy",
+				Type:       "vulnerability",
+				Severity:   "medium",
+				Title:      "Container Vulnerability",
+				Resource:   "app:latest",
+				Suppressed: false,
+				BusinessContext: &models.BusinessContext{
 					Owner: "app-team",
 				},
 			},
 		},
-		useEnriched: true,
 	}
 
 	data := &TemplateData{
 		Metadata: generator.metadata,
 	}
 
-	generator.prepareEnrichedData(data)
+	generator.prepareData(data)
 
 	// Verify counts
 	assert.Equal(t, 2, data.TotalActive, "Should have 2 active findings")
@@ -299,60 +261,64 @@ func TestPrepareEnrichedData(t *testing.T) {
 	assert.Equal(t, 1, data.MediumCount)
 
 	// Verify categorization - only active findings are categorized
-	assert.Len(t, data.AWSEnrichedFindings, 1, "Should have 1 AWS finding (suppressed findings are not categorized)")
-	assert.Len(t, data.ContainerEnrichedFindings, 1, "Should have 1 container finding")
+	assert.Len(t, data.AWSFindings, 1, "Should have 1 AWS finding (suppressed findings are not categorized)")
+	assert.Len(t, data.ContainerFindings, 1, "Should have 1 container finding")
 
 	// Verify top risks
-	assert.Len(t, data.TopEnrichedRisks, 1, "Should have 1 top risk (critical only, high is suppressed)")
-	assert.Equal(t, "f1", data.TopEnrichedRisks[0].ID)
+	assert.Len(t, data.TopRisks, 1, "Should have 1 top risk (critical only, high is suppressed)")
+	assert.Equal(t, "f1", data.TopRisks[0].ID)
 
 	// Verify business context is preserved
-	assert.Equal(t, "cloud-team", data.AWSEnrichedFindings[0].BusinessContext.Owner)
+	assert.Equal(t, "cloud-team", data.AWSFindings[0].BusinessContext.Owner)
 }
 
-func TestEnrichedFindingCardRendering(t *testing.T) {
-	// Test that the enriched finding card template renders correctly
+func TestFindingCardWithBusinessContext(t *testing.T) {
+	// Test that the finding card template renders correctly with business context
 	tmpDir, err := os.MkdirTemp("", "template-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
 
 	// Create a minimal test case focusing on template rendering
-	finding := models.EnrichedFinding{
-		Finding: models.Finding{
-			ID:               "test-finding",
-			Scanner:          "prowler",
-			Type:             "aws-misconfiguration",
-			Severity:         "high",
-			OriginalSeverity: "critical",
-			Title:            "Test Finding Title",
-			Description:      "Test finding description",
-			Resource:         "test-resource",
-			Location:         "us-east-1",
-			Framework:        "CIS",
-			Remediation:      "Fix the issue",
-			Impact:           "High impact",
-			Suppressed:       false,
-		},
-		BusinessContext: models.BusinessContext{
+	finding := models.Finding{
+		ID:               "test-finding",
+		Scanner:          "prowler",
+		Type:             "aws-misconfiguration",
+		Severity:         "high",
+		OriginalSeverity: "critical",
+		Title:            "Test Finding Title",
+		Description:      "Test finding description",
+		Resource:         "test-resource",
+		Location:         "us-east-1",
+		Framework:        "CIS",
+		Remediation:      "Fix the issue",
+		Impact:           "High impact",
+		Suppressed:       false,
+		BusinessContext: &models.BusinessContext{
 			Owner:              "security-team",
 			DataClassification: "confidential",
 			BusinessImpact:     "Could affect customer data",
 			ComplianceImpact:   []string{"SOC2", "GDPR"},
 		},
+		RemediationDetails: &models.RemediationDetails{
+			Effort:      "medium",
+			TicketURL:   "https://jira.example.com/SEC-123",
+			AutoFixable: true,
+		},
 	}
 
 	// Generate a report with just this finding
 	metadata := &models.ScanMetadata{
-		ID:               "template-test",
-		ClientName:       "Template Test",
-		Environment:      "Test",
-		StartTime:        time.Now().Add(-10 * time.Minute),
-		EndTime:          time.Now(),
-		EnrichedFindings: []models.EnrichedFinding{finding},
+		ID:          "template-test",
+		ClientName:  "Template Test",
+		Environment: "Test",
+		StartTime:   time.Now().Add(-10 * time.Minute),
+		EndTime:     time.Now(),
 		Results: map[string]*models.ScanResult{
 			"prowler": {
 				Scanner:  "prowler",
-				Findings: []models.Finding{finding.Finding},
+				Findings: []models.Finding{finding},
 			},
 		},
 		Summary: models.ScanSummary{
@@ -380,12 +346,12 @@ func TestEnrichedFindingCardRendering(t *testing.T) {
 
 	html := string(content)
 
-	// Verify all enriched finding elements are rendered
+	// Verify all finding elements are rendered
 	assert.Contains(t, html, "Test Finding Title")
 	assert.Contains(t, html, "was: Critical", "Should show original severity")
 
 	// Business context elements
-	assert.Contains(t, html, "<h5>Business Context</h5>", "Should have business context heading")
+	assert.Contains(t, html, "Business Context", "Should have business context heading")
 	assert.Contains(t, html, "Owner:", "Should have owner label")
 	assert.Contains(t, html, "security-team", "Should show owner value")
 	assert.Contains(t, html, "Data Classification:", "Should have classification label")
@@ -396,6 +362,12 @@ func TestEnrichedFindingCardRendering(t *testing.T) {
 	assert.Contains(t, html, "SOC2", "Should show compliance values")
 	assert.Contains(t, html, "GDPR", "Should show compliance values")
 
-	// CSS classes - check the actual rendered output
-	// The test is failing because we need to look at the actual HTML structure
+	// Remediation details
+	assert.Contains(t, html, "Remediation Details", "Should have remediation details heading")
+	assert.Contains(t, html, "Effort:", "Should have effort label")
+	assert.Contains(t, html, "medium", "Should show effort value")
+	assert.Contains(t, html, "Ticket:", "Should have ticket label")
+	assert.Contains(t, html, "https://jira.example.com/SEC-123", "Should show ticket URL")
+	assert.Contains(t, html, "Auto-fixable:", "Should have auto-fixable label")
+	assert.Contains(t, html, "Yes", "Should show auto-fixable value")
 }

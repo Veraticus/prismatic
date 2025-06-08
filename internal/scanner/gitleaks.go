@@ -80,7 +80,7 @@ func (s *GitleaksScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 
 	var leaks []GitleaksLeak
 	if err := json.Unmarshal(raw, &leaks); err != nil {
-		return nil, NewScannerError(s.Name(), "parse", err)
+		return nil, NewStructuredError(s.Name(), ErrorTypeParse, err)
 	}
 
 	findings := make([]models.Finding, 0, len(leaks))
@@ -96,9 +96,7 @@ func (s *GitleaksScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 			"secret",
 			leak.File,
 			location,
-		)
-
-		finding.Severity = models.SeverityCritical // All secrets are critical
+		).WithSeverity(models.SeverityCritical) // All secrets are critical
 		finding.Title = fmt.Sprintf("Exposed %s", leak.Description)
 
 		// Build description

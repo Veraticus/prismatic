@@ -50,5 +50,52 @@
         <strong>Comment:</strong> {{.Comment}}
     </div>
     {{end}}
+    
+    {{if .BusinessContext}}
+    <div class="business-context">
+        <h4>Business Context</h4>
+        {{if .BusinessContext.Owner}}
+        <div class="context-item">
+            <strong>Owner:</strong> {{.BusinessContext.Owner}}
+        </div>
+        {{end}}
+        {{if .BusinessContext.DataClassification}}
+        <div class="context-item">
+            <strong>Data Classification:</strong> {{.BusinessContext.DataClassification}}
+        </div>
+        {{end}}
+        {{if .BusinessContext.BusinessImpact}}
+        <div class="context-item">
+            <strong>Business Impact:</strong> {{.BusinessContext.BusinessImpact}}
+        </div>
+        {{end}}
+        {{if .BusinessContext.ComplianceImpact}}
+        <div class="context-item">
+            <strong>Compliance Impact:</strong> {{join .BusinessContext.ComplianceImpact ", "}}
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+    
+    {{if .RemediationDetails}}
+    <div class="remediation-details">
+        <h4>Remediation Details</h4>
+        {{if .RemediationDetails.Effort}}
+        <div class="context-item">
+            <strong>Effort:</strong> {{.RemediationDetails.Effort}}
+        </div>
+        {{end}}
+        {{if .RemediationDetails.TicketURL}}
+        <div class="context-item">
+            <strong>Ticket:</strong> <a href="{{.RemediationDetails.TicketURL}}" target="_blank">{{.RemediationDetails.TicketURL}}</a>
+        </div>
+        {{end}}
+        {{if .RemediationDetails.AutoFixable}}
+        <div class="context-item">
+            <strong>Auto-fixable:</strong> Yes
+        </div>
+        {{end}}
+    </div>
+    {{end}}
 </div>
 {{end}}

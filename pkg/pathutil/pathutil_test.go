@@ -141,7 +141,9 @@ func TestValidateOutputPath(t *testing.T) {
 	// Change to temp directory for test
 	oldWd, err := os.Getwd()
 	require.NoError(t, err)
-	defer os.Chdir(oldWd)
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
 
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)

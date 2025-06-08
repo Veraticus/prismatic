@@ -12,7 +12,6 @@ type ScannerFactory struct {
 	logger    logger.Logger
 	outputDir string
 	config    Config
-	useMock   bool
 }
 
 // ClientConfig represents the client configuration needed by scanners.
@@ -25,27 +24,22 @@ type ClientConfig interface {
 }
 
 // NewScannerFactory creates a new scanner factory.
-func NewScannerFactory(config Config, clientCfg ClientConfig, outputDir string, useMock bool) *ScannerFactory {
-	return NewScannerFactoryWithLogger(config, clientCfg, outputDir, useMock, logger.GetGlobalLogger())
+func NewScannerFactory(config Config, clientCfg ClientConfig, outputDir string) *ScannerFactory {
+	return NewScannerFactoryWithLogger(config, clientCfg, outputDir, logger.GetGlobalLogger())
 }
 
 // NewScannerFactoryWithLogger creates a new scanner factory with a custom logger.
-func NewScannerFactoryWithLogger(config Config, clientCfg ClientConfig, outputDir string, useMock bool, log logger.Logger) *ScannerFactory {
+func NewScannerFactoryWithLogger(config Config, clientCfg ClientConfig, outputDir string, log logger.Logger) *ScannerFactory {
 	return &ScannerFactory{
 		config:    config,
 		clientCfg: clientCfg,
 		outputDir: outputDir,
-		useMock:   useMock,
 		logger:    log,
 	}
 }
 
 // CreateScanner creates a scanner of the given type.
 func (f *ScannerFactory) CreateScanner(scannerType string) (Scanner, error) {
-	if f.useMock {
-		return NewMockScannerWithLogger(scannerType, f.config, f.logger), nil
-	}
-
 	switch scannerType {
 	case "trivy":
 		return f.createTrivyScanner()

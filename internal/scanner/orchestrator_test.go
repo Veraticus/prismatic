@@ -451,7 +451,7 @@ func TestGetKubescapeConfig(t *testing.T) {
 func TestEnrichFindings(t *testing.T) {
 	tests := []struct {
 		config           *config.Config
-		verifyEnrichment func(t *testing.T, enriched []models.EnrichedFinding)
+		verifyEnrichment func(t *testing.T, metadata *models.ScanMetadata)
 		name             string
 		findings         []models.Finding
 		expectedEnriched int
@@ -549,30 +549,40 @@ func TestEnrichFindings(t *testing.T) {
 					Title:    "CVE-2021-11111",
 				},
 			},
-			expectedEnriched: 3,
-			verifyEnrichment: func(t *testing.T, enriched []models.EnrichedFinding) {
+			expectedEnriched: 2,
+			verifyEnrichment: func(t *testing.T, metadata *models.ScanMetadata) {
 				t.Helper()
+				findings := metadata.Results["test-scanner"].Findings
 				// Check nginx enrichment
-				nginx := enriched[0]
+				nginx := findFindingByID(findings, "finding-1")
+				assert.NotNil(t, nginx)
 				assert.Equal(t, "nginx:latest", nginx.Resource)
+				assert.NotNil(t, nginx.BusinessContext)
 				assert.Equal(t, "web-team", nginx.BusinessContext.Owner)
 				assert.Equal(t, "public", nginx.BusinessContext.DataClassification)
 				assert.Equal(t, "Customer-facing web services", nginx.BusinessContext.BusinessImpact)
 				assert.ElementsMatch(t, []string{"PCI-DSS", "SOC2"}, nginx.BusinessContext.ComplianceImpact)
 
 				// Check postgres enrichment
-				postgres := enriched[1]
+				postgres := findFindingByID(findings, "finding-2")
+				assert.NotNil(t, postgres)
 				assert.Equal(t, "postgres:14", postgres.Resource)
+				assert.NotNil(t, postgres.BusinessContext)
 				assert.Equal(t, "data-team", postgres.BusinessContext.Owner)
 				assert.Equal(t, "confidential", postgres.BusinessContext.DataClassification)
 				assert.Equal(t, "Core customer database", postgres.BusinessContext.BusinessImpact)
 				assert.ElementsMatch(t, []string{"GDPR", "HIPAA"}, postgres.BusinessContext.ComplianceImpact)
 
 				// Check redis (no enrichment)
-				redis := enriched[2]
+				redis := findFindingByID(findings, "finding-3")
+				assert.NotNil(t, redis)
 				assert.Equal(t, "redis:7", redis.Resource)
-				assert.Empty(t, redis.BusinessContext.Owner)
-				assert.Empty(t, redis.BusinessContext.DataClassification)
+				if redis.BusinessContext != nil {
+					assert.Empty(t, redis.BusinessContext.Owner)
+					assert.Empty(t, redis.BusinessContext.DataClassification)
+				} else {
+					assert.Nil(t, redis.BusinessContext)
+				}
 			},
 		},
 		{
@@ -611,12 +621,14 @@ func TestEnrichFindings(t *testing.T) {
 				},
 			},
 			expectedEnriched: 2,
-			verifyEnrichment: func(t *testing.T, enriched []models.EnrichedFinding) {
+			verifyEnrichment: func(t *testing.T, metadata *models.ScanMetadata) {
 				t.Helper()
+				findings := metadata.Results["test-scanner"].Findings
 				// Both findings should be enriched, regardless of suppression status
-				for _, ef := range enriched {
-					assert.Equal(t, "web-team", ef.BusinessContext.Owner)
-					assert.Equal(t, "public", ef.BusinessContext.DataClassification)
+				for _, f := range findings {
+					assert.NotNil(t, f.BusinessContext)
+					assert.Equal(t, "web-team", f.BusinessContext.Owner)
+					assert.Equal(t, "public", f.BusinessContext.DataClassification)
 				}
 			},
 		},
@@ -637,14 +649,28 @@ func TestEnrichFindings(t *testing.T) {
 			}
 
 			// Enrich findings
-			enriched := orch.EnrichFindings(metadata)
+			orch.EnrichFindings(metadata)
+
+			// Count enriched findings
+			enrichedCount := 0
+			for _, result := range metadata.Results {
+				for _, finding := range result.Findings {
+					if finding.BusinessContext != nil &&
+						(finding.BusinessContext.Owner != "" ||
+							finding.BusinessContext.DataClassification != "" ||
+							finding.BusinessContext.BusinessImpact != "" ||
+							len(finding.BusinessContext.ComplianceImpact) > 0) {
+						enrichedCount++
+					}
+				}
+			}
 
 			// Verify count
-			assert.Len(t, enriched, tt.expectedEnriched)
+			assert.Equal(t, tt.expectedEnriched, enrichedCount)
 
 			// Run custom verification if provided
-			if tt.verifyEnrichment != nil && len(enriched) > 0 {
-				tt.verifyEnrichment(t, enriched)
+			if tt.verifyEnrichment != nil && enrichedCount > 0 {
+				tt.verifyEnrichment(t, metadata)
 			}
 		})
 	}
@@ -717,30 +743,46 @@ func TestEnrichFindingsMultipleScanners(t *testing.T) {
 		},
 	}
 
-	enriched := orch.EnrichFindings(metadata)
+	orch.EnrichFindings(metadata)
 
-	// Should have all 3 findings enriched
-	assert.Len(t, enriched, 3)
+	// Count enriched findings
+	enrichedCount := 0
+	for _, result := range metadata.Results {
+		for _, finding := range result.Findings {
+			if finding.BusinessContext != nil &&
+				(finding.BusinessContext.Owner != "" ||
+					finding.BusinessContext.DataClassification != "" ||
+					finding.BusinessContext.BusinessImpact != "" ||
+					len(finding.BusinessContext.ComplianceImpact) > 0) {
+				enrichedCount++
+			}
+		}
+	}
+
+	// Should have 2 findings enriched (prowler and trivy, not gitleaks)
+	assert.Equal(t, 2, enrichedCount)
 
 	// Verify enrichment by scanner
-	prowlerFinding := findEnrichedByID(enriched, "finding-1")
+	prowlerFinding := findFindingByID(metadata.Results["prowler"].Findings, "finding-1")
 	assert.NotNil(t, prowlerFinding)
+	assert.NotNil(t, prowlerFinding.BusinessContext)
 	assert.Equal(t, "storage-team", prowlerFinding.BusinessContext.Owner)
 	assert.Equal(t, "sensitive", prowlerFinding.BusinessContext.DataClassification)
 	assert.Equal(t, "Customer data storage", prowlerFinding.BusinessContext.BusinessImpact)
 
-	trivyFinding := findEnrichedByID(enriched, "finding-2")
+	trivyFinding := findFindingByID(metadata.Results["trivy"].Findings, "finding-2")
 	assert.NotNil(t, trivyFinding)
+	assert.NotNil(t, trivyFinding.BusinessContext)
 	assert.Equal(t, "web-team", trivyFinding.BusinessContext.Owner)
 	assert.Equal(t, "public", trivyFinding.BusinessContext.DataClassification)
 
-	gitleaksFinding := findEnrichedByID(enriched, "finding-3")
+	gitleaksFinding := findFindingByID(metadata.Results["gitleaks"].Findings, "finding-3")
 	assert.NotNil(t, gitleaksFinding)
-	assert.Empty(t, gitleaksFinding.BusinessContext.Owner) // No metadata for this resource
+	assert.Nil(t, gitleaksFinding.BusinessContext) // No metadata for this resource
 }
 
-// Helper function to find enriched finding by ID.
-func findEnrichedByID(findings []models.EnrichedFinding, id string) *models.EnrichedFinding {
+// Helper function to find finding by ID in orchestrator tests.
+func findFindingByID(findings []models.Finding, id string) *models.Finding {
 	for _, f := range findings {
 		if f.ID == id {
 			return &f

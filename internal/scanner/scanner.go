@@ -70,14 +70,19 @@ func (b *BaseScanner) Config() Config {
 	return b.config
 }
 
-// ValidateFinding ensures a finding has all required fields and normalizes severity.
+// ValidateFinding ensures a finding has all required fields.
 func ValidateFinding(f *models.Finding) error {
-	if err := f.IsValid(); err != nil {
-		return fmt.Errorf("invalid finding: %w", err)
+	// Check if severity is provided before normalization
+	if f.Severity == "" {
+		return fmt.Errorf("invalid finding: severity is required")
 	}
 
 	// Normalize severity
 	f.Severity = models.NormalizeSeverity(f.Severity)
+
+	if err := f.IsValid(); err != nil {
+		return fmt.Errorf("invalid finding: %w", err)
+	}
 
 	// Generate ID if not set
 	if f.ID == "" {

@@ -61,7 +61,7 @@ func (s *TrivyScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 func (s *TrivyScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 	var report TrivyReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, NewScannerError(s.Name(), "parse", err)
+		return nil, NewStructuredError(s.Name(), ErrorTypeParse, err)
 	}
 
 	var findings []models.Finding
@@ -80,9 +80,7 @@ func (s *TrivyScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 				"vulnerability",
 				target,
 				vuln.PkgName,
-			)
-
-			finding.Severity = models.NormalizeSeverity(vuln.Severity)
+			).WithSeverity(vuln.Severity)
 			finding.Title = fmt.Sprintf("%s: %s vulnerability in %s",
 				vuln.VulnerabilityID, vuln.Severity, vuln.PkgName)
 			finding.Description = vuln.Description
@@ -141,9 +139,7 @@ func (s *TrivyScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 				"misconfiguration",
 				target,
 				fmt.Sprintf("%s:%d", result.Target, misconf.StartLine),
-			)
-
-			finding.Severity = models.NormalizeSeverity(misconf.Severity)
+			).WithSeverity(misconf.Severity)
 			finding.Title = misconf.Title
 			finding.Description = misconf.Description
 			finding.Remediation = misconf.Resolution
@@ -168,9 +164,7 @@ func (s *TrivyScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 				"secret",
 				target,
 				fmt.Sprintf("%s:%d", secret.Target, secret.StartLine),
-			)
-
-			finding.Severity = models.NormalizeSeverity(secret.Severity)
+			).WithSeverity(secret.Severity)
 			finding.Title = fmt.Sprintf("Exposed %s", secret.Title)
 			finding.Description = fmt.Sprintf("Found %s at line %d", secret.Title, secret.StartLine)
 			finding.Remediation = "Remove the secret from the codebase and rotate it immediately"

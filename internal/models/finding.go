@@ -11,25 +11,27 @@ import (
 
 // Finding represents a normalized security finding from any scanner.
 type Finding struct {
-	PublishedDate     time.Time         `json:"published_date,omitempty"`
-	DiscoveredDate    time.Time         `json:"discovered_date"`
-	Metadata          map[string]string `json:"metadata,omitempty"`
-	Severity          string            `json:"severity"`
-	OriginalSeverity  string            `json:"original_severity,omitempty"`
-	Title             string            `json:"title"`
-	Description       string            `json:"description"`
-	Type              string            `json:"type"`
-	Framework         string            `json:"framework,omitempty"`
-	Resource          string            `json:"resource"`
-	Remediation       string            `json:"remediation"`
-	ID                string            `json:"id"`
-	SuppressionReason string            `json:"suppression_reason,omitempty"`
-	Scanner           string            `json:"scanner"`
-	Location          string            `json:"location,omitempty"`
-	Impact            string            `json:"impact"`
-	Comment           string            `json:"comment,omitempty"`
-	References        []string          `json:"references"`
-	Suppressed        bool              `json:"suppressed"`
+	PublishedDate      time.Time           `json:"published_date,omitempty"`
+	DiscoveredDate     time.Time           `json:"discovered_date"`
+	Metadata           map[string]string   `json:"metadata,omitempty"`
+	RemediationDetails *RemediationDetails `json:"remediation_details,omitempty"`
+	BusinessContext    *BusinessContext    `json:"business_context,omitempty"`
+	Remediation        string              `json:"remediation"`
+	SuppressionReason  string              `json:"suppression_reason,omitempty"`
+	Type               string              `json:"type"`
+	Framework          string              `json:"framework,omitempty"`
+	Resource           string              `json:"resource"`
+	Title              string              `json:"title"`
+	ID                 string              `json:"id"`
+	Description        string              `json:"description"`
+	Scanner            string              `json:"scanner"`
+	Location           string              `json:"location,omitempty"`
+	Impact             string              `json:"impact"`
+	Comment            string              `json:"comment,omitempty"`
+	Severity           string              `json:"severity"`
+	OriginalSeverity   string              `json:"original_severity,omitempty"`
+	References         []string            `json:"references"`
+	Suppressed         bool                `json:"suppressed"`
 }
 
 // ScanResult represents the output from a single scanner.
@@ -45,16 +47,15 @@ type ScanResult struct {
 
 // ScanMetadata represents overall scan information.
 type ScanMetadata struct {
-	StartTime        time.Time              `json:"start_time"`
-	EndTime          time.Time              `json:"end_time"`
-	Results          map[string]*ScanResult `json:"results"`
-	ID               string                 `json:"id"`
-	ClientName       string                 `json:"client_name"`
-	Environment      string                 `json:"environment"`
-	ConfigFile       string                 `json:"config_file"`
-	Scanners         []string               `json:"scanners"`
-	EnrichedFindings []EnrichedFinding      `json:"enriched_findings,omitempty"`
-	Summary          ScanSummary            `json:"summary"`
+	StartTime   time.Time              `json:"start_time"`
+	EndTime     time.Time              `json:"end_time"`
+	Results     map[string]*ScanResult `json:"results"`
+	ID          string                 `json:"id"`
+	ClientName  string                 `json:"client_name"`
+	Environment string                 `json:"environment"`
+	ConfigFile  string                 `json:"config_file"`
+	Scanners    []string               `json:"scanners"`
+	Summary     ScanSummary            `json:"summary"`
 }
 
 // ScanSummary provides high-level statistics.
@@ -83,8 +84,27 @@ func NewFinding(scanner, findingType, resource, location string) *Finding {
 		Resource:       resource,
 		Location:       location,
 		Metadata:       make(map[string]string),
-		DiscoveredDate: time.Now(), // Default to current time, scanners can override
+		DiscoveredDate: time.Now(),      // Default to current time, scanners can override
+		Severity:       SeverityUnknown, // Set a default that will be overridden
 	}
+}
+
+// WithSeverity sets the severity with automatic normalization.
+func (f *Finding) WithSeverity(severity string) *Finding {
+	f.Severity = NormalizeSeverity(severity)
+	return f
+}
+
+// WithTitle sets the title.
+func (f *Finding) WithTitle(title string) *Finding {
+	f.Title = title
+	return f
+}
+
+// WithDescription sets the description.
+func (f *Finding) WithDescription(description string) *Finding {
+	f.Description = description
+	return f
 }
 
 // IsValid checks if a finding has all required fields.
@@ -105,6 +125,33 @@ func (f *Finding) IsValid() error {
 		return fmt.Errorf("finding missing required field: resource")
 	}
 	return nil
+}
+
+// BusinessContext contains business-relevant information about a finding.
+type BusinessContext struct {
+	Owner              string   `json:"owner,omitempty"`
+	DataClassification string   `json:"data_classification,omitempty"`
+	BusinessImpact     string   `json:"business_impact,omitempty"`
+	ComplianceImpact   []string `json:"compliance_impact,omitempty"`
+}
+
+// RemediationDetails provides additional remediation information.
+type RemediationDetails struct {
+	Effort      string `json:"effort,omitempty"`
+	TicketURL   string `json:"ticket_url,omitempty"`
+	AutoFixable bool   `json:"auto_fixable"`
+}
+
+// WithBusinessContext adds business context to the finding.
+func (f *Finding) WithBusinessContext(ctx *BusinessContext) *Finding {
+	f.BusinessContext = ctx
+	return f
+}
+
+// WithRemediationDetails adds remediation details to the finding.
+func (f *Finding) WithRemediationDetails(details *RemediationDetails) *Finding {
+	f.RemediationDetails = details
+	return f
 }
 
 // NormalizeSeverity ensures severity values are consistent.
