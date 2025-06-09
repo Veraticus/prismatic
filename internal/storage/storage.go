@@ -41,13 +41,13 @@ func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadat
 	}
 
 	// Create output directory structure
-	if err := os.MkdirAll(validOutputDir, 0750); err != nil {
-		return fmt.Errorf("creating output directory: %w", err)
+	if mkErr := os.MkdirAll(validOutputDir, 0750); mkErr != nil {
+		return fmt.Errorf("creating output directory: %w", mkErr)
 	}
 
 	rawDir := filepath.Join(validOutputDir, "raw")
-	if err := os.MkdirAll(rawDir, 0750); err != nil {
-		return fmt.Errorf("creating raw directory: %w", err)
+	if mkErr := os.MkdirAll(rawDir, 0750); mkErr != nil {
+		return fmt.Errorf("creating raw directory: %w", mkErr)
 	}
 
 	// Save metadata
@@ -55,21 +55,21 @@ func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadat
 	if err != nil {
 		return fmt.Errorf("invalid metadata path: %w", err)
 	}
-	if err := s.saveJSON(metadataPath, metadata); err != nil {
-		return fmt.Errorf("saving metadata: %w", err)
+	if saveErr := s.saveJSON(metadataPath, metadata); saveErr != nil {
+		return fmt.Errorf("saving metadata: %w", saveErr)
 	}
 	s.logger.Debug("Saved metadata", "path", metadataPath)
 
 	// Save raw scanner outputs
 	for scanner, result := range metadata.Results {
 		if len(result.RawOutput) > 0 {
-			rawPath, err := pathutil.JoinAndValidate(rawDir, fmt.Sprintf("%s.json", scanner))
-			if err != nil {
-				s.logger.Warn("Invalid raw output path", "scanner", scanner, "error", err)
+			rawPath, rawErr := pathutil.JoinAndValidate(rawDir, fmt.Sprintf("%s.json", scanner))
+			if rawErr != nil {
+				s.logger.Warn("Invalid raw output path", "scanner", scanner, "error", rawErr)
 				continue
 			}
-			if err := os.WriteFile(rawPath, result.RawOutput, 0600); err != nil {
-				s.logger.Warn("Failed to save raw output", "scanner", scanner, "error", err)
+			if writeErr := os.WriteFile(rawPath, result.RawOutput, 0600); writeErr != nil {
+				s.logger.Warn("Failed to save raw output", "scanner", scanner, "error", writeErr)
 			} else {
 				s.logger.Debug("Saved raw output", "scanner", scanner, "path", rawPath)
 			}
@@ -82,8 +82,8 @@ func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadat
 	if err != nil {
 		return fmt.Errorf("invalid findings path: %w", err)
 	}
-	if err := s.saveJSON(findingsPath, allFindings); err != nil {
-		return fmt.Errorf("saving findings: %w", err)
+	if saveErr := s.saveJSON(findingsPath, allFindings); saveErr != nil {
+		return fmt.Errorf("saving findings: %w", saveErr)
 	}
 	s.logger.Debug("Saved findings", "path", findingsPath, "count", len(allFindings))
 
@@ -117,8 +117,8 @@ func (s *Storage) LoadScanResults(scanDir string) (*models.ScanMetadata, error) 
 		return nil, fmt.Errorf("invalid metadata path: %w", err)
 	}
 	var metadata models.ScanMetadata
-	if err := s.loadJSON(metadataPath, &metadata); err != nil {
-		return nil, fmt.Errorf("loading metadata: %w", err)
+	if loadErr := s.loadJSON(metadataPath, &metadata); loadErr != nil {
+		return nil, fmt.Errorf("loading metadata: %w", loadErr)
 	}
 
 	// Load findings
@@ -240,8 +240,19 @@ type ScanInfo struct {
 
 // consolidateFindings extracts all findings from scan results.
 func (s *Storage) consolidateFindings(metadata *models.ScanMetadata) []models.Finding {
-	var allFindings []models.Finding
+	// Count total findings first to warn about memory usage
+	totalCount := 0
+	for _, result := range metadata.Results {
+		totalCount += len(result.Findings)
+	}
 
+	// Warn if too many findings
+	if totalCount > 10000 {
+		s.logger.Warn("Large number of findings may cause memory issues",
+			"count", totalCount)
+	}
+
+	var allFindings []models.Finding
 	for _, result := range metadata.Results {
 		allFindings = append(allFindings, result.Findings...)
 	}
@@ -252,7 +263,7 @@ func (s *Storage) consolidateFindings(metadata *models.ScanMetadata) []models.Fi
 // saveJSON saves data as JSON to a file.
 func (s *Storage) saveJSON(path string, data any) (err error) {
 	// Path should already be validated by caller
-	file, err := os.Create(path)
+	file, err := os.Create(path) // #nosec G304 - path is validated by caller
 	if err != nil {
 		return err
 	}
@@ -270,7 +281,7 @@ func (s *Storage) saveJSON(path string, data any) (err error) {
 // loadJSON loads JSON data from a file.
 func (s *Storage) loadJSON(path string, data any) (err error) {
 	// Path should already be validated by caller
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 - path is validated by caller
 	if err != nil {
 		return err
 	}
@@ -286,7 +297,7 @@ func (s *Storage) loadJSON(path string, data any) (err error) {
 // saveScanLog saves a human-readable scan log.
 func (s *Storage) saveScanLog(path string, metadata *models.ScanMetadata) (err error) {
 	// Path should already be validated by caller
-	file, err := os.Create(path)
+	file, err := os.Create(path) // #nosec G304 - path is validated by caller
 	if err != nil {
 		return err
 	}

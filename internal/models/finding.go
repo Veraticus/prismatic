@@ -142,18 +142,6 @@ type RemediationDetails struct {
 	AutoFixable bool   `json:"auto_fixable"`
 }
 
-// WithBusinessContext adds business context to the finding.
-func (f *Finding) WithBusinessContext(ctx *BusinessContext) *Finding {
-	f.BusinessContext = ctx
-	return f
-}
-
-// WithRemediationDetails adds remediation details to the finding.
-func (f *Finding) WithRemediationDetails(details *RemediationDetails) *Finding {
-	f.RemediationDetails = details
-	return f
-}
-
 // NormalizeSeverity ensures severity values are consistent.
 func NormalizeSeverity(severity string) string {
 	// Convert to lowercase for case-insensitive comparison

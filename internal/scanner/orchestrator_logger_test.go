@@ -40,10 +40,18 @@ func TestScannerFactoryWithLogger(t *testing.T) {
 	// Create a mock logger
 	mockLogger := logger.NewMockLogger()
 
+	// Create empty config
+	emptyConfig := &config.Config{
+		Client: config.ClientConfig{
+			Name:        "test",
+			Environment: "test",
+		},
+	}
+
 	// Create scanner factory with mock logger
 	factory := NewScannerFactoryWithLogger(
 		Config{},
-		&mockClientConfig{},
+		emptyConfig,
 		"/tmp/test",
 		mockLogger,
 	)
@@ -58,29 +66,6 @@ func TestScannerFactoryWithLogger(t *testing.T) {
 	if !mockLogger.HasMessageContaining("WARN", "No targets configured for Trivy") {
 		t.Error("Expected warning about no Trivy targets")
 	}
-}
-
-// mockClientConfig implements ClientConfig for testing.
-type mockClientConfig struct{}
-
-func (m *mockClientConfig) GetAWSConfig() ([]string, []string, []string) {
-	return nil, nil, nil
-}
-
-func (m *mockClientConfig) GetDockerTargets() []string {
-	return nil
-}
-
-func (m *mockClientConfig) GetKubernetesConfig() (string, []string, []string) {
-	return "", nil, nil
-}
-
-func (m *mockClientConfig) GetEndpoints() []string {
-	return nil
-}
-
-func (m *mockClientConfig) GetCheckovTargets() []string {
-	return nil
 }
 
 func TestScannerWithLogger(t *testing.T) {

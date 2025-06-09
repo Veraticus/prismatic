@@ -200,7 +200,7 @@ func TestTrivyScanner_ParseResults_InvalidJSON(t *testing.T) {
 
 	_, err := scanner.ParseResults([]byte("invalid json"))
 	assert.Error(t, err)
-	assert.IsType(t, &ScannerError{}, err)
+	assert.Contains(t, err.Error(), "trivy: failed to parse JSON output")
 }
 
 func TestTrivyScanner_Integration(t *testing.T) {

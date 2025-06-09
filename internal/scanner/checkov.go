@@ -93,20 +93,20 @@ func (s *CheckovScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 	// Checkov outputs different formats:
 	// - Single framework: object with results
 	// - Multiple frameworks: array of objects
-	
+
 	// Check if it's an array by looking at the first character
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return []models.Finding{}, nil
 	}
-	
+
 	if trimmed[0] == '[' {
 		// Handle array format
 		var reports []CheckovReport
 		if err := json.Unmarshal(raw, &reports); err != nil {
-			return nil, fmt.Errorf("parsing %s results as array: %w", s.Name(), err)
+			return nil, fmt.Errorf("checkov: failed to parse results as array: %w", err)
 		}
-		
+
 		var findings []models.Finding
 		for _, report := range reports {
 			reportFindings := s.parseReport(report)
@@ -114,13 +114,13 @@ func (s *CheckovScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 		}
 		return findings, nil
 	}
-	
+
 	// Handle single object format
 	var report CheckovReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, fmt.Errorf("parsing %s results as object: %w", s.Name(), err)
+		return nil, fmt.Errorf("checkov: failed to parse results as object: %w", err)
 	}
-	
+
 	return s.parseReport(report), nil
 }
 
@@ -324,7 +324,7 @@ func (s *CheckovScanner) scanTarget(ctx context.Context, target string) ([]byte,
 	// Resolve absolute path
 	absPath, err := filepath.Abs(target)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve target path: %w", err)
+		return nil, fmt.Errorf("checkov: failed to resolve target path: %w", err)
 	}
 
 	args := []string{
@@ -335,30 +335,23 @@ func (s *CheckovScanner) scanTarget(ctx context.Context, target string) ([]byte,
 		"--framework", "all", // Scan all IaC frameworks
 	}
 
-	cmd := exec.CommandContext(ctx, "checkov", args...)
-	// Only set working directory if it's not the scan output directory
-	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
-		cmd.Dir = s.config.WorkingDir
-	}
-
-	// Convert env map to slice of strings
-	if s.config.Env != nil {
-		for k, v := range s.config.Env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-	}
-
-	output, err := cmd.Output()
+	// Execute scan using common helper
+	output, err := ExecuteScanner(ctx, "checkov", args, s.config)
 	if err != nil {
-		// Checkov exits with non-zero on findings, check if we have output
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if len(output) > 0 {
-				// We have JSON output despite non-zero exit
-				return output, nil
-			}
-			return nil, fmt.Errorf("checkov failed: %s", string(exitErr.Stderr))
+		// Checkov exits with non-zero code when it finds issues (exit code 1)
+		// This is expected behavior, so we check if we have valid output
+		if ok, _ := HandleNonZeroExit(err, 1); ok && len(output) > 0 {
+			return output, nil
 		}
-		return nil, err
+		// Check for command not found
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
+			return nil, fmt.Errorf("checkov: command not found: %w", err)
+		}
+		// Other errors
+		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("checkov: execution failed: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("checkov: execution error: %w", err)
 	}
 
 	return output, nil
@@ -366,19 +359,15 @@ func (s *CheckovScanner) scanTarget(ctx context.Context, target string) ([]byte,
 
 // getVersion returns the Checkov version.
 func (s *CheckovScanner) getVersion(ctx context.Context) string {
-	cmd := exec.CommandContext(ctx, "checkov", "--version")
-	output, err := cmd.Output()
-	if err != nil {
-		return "unknown"
-	}
-
-	// Checkov outputs version directly
-	return strings.TrimSpace(string(output))
+	return GetScannerVersion(ctx, "checkov", "--version", func(output []byte) string {
+		// Checkov outputs version directly
+		return strings.TrimSpace(string(output))
+	})
 }
 
 // CheckovReport represents the Checkov JSON output structure.
 type CheckovReport struct {
-	Results             interface{}          `json:"results"` // Can be map[string]CheckovCheckResults or CheckovCheckResults
+	Results             any                  `json:"results"` // Can be map[string]CheckovCheckResults or CheckovCheckResults
 	CheckType           string               `json:"check_type"`
 	SecretsFailedChecks []CheckovSecretCheck `json:"secrets_failed_checks,omitempty"`
 	Summary             CheckovSummary       `json:"summary"`
@@ -389,9 +378,9 @@ func (r *CheckovReport) GetResults() map[string]CheckovCheckResults {
 	if r.Results == nil {
 		return nil
 	}
-	
+
 	// Check if it's already a map
-	if results, ok := r.Results.(map[string]interface{}); ok {
+	if results, ok := r.Results.(map[string]any); ok {
 		// Convert to the expected type
 		mapped := make(map[string]CheckovCheckResults)
 		for k, v := range results {
@@ -404,7 +393,7 @@ func (r *CheckovReport) GetResults() map[string]CheckovCheckResults {
 		}
 		return mapped
 	}
-	
+
 	// Check if it's a direct CheckovCheckResults
 	if jsonBytes, err := json.Marshal(r.Results); err == nil {
 		var checkResults CheckovCheckResults
@@ -415,7 +404,7 @@ func (r *CheckovReport) GetResults() map[string]CheckovCheckResults {
 			}
 		}
 	}
-	
+
 	return nil
 }
 

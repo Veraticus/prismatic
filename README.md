@@ -207,6 +207,94 @@ prismatic list -c mycompany.yaml
 prismatic report -c mycompany.yaml --scan-id 2025-01-15-103045
 ```
 
+## 🔍 Repository Scanning
+
+Prismatic automatically clones and scans Git repositories for secrets (using Gitleaks) and Infrastructure-as-Code issues (using Checkov). This feature supports both remote Git URLs and local paths.
+
+### Remote Repository Scanning
+
+When you configure remote repositories, Prismatic will:
+1. Clone each repository to a temporary directory
+2. Check out the specified branch
+3. Run Gitleaks and Checkov on the code
+4. Clean up the cloned repositories after scanning
+
+```yaml
+repositories:
+  - name: backend-api
+    path: "https://github.com/mycompany/backend"
+    branch: main
+  - name: frontend-app
+    path: "https://github.com/mycompany/frontend"  
+    branch: develop
+  - name: terraform-configs
+    path: "git@github.com:mycompany/infrastructure.git"
+    branch: production
+```
+
+### Local Repository Scanning
+
+You can also scan repositories that are already cloned locally:
+
+```yaml
+repositories:
+  - name: backend-api
+    path: "/home/developer/projects/backend"
+    branch: main  # Will check out this branch
+  - name: frontend-app
+    path: "./frontend"  # Relative paths are supported
+    branch: develop
+  - name: current-repo
+    path: "."  # Scan the current directory
+    branch: main
+```
+
+### Private Repository Access
+
+For private repositories, ensure your Git credentials are configured:
+
+```bash
+# SSH authentication (recommended)
+ssh-add ~/.ssh/id_rsa
+
+# HTTPS with credentials
+git config --global credential.helper store
+
+# For GitHub, use personal access tokens
+export GITHUB_TOKEN=your-token-here
+```
+
+### Repository Scan Results
+
+Repository findings include:
+- **Repository context**: Each finding shows which repository it came from
+- **File location**: Exact file and line number
+- **Secret detection**: API keys, passwords, tokens (Gitleaks)
+- **IaC misconfigurations**: Security issues in Terraform, CloudFormation, Kubernetes manifests (Checkov)
+
+Example finding:
+```
+🔴 CRITICAL: Exposed AWS Access Key
+Repository: backend-api:src/config/aws.js
+Line: 42
+Description: AWS access key found in source code
+Remediation: Remove the key from code and rotate it immediately
+```
+
+### Advanced Repository Options
+
+```yaml
+# Coming soon: Additional repository options
+repositories:
+  - name: monorepo
+    path: "https://github.com/mycompany/monorepo"
+    branch: main
+    # Future features:
+    # subpath: "services/api"  # Scan only specific directory
+    # shallow: false           # Full clone vs shallow clone
+    # exclude: ["test/", "vendor/"]  # Exclude paths from scanning
+```
+
 ## 📊 Report Features
 
 Prismatic generates professional reports featuring:

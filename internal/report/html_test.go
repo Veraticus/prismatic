@@ -74,19 +74,19 @@ func TestNewHTMLGenerator(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test loading scan by path
-	gen, err := NewHTMLGenerator(scanDir)
+	gen, err := NewHTMLGenerator(scanDir, nil)
 	require.NoError(t, err)
 	assert.Equal(t, scanDir, gen.scanPath)
 	assert.Equal(t, metadata.ClientName, gen.metadata.ClientName)
 	assert.Len(t, gen.findings, 2)
 
 	// Test loading latest scan
-	gen2, err := NewHTMLGenerator("latest")
+	gen2, err := NewHTMLGenerator("latest", nil)
 	require.NoError(t, err)
 	assert.Equal(t, scanDir, gen2.scanPath)
 
 	// Test with non-existent scan
-	_, err = NewHTMLGenerator("/non/existent/path")
+	_, err = NewHTMLGenerator("/non/existent/path", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "loading scan results")
 }
@@ -297,7 +297,7 @@ func TestGenerate(t *testing.T) {
 	require.NoError(t, err)
 
 	// Generate report
-	gen, err := NewHTMLGenerator(scanDir)
+	gen, err := NewHTMLGenerator(scanDir, nil)
 	require.NoError(t, err)
 
 	outputPath := filepath.Join(tempDir, "report.html")
@@ -309,7 +309,7 @@ func TestGenerate(t *testing.T) {
 
 	// Read and verify content
 	// Path is safe - constructed from test temp directory
-	content, err := os.ReadFile(outputPath)
+	content, err := os.ReadFile(outputPath) // #nosec G304
 	require.NoError(t, err)
 
 	html := string(content)
@@ -481,7 +481,7 @@ func TestSortFindings(t *testing.T) {
 // saveJSONHelper is a test helper to save JSON data.
 func saveJSONHelper(path string, data any) error {
 	// Path is safe - only used in tests with temp directories
-	file, err := os.Create(path)
+	file, err := os.Create(path) // #nosec G304
 	if err != nil {
 		return err
 	}
@@ -545,7 +545,7 @@ func TestGenerateWithInvalidOutputPath(t *testing.T) {
 	err = saveJSONHelper(filepath.Join(scanDir, "findings.json"), []models.Finding{})
 	require.NoError(t, err)
 
-	gen, err := NewHTMLGenerator(scanDir)
+	gen, err := NewHTMLGenerator(scanDir, nil)
 	require.NoError(t, err)
 
 	// Test with invalid output path

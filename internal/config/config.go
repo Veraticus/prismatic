@@ -22,6 +22,7 @@ type Config struct {
 	MetadataEnrichment MetadataEnrichment `yaml:"metadata_enrichment,omitempty"`
 	Client             ClientConfig       `yaml:"client"`
 	Endpoints          []string           `yaml:"endpoints,omitempty"`
+	Repositories       []Repository       `yaml:"repositories,omitempty"`
 }
 
 // ClientConfig contains client identification information.
@@ -73,6 +74,13 @@ type ResourceMetadata struct {
 	ComplianceImpact   []string `yaml:"compliance_impact,omitempty"`
 }
 
+// Repository represents a Git repository to scan.
+type Repository struct {
+	Name   string `yaml:"name"`
+	Path   string `yaml:"path"` // Can be URL or local path
+	Branch string `yaml:"branch"`
+}
+
 // LoadConfig reads and parses a YAML configuration file.
 func LoadConfig(path string) (*Config, error) {
 	// Validate the config file path
@@ -81,7 +89,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config path: %w", err)
 	}
 
-	data, err := os.ReadFile(validPath)
+	data, err := os.ReadFile(validPath) // #nosec G304 - path is validated
 	if err != nil {
 		return nil, fmt.Errorf("reading config file: %w", err)
 	}
@@ -120,9 +128,12 @@ func (c *Config) Validate() error {
 	if len(c.Endpoints) > 0 {
 		hasTarget = true
 	}
+	if len(c.Repositories) > 0 {
+		hasTarget = true
+	}
 
 	if !hasTarget {
-		return fmt.Errorf("at least one scanning target must be configured (AWS, Docker, Kubernetes, or Endpoints)")
+		return fmt.Errorf("at least one scanning target must be configured (AWS, Docker, Kubernetes, Endpoints, or Repositories)")
 	}
 
 	// Validate date format if specified
@@ -142,13 +153,70 @@ func (c *Config) Validate() error {
 				kubeconfigPath = filepath.Join(homeDir, kubeconfigPath[2:])
 			}
 		}
-		
+
 		if _, err := os.Stat(kubeconfigPath); err != nil {
 			return fmt.Errorf("kubeconfig file not found: %s", c.Kubernetes.Kubeconfig)
 		}
 	}
 
+	// Validate AWS regions if configured
+	if c.AWS != nil && len(c.AWS.Regions) > 0 {
+		validRegions := getValidAWSRegions()
+		for _, region := range c.AWS.Regions {
+			if !isValidAWSRegion(region, validRegions) {
+				return fmt.Errorf("invalid AWS region: %s", region)
+			}
+		}
+	}
+
 	return nil
+}
+
+// isValidAWSRegion checks if a region is valid.
+func isValidAWSRegion(region string, validRegions map[string]bool) bool {
+	return validRegions[region]
+}
+
+// getValidAWSRegions returns a map of valid AWS regions.
+func getValidAWSRegions() map[string]bool {
+	return map[string]bool{
+		// US Regions
+		"us-east-1": true, // N. Virginia
+		"us-east-2": true, // Ohio
+		"us-west-1": true, // N. California
+		"us-west-2": true, // Oregon
+		// EU Regions
+		"eu-west-1":    true, // Ireland
+		"eu-west-2":    true, // London
+		"eu-west-3":    true, // Paris
+		"eu-central-1": true, // Frankfurt
+		"eu-central-2": true, // Zurich
+		"eu-north-1":   true, // Stockholm
+		"eu-south-1":   true, // Milan
+		"eu-south-2":   true, // Spain
+		// Asia Pacific Regions
+		"ap-southeast-1": true, // Singapore
+		"ap-southeast-2": true, // Sydney
+		"ap-southeast-3": true, // Jakarta
+		"ap-southeast-4": true, // Melbourne
+		"ap-northeast-1": true, // Tokyo
+		"ap-northeast-2": true, // Seoul
+		"ap-northeast-3": true, // Osaka
+		"ap-south-1":     true, // Mumbai
+		"ap-south-2":     true, // Hyderabad
+		"ap-east-1":      true, // Hong Kong
+		// Other Regions
+		"ca-central-1": true, // Canada
+		"ca-west-1":    true, // Calgary
+		"sa-east-1":    true, // São Paulo
+		"me-south-1":   true, // Bahrain
+		"me-central-1": true, // UAE
+		"af-south-1":   true, // Cape Town
+		"il-central-1": true, // Tel Aviv
+		// GovCloud
+		"us-gov-east-1": true, // GovCloud East
+		"us-gov-west-1": true, // GovCloud West
+	}
 }
 
 // IsSuppressed checks if a finding should be suppressed based on configuration.

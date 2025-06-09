@@ -3,43 +3,41 @@ package scanner
 import (
 	"fmt"
 
+	"github.com/Veraticus/prismatic/internal/config"
 	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
-// ScannerFactory creates scanners based on type and configuration.
-type ScannerFactory struct {
-	clientCfg ClientConfig
-	logger    logger.Logger
-	outputDir string
-	config    Config
-}
-
-// ClientConfig represents the client configuration needed by scanners.
-type ClientConfig interface {
-	GetAWSConfig() (profiles []string, regions []string, services []string)
-	GetDockerTargets() []string
-	GetKubernetesConfig() (kubeconfig string, contexts []string, namespaces []string)
-	GetEndpoints() []string
-	GetCheckovTargets() []string
+// Factory creates scanners based on type and configuration.
+type Factory struct {
+	logger          logger.Logger
+	clientConfig    *config.Config
+	repositoryPaths map[string]string
+	outputDir       string
+	baseConfig      Config
 }
 
 // NewScannerFactory creates a new scanner factory.
-func NewScannerFactory(config Config, clientCfg ClientConfig, outputDir string) *ScannerFactory {
-	return NewScannerFactoryWithLogger(config, clientCfg, outputDir, logger.GetGlobalLogger())
+func NewScannerFactory(baseConfig Config, clientConfig *config.Config, outputDir string) *Factory {
+	return NewScannerFactoryWithLogger(baseConfig, clientConfig, outputDir, logger.GetGlobalLogger())
 }
 
 // NewScannerFactoryWithLogger creates a new scanner factory with a custom logger.
-func NewScannerFactoryWithLogger(config Config, clientCfg ClientConfig, outputDir string, log logger.Logger) *ScannerFactory {
-	return &ScannerFactory{
-		config:    config,
-		clientCfg: clientCfg,
-		outputDir: outputDir,
-		logger:    log,
+func NewScannerFactoryWithLogger(baseConfig Config, clientConfig *config.Config, outputDir string, log logger.Logger) *Factory {
+	return &Factory{
+		baseConfig:   baseConfig,
+		clientConfig: clientConfig,
+		outputDir:    outputDir,
+		logger:       log,
 	}
 }
 
+// SetRepositoryPaths sets the repository paths for scanners that need them.
+func (f *Factory) SetRepositoryPaths(paths map[string]string) {
+	f.repositoryPaths = paths
+}
+
 // CreateScanner creates a scanner of the given type.
-func (f *ScannerFactory) CreateScanner(scannerType string) (Scanner, error) {
+func (f *Factory) CreateScanner(scannerType string) (Scanner, error) {
 	switch scannerType {
 	case "trivy":
 		return f.createTrivyScanner()
@@ -59,111 +57,70 @@ func (f *ScannerFactory) CreateScanner(scannerType string) (Scanner, error) {
 }
 
 // createTrivyScanner creates and configures a Trivy scanner.
-func (f *ScannerFactory) createTrivyScanner() (Scanner, error) {
-	targets := f.clientCfg.GetDockerTargets()
-	if len(targets) == 0 {
+func (f *Factory) createTrivyScanner() (Scanner, error) {
+	if f.clientConfig.Docker == nil || len(f.clientConfig.Docker.Containers) == 0 {
 		f.logger.Warn("No targets configured for Trivy")
-		return nil, fmt.Errorf("no Trivy targets configured")
+		return nil, fmt.Errorf("no Docker targets configured for Trivy scanner")
 	}
-	return NewTrivyScannerWithLogger(f.config, targets, f.logger), nil
+	return NewTrivyScannerWithLogger(f.baseConfig, f.clientConfig.Docker.Containers, f.logger), nil
 }
 
 // createProwlerScanner creates and configures a Prowler scanner.
-func (f *ScannerFactory) createProwlerScanner() (Scanner, error) {
-	profiles, regions, services := f.clientCfg.GetAWSConfig()
-	if len(profiles) == 0 {
+func (f *Factory) createProwlerScanner() (Scanner, error) {
+	if f.clientConfig.AWS == nil || len(f.clientConfig.AWS.Profiles) == 0 {
 		f.logger.Warn("No AWS profiles configured for Prowler")
-		return nil, fmt.Errorf("no AWS profiles configured")
+		return nil, fmt.Errorf("no AWS profiles configured for Prowler scanner")
 	}
-	return NewProwlerScannerWithLogger(f.config, profiles, regions, services, f.logger), nil
+	// Note: services array is not in config, passing nil for now
+	return NewProwlerScannerWithLogger(f.baseConfig, f.clientConfig.AWS.Profiles, f.clientConfig.AWS.Regions, nil, f.logger), nil
 }
 
 // createKubescapeScanner creates and configures a Kubescape scanner.
-func (f *ScannerFactory) createKubescapeScanner() (Scanner, error) {
-	kubeconfig, contexts, namespaces := f.clientCfg.GetKubernetesConfig()
-	if len(contexts) == 0 {
+func (f *Factory) createKubescapeScanner() (Scanner, error) {
+	if f.clientConfig.Kubernetes == nil || len(f.clientConfig.Kubernetes.Contexts) == 0 {
 		f.logger.Warn("No Kubernetes contexts configured for Kubescape")
-		return nil, fmt.Errorf("no Kubernetes contexts configured")
+		return nil, fmt.Errorf("no Kubernetes contexts configured for Kubescape scanner")
 	}
-	return NewKubescapeScannerWithLogger(f.config, kubeconfig, contexts, namespaces, f.logger), nil
+	return NewKubescapeScannerWithLogger(f.baseConfig, f.clientConfig.Kubernetes.Kubeconfig,
+		f.clientConfig.Kubernetes.Contexts, f.clientConfig.Kubernetes.Namespaces, f.logger), nil
 }
 
 // createNucleiScanner creates and configures a Nuclei scanner.
-func (f *ScannerFactory) createNucleiScanner() (Scanner, error) {
-	endpoints := f.clientCfg.GetEndpoints()
-	if len(endpoints) == 0 {
+func (f *Factory) createNucleiScanner() (Scanner, error) {
+	if len(f.clientConfig.Endpoints) == 0 {
 		f.logger.Warn("No endpoints configured for Nuclei")
-		return nil, fmt.Errorf("no endpoints configured")
+		return nil, fmt.Errorf("no web endpoints configured for Nuclei scanner")
 	}
-	return NewNucleiScannerWithLogger(f.config, endpoints, f.logger), nil
+	return NewNucleiScannerWithLogger(f.baseConfig, f.clientConfig.Endpoints, f.logger), nil
 }
 
 // createGitleaksScanner creates and configures a Gitleaks scanner.
-func (f *ScannerFactory) createGitleaksScanner() (Scanner, error) {
-	// Gitleaks scans the current directory by default
+func (f *Factory) createGitleaksScanner() (Scanner, error) {
+	// If we have repositories, scan each one
+	if len(f.repositoryPaths) > 0 {
+		// For now, we'll create a scanner that scans all repositories
+		// In the future, we might want to create multiple scanner instances
+		return NewGitleaksScannerWithRepositories(f.baseConfig, f.repositoryPaths, f.logger), nil
+	}
+
+	// Otherwise, scan current directory
 	target := "."
-	return NewGitleaksScannerWithLogger(f.config, target, f.logger), nil
+	return NewGitleaksScannerWithLogger(f.baseConfig, target, f.logger), nil
 }
 
 // createCheckovScanner creates and configures a Checkov scanner.
-func (f *ScannerFactory) createCheckovScanner() (Scanner, error) {
-	targets := f.clientCfg.GetCheckovTargets()
-	if len(targets) == 0 {
-		f.logger.Warn("No targets configured for Checkov")
-		return nil, fmt.Errorf("no Checkov targets configured")
-	}
-	return NewCheckovScannerWithLogger(f.config, targets, f.logger), nil
-}
-
-// ScannerTypeDetector detects which scanners should be used based on configuration.
-type ScannerTypeDetector struct {
-	hasAWS        bool
-	hasDocker     bool
-	hasKubernetes bool
-	hasEndpoints  bool
-}
-
-// NewScannerTypeDetector creates a new scanner type detector.
-func NewScannerTypeDetector(cfg ClientConfig) *ScannerTypeDetector {
-	profiles, _, _ := cfg.GetAWSConfig()
-	_, contexts, _ := cfg.GetKubernetesConfig()
-
-	return &ScannerTypeDetector{
-		hasAWS:        len(profiles) > 0,
-		hasDocker:     len(cfg.GetDockerTargets()) > 0,
-		hasKubernetes: len(contexts) > 0,
-		hasEndpoints:  len(cfg.GetEndpoints()) > 0,
-	}
-}
-
-// DetectScanners returns which scanner types should be used.
-func (d *ScannerTypeDetector) DetectScanners(onlyScanners []string) []string {
-	// If specific scanners requested, use only those
-	if len(onlyScanners) > 0 {
-		return onlyScanners
+func (f *Factory) createCheckovScanner() (Scanner, error) {
+	// If we have repositories, scan those
+	if len(f.repositoryPaths) > 0 {
+		targets := make([]string, 0, len(f.repositoryPaths))
+		for _, path := range f.repositoryPaths {
+			targets = append(targets, path)
+		}
+		return NewCheckovScannerWithLogger(f.baseConfig, targets, f.logger), nil
 	}
 
-	// Otherwise, determine based on configuration
-	var scanners []string
-
-	if d.hasAWS {
-		scanners = append(scanners, "prowler")
-	}
-
-	if d.hasDocker {
-		scanners = append(scanners, "trivy")
-	}
-
-	if d.hasKubernetes {
-		scanners = append(scanners, "kubescape")
-	}
-
-	if d.hasEndpoints {
-		scanners = append(scanners, "nuclei")
-	}
-
-	// Always include these if not filtered
-	scanners = append(scanners, "gitleaks", "checkov")
-
-	return scanners
+	// Otherwise use default target (current directory)
+	// Note: The original GetCheckovTargets() method doesn't exist in config
+	targets := []string{"."}
+	return NewCheckovScannerWithLogger(f.baseConfig, targets, f.logger), nil
 }

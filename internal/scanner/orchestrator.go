@@ -3,23 +3,27 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/Veraticus/prismatic/internal/config"
 	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/Veraticus/prismatic/internal/repository"
 	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
 // Orchestrator manages multiple scanners and coordinates their execution.
 type Orchestrator struct {
-	logger      logger.Logger
-	config      *config.Config
-	outputDir   string
-	scanners    []Scanner
-	maxWorkers  int
-	scanTimeout time.Duration
-	useMock     bool
+	logger       logger.Logger
+	config       *config.Config
+	repoPaths    map[string]string
+	outputDir    string
+	scanners     []Scanner
+	repoCleanups []func()
+	maxWorkers   int
+	scanTimeout  time.Duration
+	useMock      bool
 }
 
 // NewOrchestrator creates a new scanner orchestrator.
@@ -30,27 +34,86 @@ func NewOrchestrator(cfg *config.Config, outputDir string, useMock bool) *Orches
 // NewOrchestratorWithLogger creates a new scanner orchestrator with a custom logger.
 func NewOrchestratorWithLogger(cfg *config.Config, outputDir string, useMock bool, log logger.Logger) *Orchestrator {
 	return &Orchestrator{
-		config:      cfg,
-		outputDir:   outputDir,
-		useMock:     useMock,
-		scanners:    []Scanner{},
-		maxWorkers:  3, // Default to 3 concurrent scanners
-		scanTimeout: 10 * time.Minute,
-		logger:      log,
+		config:       cfg,
+		outputDir:    outputDir,
+		useMock:      useMock,
+		scanners:     []Scanner{},
+		maxWorkers:   3, // Default to 3 concurrent scanners
+		scanTimeout:  10 * time.Minute,
+		logger:       log,
+		repoPaths:    make(map[string]string),
+		repoCleanups: []func(){},
 	}
 }
 
 // SetMaxWorkers sets the maximum number of concurrent scanner workers.
-func (o *Orchestrator) SetMaxWorkers(max int) {
-	if max < 1 {
-		max = 1
+func (o *Orchestrator) SetMaxWorkers(maxWorkers int) {
+	if maxWorkers < 1 {
+		maxWorkers = 1
 	}
-	o.maxWorkers = max
+	o.maxWorkers = maxWorkers
 }
 
 // SetScanTimeout sets the timeout for individual scanner execution.
 func (o *Orchestrator) SetScanTimeout(timeout time.Duration) {
 	o.scanTimeout = timeout
+}
+
+// PrepareRepositories clones all configured repositories before scanning.
+func (o *Orchestrator) PrepareRepositories(ctx context.Context) error {
+	if len(o.config.Repositories) == 0 {
+		return nil
+	}
+
+	o.logger.Info("Preparing repositories", "count", len(o.config.Repositories))
+
+	// Create resolver with repository directory in output
+	resolver := repository.NewGitResolver(
+		repository.WithBaseDir(filepath.Join(o.outputDir, "repos")),
+		repository.WithLogger(o.logger),
+	)
+
+	// If mock mode, use mock resolver
+	if o.useMock {
+		mockPaths := make(map[string]string)
+		for _, repo := range o.config.Repositories {
+			mockPaths[repo.Name] = filepath.Join(o.outputDir, "mock-repos", repo.Name)
+		}
+		resolver = repository.NewMockResolver(mockPaths)
+	}
+
+	// Clone all repositories
+	for _, repo := range o.config.Repositories {
+		o.logger.Debug("Preparing repository", "name", repo.Name, "path", repo.Path)
+
+		localPath, cleanup, err := resolver(ctx, repo)
+		if err != nil {
+			// Clean up any previously cloned repos
+			o.CleanupRepositories()
+			return fmt.Errorf("failed to prepare repository %s: %w", repo.Name, err)
+		}
+
+		o.repoPaths[repo.Name] = localPath
+		o.repoCleanups = append(o.repoCleanups, cleanup)
+
+		o.logger.Info("Repository prepared", "name", repo.Name, "local_path", localPath)
+	}
+
+	return nil
+}
+
+// CleanupRepositories removes all cloned repositories.
+func (o *Orchestrator) CleanupRepositories() {
+	for _, cleanup := range o.repoCleanups {
+		cleanup()
+	}
+	o.repoCleanups = []func(){}
+	o.repoPaths = make(map[string]string)
+}
+
+// GetRepositoryPaths returns the local paths of all prepared repositories.
+func (o *Orchestrator) GetRepositoryPaths() map[string]string {
+	return o.repoPaths
 }
 
 // InitializeScanners sets up scanners based on configuration.
@@ -69,7 +132,9 @@ func (o *Orchestrator) InitializeScanners(onlyScanners []string) error {
 	if o.useMock {
 		factory = NewMockScannerFactory(baseConfig, o.logger)
 	} else {
-		factory = NewScannerFactoryWithLogger(baseConfig, o, o.outputDir, o.logger)
+		realFactory := NewScannerFactoryWithLogger(baseConfig, o.config, o.outputDir, o.logger)
+		realFactory.SetRepositoryPaths(o.repoPaths)
+		factory = realFactory
 	}
 
 	// Determine which scanners to initialize
@@ -145,9 +210,6 @@ func (o *Orchestrator) RunScans(ctx context.Context) (*models.ScanMetadata, erro
 
 	metadata.EndTime = time.Now()
 	metadata.Scanners = o.getScannerNames()
-
-	// Enrich findings with business context if configured
-	o.EnrichFindings(metadata)
 
 	return metadata, nil
 }
@@ -243,42 +305,6 @@ func (o *Orchestrator) processResult(result *models.ScanResult, metadata *models
 // EnrichFindings adds business context to findings if metadata enrichment is configured.
 // This is an optional post-processing step that runs after all scanners complete.
 // It modifies findings in-place rather than creating new objects.
-func (o *Orchestrator) EnrichFindings(metadata *models.ScanMetadata) {
-	// If no metadata enrichment is configured, return early
-	if len(o.config.MetadataEnrichment.Resources) == 0 {
-		return
-	}
-
-	enrichedCount := 0
-
-	// Process each scanner's results
-	for _, result := range metadata.Results {
-		for i := range result.Findings {
-			finding := &result.Findings[i]
-
-			// Try to match resource metadata
-			if resourceMetadata, ok := o.config.GetResourceMetadata(finding.Resource); ok {
-				finding.BusinessContext = &models.BusinessContext{
-					Owner:              resourceMetadata.Owner,
-					DataClassification: resourceMetadata.DataClassification,
-					BusinessImpact:     resourceMetadata.BusinessImpact,
-					ComplianceImpact:   resourceMetadata.ComplianceImpact,
-				}
-				enrichedCount++
-
-				o.logger.Debug("Enriched finding with business context",
-					"resource", finding.Resource,
-					"owner", resourceMetadata.Owner,
-				)
-			}
-		}
-	}
-
-	o.logger.Info("Completed finding enrichment",
-		"enriched_count", enrichedCount,
-		"resources_with_metadata", len(o.config.MetadataEnrichment.Resources),
-	)
-}
 
 // getScannerNames returns the names of all configured scanners.
 func (o *Orchestrator) getScannerNames() []string {
@@ -287,89 +313,6 @@ func (o *Orchestrator) getScannerNames() []string {
 		names[i] = scanner.Name()
 	}
 	return names
-}
-
-// getTrivyTargets returns targets for Trivy scanning based on configuration.
-func (o *Orchestrator) getTrivyTargets() []string {
-	var targets []string
-
-	// Add Docker containers
-	if o.config.Docker != nil {
-		targets = append(targets, o.config.Docker.Containers...)
-	}
-
-	return targets
-}
-
-// getProwlerConfig returns Prowler configuration from the main config.
-func (o *Orchestrator) getProwlerConfig() (profiles, regions, services []string) {
-	if o.config.AWS == nil {
-		return nil, nil, nil
-	}
-
-	// Get profiles
-	profiles = o.config.AWS.Profiles
-
-	// Get regions
-	regions = o.config.AWS.Regions
-
-	// Get services if specified
-	// For now, we'll scan all services unless specified
-	// This could be extended to read from config
-	services = []string{}
-
-	return profiles, regions, services
-}
-
-// getKubescapeConfig returns Kubescape configuration from the main config.
-func (o *Orchestrator) getKubescapeConfig() (kubeconfig string, contexts, namespaces []string) {
-	if o.config.Kubernetes == nil {
-		return "", nil, nil
-	}
-
-	kubeconfig = o.config.Kubernetes.Kubeconfig
-	contexts = o.config.Kubernetes.Contexts
-	namespaces = o.config.Kubernetes.Namespaces
-
-	return kubeconfig, contexts, namespaces
-}
-
-// getCheckovTargets returns target directories for Checkov IaC scanning.
-func (o *Orchestrator) getCheckovTargets() []string {
-	// Checkov scans Infrastructure-as-Code files in directories
-	// For now, scan the current directory and any terraform/kubernetes directories
-	targets := []string{"."}
-
-	// Could be extended to read from config.IaC.Directories or similar
-	// For now, return current directory which will scan all IaC files recursively
-	return targets
-}
-
-// ClientConfig interface implementation
-
-// GetAWSConfig returns AWS configuration for scanners.
-func (o *Orchestrator) GetAWSConfig() (profiles []string, regions []string, services []string) {
-	return o.getProwlerConfig()
-}
-
-// GetDockerTargets returns Docker targets for scanners.
-func (o *Orchestrator) GetDockerTargets() []string {
-	return o.getTrivyTargets()
-}
-
-// GetKubernetesConfig returns Kubernetes configuration for scanners.
-func (o *Orchestrator) GetKubernetesConfig() (kubeconfig string, contexts []string, namespaces []string) {
-	return o.getKubescapeConfig()
-}
-
-// GetEndpoints returns web endpoints for scanners.
-func (o *Orchestrator) GetEndpoints() []string {
-	return o.config.Endpoints
-}
-
-// GetCheckovTargets returns targets for Checkov scanner.
-func (o *Orchestrator) GetCheckovTargets() []string {
-	return o.getCheckovTargets()
 }
 
 // detectScanners determines which scanners to use based on configuration.
@@ -383,22 +326,22 @@ func (o *Orchestrator) detectScanners(onlyScanners []string) []string {
 	var scanners []string
 
 	// Check AWS config
-	if profiles, _, _ := o.GetAWSConfig(); len(profiles) > 0 {
+	if o.config.AWS != nil && len(o.config.AWS.Profiles) > 0 {
 		scanners = append(scanners, "prowler")
 	}
 
 	// Check Docker config
-	if targets := o.GetDockerTargets(); len(targets) > 0 {
+	if o.config.Docker != nil && len(o.config.Docker.Containers) > 0 {
 		scanners = append(scanners, "trivy")
 	}
 
 	// Check Kubernetes config
-	if _, contexts, _ := o.GetKubernetesConfig(); len(contexts) > 0 {
+	if o.config.Kubernetes != nil && len(o.config.Kubernetes.Contexts) > 0 {
 		scanners = append(scanners, "kubescape")
 	}
 
 	// Check endpoints
-	if endpoints := o.GetEndpoints(); len(endpoints) > 0 {
+	if len(o.config.Endpoints) > 0 {
 		scanners = append(scanners, "nuclei")
 	}
 

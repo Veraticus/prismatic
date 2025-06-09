@@ -90,7 +90,7 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 	// Verify findings.json content
 	var findings []models.Finding
 	// Path is safe - constructed from test temp directory
-	findingsData, err := os.ReadFile(filepath.Join(outputDir, "findings.json"))
+	findingsData, err := os.ReadFile(filepath.Join(outputDir, "findings.json")) // #nosec G304
 	require.NoError(t, err)
 	err = json.Unmarshal(findingsData, &findings)
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 
 	// Verify scan.log content
 	// Path is safe - constructed from test temp directory
-	logContent, err := os.ReadFile(filepath.Join(outputDir, "scan.log"))
+	logContent, err := os.ReadFile(filepath.Join(outputDir, "scan.log")) // #nosec G304
 	require.NoError(t, err)
 	assert.Contains(t, string(logContent), "Client: test-client")
 	assert.Contains(t, string(logContent), "Environment: test-env")

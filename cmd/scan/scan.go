@@ -105,6 +105,15 @@ Examples:
 	// Initialize orchestrator
 	orchestrator := scanner.NewOrchestrator(cfg, opts.OutputDir, opts.Mock)
 
+	// Prepare repositories if configured
+	if len(cfg.Repositories) > 0 {
+		printScanProgress("Cloning repositories...")
+		if prepErr := orchestrator.PrepareRepositories(ctx); prepErr != nil {
+			return fmt.Errorf("preparing repositories: %w", prepErr)
+		}
+		defer orchestrator.CleanupRepositories()
+	}
+
 	// Initialize scanners
 	if initErr := orchestrator.InitializeScanners(opts.OnlyScanners); initErr != nil {
 		return fmt.Errorf("initializing scanners: %w", initErr)

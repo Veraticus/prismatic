@@ -16,6 +16,7 @@ import (
 // GitleaksScanner implements secret detection in git repositories.
 type GitleaksScanner struct {
 	*BaseScanner
+	repoPaths  map[string]string
 	targetPath string
 }
 
@@ -32,6 +33,16 @@ func NewGitleaksScannerWithLogger(config Config, targetPath string, log logger.L
 	return &GitleaksScanner{
 		BaseScanner: NewBaseScannerWithLogger("gitleaks", config, log),
 		targetPath:  targetPath,
+		repoPaths:   nil,
+	}
+}
+
+// NewGitleaksScannerWithRepositories creates a new Gitleaks scanner for multiple repositories.
+func NewGitleaksScannerWithRepositories(config Config, repoPaths map[string]string, log logger.Logger) *GitleaksScanner {
+	return &GitleaksScanner{
+		BaseScanner: NewBaseScannerWithLogger("gitleaks", config, log),
+		targetPath:  "",
+		repoPaths:   repoPaths,
 	}
 }
 
@@ -46,27 +57,69 @@ func (s *GitleaksScanner) Scan(ctx context.Context) (*models.ScanResult, error) 
 		Findings:  []models.Finding{},
 	}
 
-	// Run Gitleaks
-	output, err := s.runGitleaks(ctx)
-	if err != nil {
-		// Gitleaks returns exit code 1 when secrets are found
-		// Only treat it as an error if it's not an exit error
-		if _, ok := err.(*exec.ExitError); !ok {
+	// If we have multiple repositories, scan each one
+	if len(s.repoPaths) > 0 {
+		allFindings := []models.Finding{}
+
+		for repoName, repoPath := range s.repoPaths {
+			s.logger.Debug("Scanning repository", "name", repoName, "path", repoPath)
+
+			// Update target path for this repository
+			s.targetPath = repoPath
+
+			// Run Gitleaks on this repository
+			output, err := s.runGitleaks(ctx)
+			if err != nil {
+				// Gitleaks returns exit code 1 when secrets are found
+				// Only treat it as an error if it's not an exit error
+				if _, ok := err.(*exec.ExitError); !ok {
+					s.logger.Error("Failed to scan repository", "repo", repoName, "error", err)
+					continue
+				}
+			}
+
+			// Parse results
+			findings, parseErr := s.ParseResults(output)
+			if parseErr != nil {
+				s.logger.Error("Failed to parse results", "repo", repoName, "error", parseErr)
+				continue
+			}
+
+			// Add repository context to findings
+			for i := range findings {
+				findings[i].Metadata["repository"] = repoName
+				// Update resource to include repository name
+				findings[i].Resource = fmt.Sprintf("%s:%s", repoName, findings[i].Resource)
+			}
+
+			allFindings = append(allFindings, findings...)
+		}
+
+		result.Findings = allFindings
+	} else {
+		// Single target scanning (backward compatibility)
+		output, err := s.runGitleaks(ctx)
+		if err != nil {
+			// Gitleaks returns exit code 1 when secrets are found
+			// Only treat it as an error if it's not an exit error
+			if _, ok := err.(*exec.ExitError); !ok {
+				result.EndTime = time.Now()
+				result.Error = fmt.Sprintf("gitleaks scan failed: %v", err)
+				return result, nil
+			}
+		}
+
+		// Parse results
+		findings, parseErr := s.ParseResults(output)
+		if parseErr != nil {
 			result.EndTime = time.Now()
-			result.Error = fmt.Sprintf("gitleaks scan failed: %v", err)
+			result.Error = fmt.Sprintf("failed to parse results: %v", parseErr)
 			return result, nil
 		}
+
+		result.Findings = findings
 	}
 
-	// Parse results
-	findings, parseErr := s.ParseResults(output)
-	if parseErr != nil {
-		result.EndTime = time.Now()
-		result.Error = fmt.Sprintf("failed to parse results: %v", parseErr)
-		return result, nil
-	}
-
-	result.Findings = findings
 	result.EndTime = time.Now()
 	return result, nil
 }
@@ -80,7 +133,7 @@ func (s *GitleaksScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 
 	var leaks []GitleaksLeak
 	if err := json.Unmarshal(raw, &leaks); err != nil {
-		return nil, NewStructuredError(s.Name(), ErrorTypeParse, err)
+		return nil, fmt.Errorf("gitleaks: failed to parse JSON output: %w", err)
 	}
 
 	findings := make([]models.Finding, 0, len(leaks))
@@ -173,50 +226,25 @@ func (s *GitleaksScanner) runGitleaks(ctx context.Context) ([]byte, error) {
 		args = append(args, "--config", configPath)
 	}
 
-	cmd := exec.CommandContext(ctx, "gitleaks", args...)
-	// Only set working directory if it's not the scan output directory
-	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
-		cmd.Dir = s.config.WorkingDir
+	output, err := ExecuteScanner(ctx, "gitleaks", args, s.config)
+	// Gitleaks returns exit code 1 when secrets are found
+	ok, realErr := HandleNonZeroExit(err, 1)
+	if !ok {
+		return nil, realErr
 	}
-
-	// Convert env map to slice of strings
-	if s.config.Env != nil {
-		for k, v := range s.config.Env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-	}
-
-	output, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			// Check if there's stderr output
-			if len(exitErr.Stderr) > 0 {
-				return nil, fmt.Errorf("gitleaks failed: %s", string(exitErr.Stderr))
-			}
-			// Exit code 1 means secrets were found, which is expected
-			// Return the output for parsing
-			return output, nil
-		}
-		return nil, err
-	}
-
 	return output, nil
 }
 
 // getVersion returns the Gitleaks version.
 func (s *GitleaksScanner) getVersion(ctx context.Context) string {
-	cmd := exec.CommandContext(ctx, "gitleaks", "version")
-	output, err := cmd.Output()
-	if err != nil {
-		return "unknown"
-	}
-
-	// Parse version from output like "v8.18.0"
-	version := strings.TrimSpace(string(output))
-	if strings.HasPrefix(version, "v") {
-		return version[1:]
-	}
-	return version
+	return GetScannerVersion(ctx, "gitleaks", "version", func(output []byte) string {
+		// Parse version from output like "v8.18.0"
+		version := strings.TrimSpace(string(output))
+		if strings.HasPrefix(version, "v") {
+			return version[1:]
+		}
+		return version
+	})
 }
 
 // redactSecret partially redacts a secret for security.

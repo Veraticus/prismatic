@@ -131,7 +131,7 @@ func (m *MockLogger) String() string {
 }
 
 func containsString(str, substr string) bool {
-	return len(str) >= len(substr) && (str == substr || len(substr) == 0 ||
-		(len(str) > 0 && len(substr) > 0 && str[0:len(substr)] == substr) ||
+	return len(str) >= len(substr) && (str == substr || substr == "" ||
+		(str != "" && substr != "" && str[0:len(substr)] == substr) ||
 		(len(str) > len(substr) && containsString(str[1:], substr)))
 }

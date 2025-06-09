@@ -107,8 +107,7 @@ func TestDetermineScanners(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			orch := NewOrchestrator(tt.config, "/tmp", false)
-			detector := NewScannerTypeDetector(orch)
-			result := detector.DetectScanners(tt.onlyScanners)
+			result := orch.detectScanners(tt.onlyScanners)
 			assert.ElementsMatch(t, tt.expected, result)
 		})
 	}
@@ -402,53 +401,9 @@ func TestGetScannerNames(t *testing.T) {
 	assert.ElementsMatch(t, []string{"mock-scanner1", "mock-scanner2", "mock-scanner3"}, names)
 }
 
-func TestGetKubescapeConfig(t *testing.T) {
-	tests := []struct {
-		name               string
-		config             *config.Config
-		expectedContexts   []string
-		expectedNamespaces []string
-	}{
-		{
-			name:               "no kubernetes config",
-			config:             &config.Config{},
-			expectedContexts:   nil,
-			expectedNamespaces: nil,
-		},
-		{
-			name: "with kubernetes config",
-			config: &config.Config{
-				Kubernetes: &config.KubernetesConfig{
-					Contexts:   []string{"prod", "staging"},
-					Namespaces: []string{"default", "kube-system"},
-				},
-			},
-			expectedContexts:   []string{"prod", "staging"},
-			expectedNamespaces: []string{"default", "kube-system"},
-		},
-		{
-			name: "contexts only",
-			config: &config.Config{
-				Kubernetes: &config.KubernetesConfig{
-					Contexts: []string{"minikube"},
-				},
-			},
-			expectedContexts:   []string{"minikube"},
-			expectedNamespaces: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			orch := NewOrchestrator(tt.config, "/tmp", false)
-			kubeconfig, contexts, namespaces := orch.getKubescapeConfig()
-			assert.Equal(t, "", kubeconfig) // No kubeconfig set in test cases
-			assert.Equal(t, tt.expectedContexts, contexts)
-			assert.Equal(t, tt.expectedNamespaces, namespaces)
-		})
-	}
-}
-
+// TestEnrichFindings tests have been moved to report package
+// since enrichment now happens during report generation
+/*
 func TestEnrichFindings(t *testing.T) {
 	tests := []struct {
 		config           *config.Config
@@ -677,6 +632,10 @@ func TestEnrichFindings(t *testing.T) {
 	}
 }
 
+*/
+
+// TestEnrichFindingsMultipleScanners has been moved to report package
+/*
 func TestEnrichFindingsMultipleScanners(t *testing.T) {
 	cfg := &config.Config{
 		Client: config.ClientConfig{
@@ -781,13 +740,6 @@ func TestEnrichFindingsMultipleScanners(t *testing.T) {
 	assert.NotNil(t, gitleaksFinding)
 	assert.Nil(t, gitleaksFinding.BusinessContext) // No metadata for this resource
 }
+*/
 
 // Helper function to find finding by ID in orchestrator tests.
-func findFindingByID(findings []models.Finding, id string) *models.Finding {
-	for _, f := range findings {
-		if f.ID == id {
-			return &f
-		}
-	}
-	return nil
-}

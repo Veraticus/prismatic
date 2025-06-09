@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -15,8 +14,7 @@ import (
 // TrivyScanner implements container and image vulnerability scanning.
 type TrivyScanner struct {
 	*BaseScanner
-	executor *ScannerExecutor
-	targets  []string
+	targets []string
 }
 
 // NewTrivyScanner creates a new Trivy scanner instance.
@@ -29,39 +27,52 @@ func NewTrivyScannerWithLogger(config Config, targets []string, log logger.Logge
 	return &TrivyScanner{
 		BaseScanner: NewBaseScannerWithLogger("trivy", config, log),
 		targets:     targets,
-		executor:    NewScannerExecutor(5 * time.Minute),
 	}
 }
 
 // Scan executes Trivy against configured targets.
 func (s *TrivyScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
-	return s.executor.Execute(ctx, s, func(scanCtx context.Context) (*models.ScanResult, error) {
-		result := &models.ScanResult{
-			Scanner:   s.Name(),
-			Version:   s.getVersion(scanCtx),
-			StartTime: time.Now(),
-			Findings:  []models.Finding{},
+	// Create scanner-specific context with timeout
+	scanCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	result := &models.ScanResult{
+		Scanner:   s.Name(),
+		Version:   s.getVersion(scanCtx),
+		StartTime: time.Now(),
+		Findings:  []models.Finding{},
+	}
+
+	// Process each target
+	for _, target := range s.targets {
+		s.logger.Debug("Scanning target", "target", target)
+
+		// Run scan for this target
+		output, err := s.scanTarget(scanCtx, target)
+		if err != nil {
+			s.logger.Error("Failed to scan target", "target", target, "error", err)
+			continue
 		}
 
-		// Use MultiTargetExecutor for processing multiple targets
-		mte := &MultiTargetExecutor{
-			Scanner:   s.Name(),
-			ParseFunc: s.ParseResults,
+		// Parse results
+		findings, err := s.ParseResults(output)
+		if err != nil {
+			s.logger.Error("Failed to parse results", "target", target, "error", err)
+			continue
 		}
 
-		mte.ProcessTargets(s.targets, func(target string) ([]byte, error) {
-			return s.scanTarget(scanCtx, target)
-		}, result)
+		result.Findings = append(result.Findings, findings...)
+	}
 
-		return result, nil
-	})
+	result.EndTime = time.Now()
+	return result, nil
 }
 
 // ParseResults converts Trivy JSON output to normalized findings.
 func (s *TrivyScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 	var report TrivyReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, NewStructuredError(s.Name(), ErrorTypeParse, err)
+		return nil, fmt.Errorf("trivy: failed to parse JSON output: %w", err)
 	}
 
 	var findings []models.Finding
@@ -202,46 +213,21 @@ func (s *TrivyScanner) scanTarget(ctx context.Context, target string) ([]byte, e
 		args = append(args, "fs", target)
 	}
 
-	cmd := exec.CommandContext(ctx, "trivy", args...)
-	// Only set working directory if it's not the scan output directory
-	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
-		cmd.Dir = s.config.WorkingDir
-	}
-	// Convert env map to slice of strings
-	if s.config.Env != nil {
-		for k, v := range s.config.Env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-	}
-
-	output, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("trivy failed: %s", string(exitErr.Stderr))
-		}
-		return nil, err
-	}
-
-	return output, nil
+	return ExecuteScanner(ctx, "trivy", args, s.config)
 }
 
 // getVersion returns the Trivy version.
 func (s *TrivyScanner) getVersion(ctx context.Context) string {
-	cmd := exec.CommandContext(ctx, "trivy", "--version")
-	output, err := cmd.Output()
-	if err != nil {
-		return "unknown"
-	}
-
-	// Parse version from output like "Version: 0.45.0"
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "Version:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+	return GetScannerVersion(ctx, "trivy", "--version", func(output []byte) string {
+		// Parse version from output like "Version: 0.45.0"
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "Version:") {
+				return strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+			}
 		}
-	}
-
-	return "unknown"
+		return "unknown"
+	})
 }
 
 // TrivyReport represents the Trivy JSON output structure.

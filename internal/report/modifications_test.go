@@ -218,6 +218,7 @@ func TestIsValidSeverity(t *testing.T) {
 		{"medium", true},
 		{"low", true},
 		{"info", true},
+		{"unknown", true}, // models.IsValidSeverity includes unknown
 		{"extreme", false},
 		{"", false},
 		{"HIGH", false}, // Case sensitive
@@ -225,7 +226,7 @@ func TestIsValidSeverity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.severity, func(t *testing.T) {
-			assert.Equal(t, tt.valid, isValidSeverity(tt.severity))
+			assert.Equal(t, tt.valid, models.IsValidSeverity(tt.severity))
 		})
 	}
 }

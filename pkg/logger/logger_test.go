@@ -59,7 +59,7 @@ func TestMockLogger(t *testing.T) {
 	}
 }
 
-func TestLoggerInterface(t *testing.T) {
+func TestLoggerInterface(_ *testing.T) {
 	// Test that both SlogLogger and MockLogger implement the Logger interface
 	var _ Logger = &SlogLogger{}
 	var _ Logger = &MockLogger{}

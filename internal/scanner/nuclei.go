@@ -24,10 +24,24 @@ func NewNucleiScanner(cfg Config, endpoints []string) *NucleiScanner {
 
 // NewNucleiScannerWithLogger creates a new Nuclei scanner instance with a custom logger.
 func NewNucleiScannerWithLogger(cfg Config, endpoints []string, log logger.Logger) *NucleiScanner {
-	return &NucleiScanner{
+	s := &NucleiScanner{
 		BaseScanner: NewBaseScannerWithLogger("nuclei", cfg, log),
 		endpoints:   endpoints,
 	}
+	s.version = s.getVersion()
+	return s
+}
+
+// getVersion retrieves the version of Nuclei.
+func (s *NucleiScanner) getVersion() string {
+	return GetScannerVersion(context.Background(), "nuclei", "-version", func(output []byte) string {
+		// Nuclei version output format: "Nuclei Engine Version: v3.1.2"
+		version := strings.TrimSpace(string(output))
+		if parts := strings.Split(version, ": "); len(parts) >= 2 {
+			return strings.TrimSpace(parts[len(parts)-1])
+		}
+		return version
+	})
 }
 
 // Scan executes Nuclei against configured endpoints.
@@ -75,21 +89,16 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		args = append(args, "-u", endpoint)
 	}
 
-	cmd := exec.CommandContext(ctx, "nuclei", args...)
-	// Add environment variables
-	if s.config.Env != nil {
-		for k, v := range s.config.Env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-	}
-
-	output, err := cmd.CombinedOutput()
+	// Execute scan using common helper
+	output, err := ExecuteScanner(ctx, "nuclei", args, s.config)
 	if err != nil {
-		// Nuclei returns non-zero exit code if vulnerabilities are found
+		// Check if it's a command not found error
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
-			return nil, fmt.Errorf("%s scan failed: nuclei not found: %w", s.Name(), err)
+			return nil, fmt.Errorf("nuclei: command not found: %w", err)
 		}
-		// For other non-zero exit codes, we might still have findings
+		// Nuclei returns non-zero exit code if vulnerabilities are found, which is expected
+		// We don't use HandleNonZeroExit here because nuclei doesn't have consistent exit codes
+		// for findings vs errors, so we always try to parse the output
 	}
 
 	if len(output) == 0 {

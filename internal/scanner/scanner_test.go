@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -176,25 +175,7 @@ func TestValidateFinding(t *testing.T) {
 	}
 }
 
-func TestError(t *testing.T) {
-	baseErr := errors.New("base error")
-	scannerErr := NewScannerError("test-scanner", "execution", baseErr)
-
-	// Test error message
-	assert.Equal(t, "test-scanner scanner execution error: base error", scannerErr.Error())
-
-	// Test unwrap
-	var se *ScannerError
-	assert.True(t, errors.As(scannerErr, &se))
-	assert.Equal(t, "test-scanner", se.Scanner)
-	assert.Equal(t, ErrorTypeExecution, se.Type)
-	assert.Equal(t, baseErr, se.Unwrap())
-
-	// Test with parsing phase
-	parseErr := NewScannerError("another-scanner", "parse", errors.New("parse failed"))
-	assert.Contains(t, parseErr.Error(), "parse")
-	assert.Contains(t, parseErr.Error(), "parse failed")
-}
+// TestError removed as structured error system is deprecated
 
 // Mock scanner for testing interface implementation.
 type mockTestScanner struct {

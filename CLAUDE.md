@@ -22,7 +22,7 @@ make quick          # Quick format and test for development
 ### Code Quality
 ```bash
 make fix            # Auto-fix formatting and common issues
-make lint           # Run linter (uses scripts/fix.sh)
+make lint           # Run linter - MUST PASS with 0 issues
 make fmt            # Format code with gofmt
 make vet            # Run go vet
 ```
@@ -79,3 +79,35 @@ Reports are optimized for AI readability with:
 - Focus on HTML-first reporting for Claude Code compatibility
 - Two-phase design allows manual review between scanning and reporting
 - Finding IDs are deterministic hashes for reliable suppression tracking
+
+## Critical Development Requirements
+
+**IMPORTANT**: ALL tests and linters MUST pass before any changes are considered complete. This is non-negotiable for CI/CD pipeline success.
+
+### Before Committing Any Changes:
+
+1. **Run all tests**: `make test`
+   - ALL unit tests must pass
+   - Integration tests may be skipped with `-short` flag if tools aren't installed
+   
+2. **Run linters**: `make lint`
+   - ALL linter issues must be fixed
+   - No warnings or errors should remain
+   - This includes:
+     - `golangci-lint` checks
+     - `gofmt` formatting
+     - `go vet` analysis
+     - Security checks (`gosec`)
+     - Style checks (`revive`)
+     - Static analysis (`staticcheck`)
+
+3. **Verify build**: `make build`
+   - The project must compile without errors
+
+### Quick Verification Command:
+```bash
+# Run this before considering any work complete:
+make lint && make test && make build
+```
+
+If ANY of these commands fail, the work is not complete. Fix all issues before proceeding.

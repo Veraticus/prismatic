@@ -19,6 +19,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"github.com/Veraticus/prismatic/internal/config"
 	"github.com/Veraticus/prismatic/internal/models"
 	"github.com/Veraticus/prismatic/internal/storage"
 	"github.com/Veraticus/prismatic/pkg/logger"
@@ -48,17 +49,18 @@ var scannerCategories = map[string]string{
 type HTMLGenerator struct {
 	logger   logger.Logger
 	metadata *models.ScanMetadata
+	config   *config.Config
 	scanPath string
 	findings []models.Finding
 }
 
 // NewHTMLGenerator creates a new HTML report generator.
-func NewHTMLGenerator(scanPath string) (*HTMLGenerator, error) {
-	return NewHTMLGeneratorWithLogger(scanPath, logger.GetGlobalLogger())
+func NewHTMLGenerator(scanPath string, cfg *config.Config) (*HTMLGenerator, error) {
+	return NewHTMLGeneratorWithLogger(scanPath, cfg, logger.GetGlobalLogger())
 }
 
 // NewHTMLGeneratorWithLogger creates a new HTML report generator with a custom logger.
-func NewHTMLGeneratorWithLogger(scanPath string, log logger.Logger) (*HTMLGenerator, error) {
+func NewHTMLGeneratorWithLogger(scanPath string, cfg *config.Config, log logger.Logger) (*HTMLGenerator, error) {
 	// Load scan results
 	store := storage.NewStorageWithLogger("data", log)
 
@@ -84,11 +86,17 @@ func NewHTMLGeneratorWithLogger(scanPath string, log logger.Logger) (*HTMLGenera
 		return nil, fmt.Errorf("loading findings: %w", err)
 	}
 
+	// Enrich findings with business context if config is provided
+	if cfg != nil {
+		findings = enrichFindings(findings, cfg, log)
+	}
+
 	generator := &HTMLGenerator{
 		scanPath: scanPath,
 		metadata: metadata,
 		findings: findings,
 		logger:   log,
+		config:   cfg,
 	}
 
 	return generator, nil
@@ -149,7 +157,7 @@ func (g *HTMLGenerator) Generate(outputPath string) error {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
-	file, err := os.Create(validOutputPath)
+	file, err := os.Create(validOutputPath) // #nosec G304 - path is validated
 	if err != nil {
 		return fmt.Errorf("creating output file: %w", err)
 	}
@@ -342,7 +350,7 @@ func sortFindings(findings []models.Finding) {
 // loadJSON is a helper to load JSON files.
 // The path should already be validated by the caller.
 func loadJSON(path string, v any) error {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 - path is validated by caller
 	if err != nil {
 		return err
 	}

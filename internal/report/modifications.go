@@ -48,7 +48,7 @@ func LoadModifications(path string) (*Modifications, error) {
 		return nil, fmt.Errorf("invalid modifications file path: %w", err)
 	}
 
-	data, err := os.ReadFile(validPath)
+	data, err := os.ReadFile(validPath) // #nosec G304 - path is validated
 	if err != nil {
 		return nil, fmt.Errorf("reading modifications file: %w", err)
 	}
@@ -65,7 +65,7 @@ func LoadModifications(path string) (*Modifications, error) {
 
 	// Validate severities
 	for _, override := range mods.Overrides {
-		if !isValidSeverity(override.NewSeverity) {
+		if !models.IsValidSeverity(override.NewSeverity) {
 			return nil, fmt.Errorf("invalid severity '%s' for finding %s",
 				override.NewSeverity, override.FindingID)
 		}
@@ -167,17 +167,6 @@ func SaveModifications(path string, mods *Modifications) error {
 	}
 
 	return nil
-}
-
-// isValidSeverity checks if a severity value is valid.
-func isValidSeverity(severity string) bool {
-	validSeverities := []string{"critical", "high", "medium", "low", "info"}
-	for _, v := range validSeverities {
-		if severity == v {
-			return true
-		}
-	}
-	return false
 }
 
 // Example creates an example modifications file.

@@ -99,7 +99,7 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 	require.NoError(t, err)
 
 	// Generate HTML report
-	generator, err := NewHTMLGenerator(scanDir)
+	generator, err := NewHTMLGenerator(scanDir, nil)
 	require.NoError(t, err)
 
 	reportPath := filepath.Join(tmpDir, "report.html")
@@ -107,7 +107,7 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read and verify the report content
-	content, err := os.ReadFile(reportPath)
+	content, err := os.ReadFile(reportPath) // #nosec G304 - test file
 	require.NoError(t, err)
 
 	html := string(content)
@@ -179,7 +179,7 @@ func TestHTMLReportWithoutEnrichment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Generate report
-	generator, err := NewHTMLGenerator(scanDir)
+	generator, err := NewHTMLGenerator(scanDir, nil)
 	require.NoError(t, err)
 
 	reportPath := filepath.Join(tmpDir, "report.html")
@@ -187,7 +187,7 @@ func TestHTMLReportWithoutEnrichment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify report generated successfully
-	content, err := os.ReadFile(reportPath)
+	content, err := os.ReadFile(reportPath) // #nosec G304 - test file
 	require.NoError(t, err)
 
 	html := string(content)
@@ -334,14 +334,14 @@ func TestFindingCardWithBusinessContext(t *testing.T) {
 	err = store.SaveScanResults(scanDir, metadata)
 	require.NoError(t, err)
 
-	generator, err := NewHTMLGenerator(scanDir)
+	generator, err := NewHTMLGenerator(scanDir, nil)
 	require.NoError(t, err)
 
 	reportPath := filepath.Join(tmpDir, "report.html")
 	err = generator.Generate(reportPath)
 	require.NoError(t, err)
 
-	content, err := os.ReadFile(reportPath)
+	content, err := os.ReadFile(reportPath) // #nosec G304 - test file
 	require.NoError(t, err)
 
 	html := string(content)

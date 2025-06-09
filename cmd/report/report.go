@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Veraticus/prismatic/internal/config"
 	"github.com/Veraticus/prismatic/internal/report"
 	"github.com/Veraticus/prismatic/pkg/logger"
 )
@@ -17,6 +18,7 @@ type Options struct {
 	ScanPath          string
 	OutputPath        string
 	ModificationsFile string
+	ConfigFile        string
 	Formats           []string
 }
 
@@ -29,6 +31,7 @@ func Run(args []string) error {
 	fs.StringVar(&opts.ScanPath, "scan", "", "Path to scan results (or 'latest')")
 	fs.StringVar(&opts.OutputPath, "output", "", "Output path for report")
 	fs.StringVar(&opts.ModificationsFile, "modifications", "", "YAML file with manual modifications")
+	fs.StringVar(&opts.ConfigFile, "config", "", "Configuration file for enrichment")
 
 	// Handle --format flag
 	var formatFlag string
@@ -69,7 +72,7 @@ Examples:
 	// Resolve scan path
 	scanPath := opts.ScanPath
 	if scanPath == "latest" {
-		// TODO: Find the most recent scan directory
+		// Find the most recent scan directory
 		scanPath = findLatestScan()
 		if scanPath == "" {
 			return fmt.Errorf("no scan results found")
@@ -89,8 +92,19 @@ Examples:
 		"output", opts.OutputPath,
 	)
 
+	// Load config if specified
+	var cfg *config.Config
+	if opts.ConfigFile != "" {
+		var err error
+		cfg, err = config.LoadConfig(opts.ConfigFile)
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
+		logger.Info("Loaded config for enrichment", "file", opts.ConfigFile)
+	}
+
 	// Create HTML generator
-	generator, err := report.NewHTMLGenerator(scanPath)
+	generator, err := report.NewHTMLGenerator(scanPath, cfg)
 	if err != nil {
 		return fmt.Errorf("creating report generator: %w", err)
 	}
@@ -137,7 +151,7 @@ Examples:
 }
 
 func findLatestScan() string {
-	// TODO: Implement finding the most recent scan
+	// Find the most recent scan directory by sorting directory names
 	scansDir := filepath.Join("data", "scans")
 
 	entries, err := os.ReadDir(scansDir)

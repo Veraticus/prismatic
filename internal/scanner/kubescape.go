@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -121,33 +120,18 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 		args = append(args, "--include-namespaces", strings.Join(s.namespaces, ","))
 	}
 
-	// Create command
-	cmd := exec.CommandContext(ctx, "kubescape", args...)
-	// Only set working directory if it's not the scan output directory
-	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
-		cmd.Dir = s.config.WorkingDir
-	}
-
-	// Set timeout
-	if s.config.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(s.config.Timeout)*time.Second)
-		defer cancel()
-		cmd = exec.CommandContext(ctx, "kubescape", args...)
-	}
-
-	// Execute scan
+	// Execute scan using common helper
 	s.logger.Debug("Running Kubescape scan", "context", kubeContext, "args", args)
-	output, err := cmd.CombinedOutput()
+	output, err := ExecuteScanner(ctx, "kubescape", args, s.config)
 	if err != nil {
-		return nil, fmt.Errorf("%s scan failed: failed to scan context %s: %w\nOutput: %s", s.Name(), kubeContext, err, string(output))
+		return nil, fmt.Errorf("kubescape: failed to scan context %s: %w\nOutput: %s", kubeContext, err, string(output))
 	}
 
 	// Read the JSON output file
 	// outputFile is a temporary file path we created internally with a timestamp
-	jsonOutput, err := os.ReadFile(outputFile)
+	jsonOutput, err := os.ReadFile(outputFile) // #nosec G304 - controlled temp file
 	if err != nil {
-		return nil, fmt.Errorf("%s scan failed: failed to read output file: %w", s.Name(), err)
+		return nil, fmt.Errorf("kubescape: failed to read output file: %w", err)
 	}
 
 	return jsonOutput, nil
@@ -157,7 +141,7 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 func (s *KubescapeScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 	var report KubescapeReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, NewStructuredError(s.Name(), ErrorTypeParse, err)
+		return nil, fmt.Errorf("kubescape: failed to parse JSON output: %w", err)
 	}
 
 	var findings []models.Finding
@@ -204,19 +188,14 @@ func (s *KubescapeScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 
 // getVersion gets the Kubescape version.
 func (s *KubescapeScanner) getVersion(ctx context.Context) string {
-	cmd := exec.CommandContext(ctx, "kubescape", "version")
-	output, err := cmd.Output()
-	if err != nil {
-		return "unknown"
-	}
-
-	// Parse version from output
-	version := strings.TrimSpace(string(output))
-	if parts := strings.Fields(version); len(parts) > 0 {
-		return parts[len(parts)-1] // Usually the last field is the version
-	}
-
-	return version
+	return GetScannerVersion(ctx, "kubescape", "version", func(output []byte) string {
+		// Parse version from output
+		version := strings.TrimSpace(string(output))
+		if parts := strings.Fields(version); len(parts) > 0 {
+			return parts[len(parts)-1] // Usually the last field is the version
+		}
+		return version
+	})
 }
 
 // mapControlToType maps Kubescape control IDs to finding types.

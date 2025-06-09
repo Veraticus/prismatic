@@ -635,6 +635,44 @@ func (s *ProwlerScanner) Scan(ctx context.Context) (*ScanResult, error) {
 }
 ```
 
+### Repository Package
+
+The `internal/repository` package provides Git repository cloning functionality for scanners that need to analyze source code (Gitleaks and Checkov). This allows scanning both local and remote Git repositories.
+
+#### Key Components
+- **Resolver Interface**: Abstracts repository access, supporting local paths and remote Git URLs
+- **GitResolver**: Clones remote repositories to temporary directories with automatic cleanup
+- **LocalResolver**: Validates and returns paths for local repositories
+- **MockResolver**: Test implementation for unit testing
+
+#### Usage Pattern
+```go
+// Create a resolver with options
+resolver := repository.NewGitResolver(
+    repository.WithLogger(logger),
+    repository.WithBaseDir("/tmp/prismatic-repos"),
+    repository.WithKeepClones(false), // Auto-cleanup after scan
+)
+
+// Resolve repository to local path
+localPath, cleanup, err := resolver(ctx, config.Repository{
+    Name: "my-app",
+    Path: "https://github.com/org/my-app.git",
+    Branch: "main",
+})
+defer cleanup() // Ensures cleanup happens
+
+// Scanner can now analyze localPath
+```
+
+#### Features
+- **Smart Path Detection**: Automatically detects local vs remote repositories
+- **Efficient Cloning**: Uses shallow clones (`--depth 1`) for performance
+- **Branch Support**: Can checkout specific branches
+- **Cleanup Management**: Automatic cleanup with option to keep clones for debugging
+- **Authentication**: Supports SSH key authentication for private repositories
+- **Caching**: Reuses existing clones when possible
+
 ### Development Workflow
 1. Start with `scan` command and 1-2 scanners
 2. Get basic finding normalization working

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -104,7 +103,7 @@ func (s *ProwlerScanner) parseOCSFFormat(raw []byte) ([]models.Finding, error) {
 	if err := json.Unmarshal(raw, &testFormat); err == nil && len(testFormat) > 0 {
 		if _, hasMetadata := testFormat[0]["metadata"]; !hasMetadata {
 			// This is not OCSF format
-			return nil, NewStructuredErrorf(s.Name(), ErrorTypeParse, "not OCSF format")
+			return nil, fmt.Errorf("prowler: not OCSF format")
 		}
 	}
 
@@ -114,10 +113,10 @@ func (s *ProwlerScanner) parseOCSFFormat(raw []byte) ([]models.Finding, error) {
 	if err := json.Unmarshal(raw, &checks); err != nil {
 		// Try parsing as NDJSON (newline-delimited)
 		if err := ParseNDJSON(raw, &checks); err != nil {
-			return nil, NewStructuredError(s.Name(), ErrorTypeParse, fmt.Errorf("failed to parse OCSF format: %w", err))
+			return nil, fmt.Errorf("prowler: failed to parse OCSF format: %w", err)
 		}
 		if len(checks) == 0 {
-			return nil, NewStructuredErrorf(s.Name(), ErrorTypeParse, "no OCSF checks found")
+			return nil, fmt.Errorf("prowler: no OCSF checks found")
 		}
 	}
 
@@ -174,10 +173,10 @@ func (s *ProwlerScanner) parseNativeFormat(raw []byte) ([]models.Finding, error)
 	if err := json.Unmarshal(raw, &checks); err != nil {
 		// Try parsing as NDJSON (newline-delimited)
 		if err := ParseNDJSON(raw, &checks); err != nil {
-			return nil, NewStructuredError(s.Name(), ErrorTypeParse, fmt.Errorf("failed to parse native format: %w", err))
+			return nil, fmt.Errorf("prowler: failed to parse native format: %w", err)
 		}
 		if len(checks) == 0 {
-			return nil, NewStructuredErrorf(s.Name(), ErrorTypeParse, "no native checks found")
+			return nil, fmt.Errorf("prowler: no native checks found")
 		}
 	}
 
@@ -261,27 +260,13 @@ func (s *ProwlerScanner) scanProfile(ctx context.Context, profile string) ([]byt
 		args = append(args, "--services", strings.Join(s.services, " "))
 	}
 
-	cmd := exec.CommandContext(ctx, "prowler", args...)
-	// Only set working directory if it's not the scan output directory
-	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
-		cmd.Dir = s.config.WorkingDir
-	}
-
-	// Convert env map to slice of strings
-	if s.config.Env != nil {
-		for k, v := range s.config.Env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-	}
-
-	// Run Prowler
-	output, err := cmd.CombinedOutput()
+	// Run Prowler using common helper
+	_, err := ExecuteScanner(ctx, "prowler", args, s.config)
 	if err != nil {
-		// Prowler returns non-zero exit code when it finds issues, which is expected
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok || exitErr.ExitCode() != 3 {
-			// Exit code 3 means findings were found, which is expected
-			return nil, fmt.Errorf("prowler failed: %s", string(output))
+		// Prowler returns exit code 3 when findings are found, which is expected
+		ok, handledErr := HandleNonZeroExit(err, 3)
+		if !ok {
+			return nil, fmt.Errorf("prowler: execution failed: %w", handledErr)
 		}
 	}
 
@@ -291,7 +276,7 @@ func (s *ProwlerScanner) scanProfile(ctx context.Context, profile string) ([]byt
 		// Try native format
 		outputFiles, err = filepath.Glob(filepath.Join(outputDir, "*", "*.json"))
 		if err != nil || len(outputFiles) == 0 {
-			return nil, fmt.Errorf("no output files found")
+			return nil, fmt.Errorf("prowler: no output files found")
 		}
 	}
 
@@ -301,19 +286,14 @@ func (s *ProwlerScanner) scanProfile(ctx context.Context, profile string) ([]byt
 
 // getVersion returns the Prowler version.
 func (s *ProwlerScanner) getVersion(ctx context.Context) string {
-	cmd := exec.CommandContext(ctx, "prowler", "--version")
-	output, err := cmd.Output()
-	if err != nil {
+	return GetScannerVersion(ctx, "prowler", "--version", func(output []byte) string {
+		// Parse version from output like "prowler 4.0.0"
+		parts := strings.Fields(string(output))
+		if len(parts) >= 2 {
+			return parts[1]
+		}
 		return "unknown"
-	}
-
-	// Parse version from output like "prowler 4.0.0"
-	parts := strings.Fields(string(output))
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-
-	return "unknown"
+	})
 }
 
 // mapCheckToType maps Prowler check IDs to finding types.
