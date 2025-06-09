@@ -1,52 +1,148 @@
-# prismatic Scripts
+# Prismatic Scripts
 
-This directory contains utility scripts for the prismatic project.
+This directory contains utility scripts for the Prismatic project.
 
-## update-nix-hashes.sh
+## Security Scanner Installation
 
-This script automatically updates all Nix-related hashes in the project to match the current Git HEAD commit. It updates:
+### install-scanners.sh
 
-1. **Git revision**: Updates the commit SHA in `default.nix` and `README.md`
-2. **GitHub archive hash**: Calculates and updates the sha256 hash for the GitHub archive
-3. **Vendor hash**: Calculates and updates the Go vendor dependencies hash
-
-### Usage
+Checks for and helps install the required security scanning tools.
 
 ```bash
-# Run interactively (will prompt if there are uncommitted changes)
-make update-nix
-
-# Force update without prompts
-make update-nix ARGS=-f
-
-# Or run directly
-./scripts/update-nix-hashes.sh
-./scripts/update-nix-hashes.sh --force
+./scripts/install-scanners.sh
 ```
 
-### What it does
+**What it does:**
+- Detects which scanners are already installed
+- Provides OS-specific installation instructions for missing tools
+- Verifies additional requirements (Docker, kubectl, AWS CLI)
+- Returns exit code 0 if all tools are installed, 1 if any are missing
 
-1. Checks for required tools (`nix-prefetch-url`, `nix-hash`, `go`, `sed`)
-2. Gets the current Git commit SHA
-3. Calculates the GitHub archive hash using `nix-prefetch-url`
-4. Creates a temporary vendor directory and calculates its hash
-5. Updates all relevant files:
-   - `default.nix`: Git revision, GitHub hash, and vendor hash
-   - `flake.nix`: Vendor hash
-   - `README.md`: Git revision and GitHub hash in examples
+**Supported scanners:**
+- Prowler (AWS security)
+- Trivy (container security)
+- Kubescape (Kubernetes security)
+- Nuclei (web vulnerability scanning)
+- Gitleaks (secret detection)
+- Checkov (IaC security)
 
-### When to use
+## Development Tools
 
-Run this script after:
-- Making changes to Go dependencies (go.mod/go.sum)
+### install-dev-tools.sh
+
+Installs Go development tools needed for contributing to Prismatic.
+
+```bash
+./scripts/install-dev-tools.sh
+```
+
+**Tools installed:**
+- golangci-lint (meta linter)
+- goimports (import formatting)
+- misspell (spell checker)
+- staticcheck (static analysis)
+- gosec (security checker)
+- ineffassign (ineffectual assignment checker)
+- errcheck (error handling checker)
+
+## Code Quality
+
+### fix.sh
+
+Runs automatic code fixes and formatting.
+
+```bash
+./scripts/fix.sh
+# or
+make fix
+```
+
+**What it does:**
+1. Formats Go code with `gofmt`
+2. Organizes imports with `goimports`
+3. Fixes common misspellings
+4. Runs golangci-lint auto-fixes
+
+### lint.sh
+
+Runs all linters and reports issues.
+
+```bash
+./scripts/lint.sh
+# or
+make lint
+```
+
+## Testing
+
+### test-all.sh
+
+Runs comprehensive test suite across multiple platforms.
+
+```bash
+./scripts/test-all.sh
+# or
+make test-all
+```
+
+**Test phases:**
+1. Code formatting checks
+2. Go vet analysis
+3. Linter checks
+4. Unit tests
+5. Race condition tests
+6. Integration tests
+7. Cross-platform build verification
+
+### screenshot.sh
+
+Generates a screenshot of an HTML report for documentation.
+
+```bash
+./scripts/screenshot.sh <html-file> <output-png>
+```
+
+**Example:**
+```bash
+./scripts/screenshot.sh reports/example.html docs/report-screenshot.png
+```
+
+### view-report.sh
+
+Opens an HTML report in your default browser.
+
+```bash
+./scripts/view-report.sh <report-file>
+# or
+prismatic report -c config.yaml --open
+```
+
+## Nix Packaging
+
+### update-nix-hashes.sh
+
+Updates all Nix-related hashes in the project to match the current Git HEAD commit.
+
+```bash
+./scripts/update-nix-hashes.sh
+# or
+make update-nix
+```
+
+**What it does:**
+1. Updates Git revision in `default.nix` and `README.md`
+2. Calculates and updates GitHub archive hash
+3. Calculates and updates Go vendor dependencies hash
+
+**When to use:**
+- After updating Go dependencies
 - Before creating a release
-- When updating the Nix packaging to point to a specific commit
+- When updating Nix packaging
 
-### Requirements
+## Usage Tips
 
-- Nix (with `nix-prefetch-url` and `nix-hash`)
-- Go
-- Git
-- sed
-
-The script will verify all requirements are available before running.
+1. **Make targets**: Most scripts have corresponding make targets for convenience
+2. **Exit codes**: Scripts use standard exit codes (0 for success, non-zero for failure)
+3. **Help**: Run scripts with `-h` or `--help` for usage information
+4. **Colors**: Scripts use colored output when running in a terminal
+5. **CI/CD**: Scripts detect CI environments and adjust output accordingly

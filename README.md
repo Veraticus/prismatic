@@ -41,33 +41,32 @@
 
 ### Installing Security Tools
 
-Install all required security tools:
+Prismatic requires the actual security scanning tools to be installed on your system:
 
 ```bash
-# Option 1: Install all tools at once
-./scripts/install-tools.sh
-
-# Option 2: Install individually
-# Prowler
-pip install prowler
-
-# Trivy
-brew install aquasecurity/trivy/trivy  # macOS
-curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin  # Linux
-
-# Kubescape
-curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash
-
-# Nuclei
-go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-
-# Gitleaks
-brew install gitleaks  # macOS
-go install github.com/zricethezav/gitleaks/v8@latest  # From source
-
-# Checkov
-pip install checkov
+# Check which scanners are installed and get installation instructions
+./scripts/install-scanners.sh
 ```
+
+This script will:
+- ✅ Check which scanners are already installed
+- 📋 Provide specific installation commands for missing tools
+- 🔧 Verify additional requirements (Docker, kubectl, AWS CLI)
+
+**Manual Installation:**
+
+If you prefer to install specific tools manually:
+
+| Tool | Installation |
+|------|-------------|
+| **Prowler** | `pip install prowler` or `pipx install prowler` |
+| **Trivy** | `brew install aquasecurity/trivy/trivy` (macOS) |
+| **Kubescape** | `curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh \| /bin/bash` |
+| **Nuclei** | `go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
+| **Gitleaks** | `brew install gitleaks` (macOS) or download from [releases](https://github.com/zricethezav/gitleaks/releases) |
+| **Checkov** | `pip install checkov` or `brew install checkov` |
+
+**Note:** You only need to install the scanners you plan to use. For example, if you're only scanning AWS, you just need Prowler.
 
 ## 🚀 Installation
 

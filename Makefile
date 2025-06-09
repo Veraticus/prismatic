@@ -17,7 +17,7 @@ GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
 .PHONY: all build clean test test-verbose test-coverage test-integration bench fmt lint vet run help
-.PHONY: cover fix quick setup-hooks install-tools
+.PHONY: cover fix quick setup-hooks install-dev-tools install-scanners
 
 # Default target
 all: fmt test build
@@ -155,9 +155,14 @@ setup-hooks:
 	@bash scripts/setup-hooks.sh
 
 # Install required development tools
-install-tools:
+install-dev-tools:
 	@echo "Installing development tools..."
-	@bash scripts/install-tools.sh
+	@bash scripts/install-dev-tools.sh
+
+# Install security scanning tools
+install-scanners:
+	@echo "Checking and installing security scanners..."
+	@bash scripts/install-scanners.sh
 
 # Help
 help:
@@ -189,7 +194,8 @@ help:
 	@echo "  make cover          - Generate coverage report"
 	@echo "  make quick          - Format and test (for development)"
 	@echo "  make setup-hooks    - Setup git hooks"
-	@echo "  make install-tools  - Install required development tools"
+	@echo "  make install-dev-tools - Install required development tools"
+	@echo "  make install-scanners  - Check and install security scanning tools"
 	@echo ""
 	@echo "CI/Release:"
 	@echo "  make ci             - Run full CI workflow"
