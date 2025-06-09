@@ -34,7 +34,7 @@ func TestNewKubescapeScanner(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := Config{WorkingDir: "/tmp"}
-			scanner := NewKubescapeScanner(config, tt.contexts, tt.namespaces)
+			scanner := NewKubescapeScanner(config, "", tt.contexts, tt.namespaces)
 
 			assert.Equal(t, "kubescape", scanner.Name())
 			assert.Equal(t, tt.expectedContexts, scanner.contexts)
@@ -444,7 +444,7 @@ func TestKubescapeScanner_Scan(t *testing.T) {
 		Timeout:    60,
 	}
 
-	scanner := NewKubescapeScanner(config, []string{"test-context"}, []string{"default"})
+	scanner := NewKubescapeScanner(config, "", []string{"test-context"}, []string{"default"})
 	assert.NotNil(t, scanner)
 
 	// Test context cancellation

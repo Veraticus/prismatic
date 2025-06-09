@@ -36,3 +36,9 @@ Thumbs.db
 
 # Screenshot tool binary
 /cmd/screenshot/screenshot
+
+# Local configs (but keep examples)
+configs/*.local.yaml
+configs/*-local.yaml
+# Keep example configs
+!configs/example*.yaml

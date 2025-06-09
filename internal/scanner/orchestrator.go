@@ -322,15 +322,16 @@ func (o *Orchestrator) getProwlerConfig() (profiles, regions, services []string)
 }
 
 // getKubescapeConfig returns Kubescape configuration from the main config.
-func (o *Orchestrator) getKubescapeConfig() (contexts, namespaces []string) {
+func (o *Orchestrator) getKubescapeConfig() (kubeconfig string, contexts, namespaces []string) {
 	if o.config.Kubernetes == nil {
-		return nil, nil
+		return "", nil, nil
 	}
 
+	kubeconfig = o.config.Kubernetes.Kubeconfig
 	contexts = o.config.Kubernetes.Contexts
 	namespaces = o.config.Kubernetes.Namespaces
 
-	return contexts, namespaces
+	return kubeconfig, contexts, namespaces
 }
 
 // getCheckovTargets returns target directories for Checkov IaC scanning.
@@ -357,7 +358,7 @@ func (o *Orchestrator) GetDockerTargets() []string {
 }
 
 // GetKubernetesConfig returns Kubernetes configuration for scanners.
-func (o *Orchestrator) GetKubernetesConfig() (contexts []string, namespaces []string) {
+func (o *Orchestrator) GetKubernetesConfig() (kubeconfig string, contexts []string, namespaces []string) {
 	return o.getKubescapeConfig()
 }
 
@@ -392,7 +393,7 @@ func (o *Orchestrator) detectScanners(onlyScanners []string) []string {
 	}
 
 	// Check Kubernetes config
-	if contexts, _ := o.GetKubernetesConfig(); len(contexts) > 0 {
+	if _, contexts, _ := o.GetKubernetesConfig(); len(contexts) > 0 {
 		scanners = append(scanners, "kubescape")
 	}
 

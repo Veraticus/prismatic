@@ -71,8 +71,8 @@ func (m *mockClientConfig) GetDockerTargets() []string {
 	return nil
 }
 
-func (m *mockClientConfig) GetKubernetesConfig() ([]string, []string) {
-	return nil, nil
+func (m *mockClientConfig) GetKubernetesConfig() (string, []string, []string) {
+	return "", nil, nil
 }
 
 func (m *mockClientConfig) GetEndpoints() []string {

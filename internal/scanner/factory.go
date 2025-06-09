@@ -18,7 +18,7 @@ type ScannerFactory struct {
 type ClientConfig interface {
 	GetAWSConfig() (profiles []string, regions []string, services []string)
 	GetDockerTargets() []string
-	GetKubernetesConfig() (contexts []string, namespaces []string)
+	GetKubernetesConfig() (kubeconfig string, contexts []string, namespaces []string)
 	GetEndpoints() []string
 	GetCheckovTargets() []string
 }
@@ -80,12 +80,12 @@ func (f *ScannerFactory) createProwlerScanner() (Scanner, error) {
 
 // createKubescapeScanner creates and configures a Kubescape scanner.
 func (f *ScannerFactory) createKubescapeScanner() (Scanner, error) {
-	contexts, namespaces := f.clientCfg.GetKubernetesConfig()
+	kubeconfig, contexts, namespaces := f.clientCfg.GetKubernetesConfig()
 	if len(contexts) == 0 {
 		f.logger.Warn("No Kubernetes contexts configured for Kubescape")
 		return nil, fmt.Errorf("no Kubernetes contexts configured")
 	}
-	return NewKubescapeScannerWithLogger(f.config, contexts, namespaces, f.logger), nil
+	return NewKubescapeScannerWithLogger(f.config, kubeconfig, contexts, namespaces, f.logger), nil
 }
 
 // createNucleiScanner creates and configures a Nuclei scanner.
@@ -129,7 +129,7 @@ type ScannerTypeDetector struct {
 // NewScannerTypeDetector creates a new scanner type detector.
 func NewScannerTypeDetector(cfg ClientConfig) *ScannerTypeDetector {
 	profiles, _, _ := cfg.GetAWSConfig()
-	contexts, _ := cfg.GetKubernetesConfig()
+	_, contexts, _ := cfg.GetKubernetesConfig()
 
 	return &ScannerTypeDetector{
 		hasAWS:        len(profiles) > 0,

@@ -17,24 +17,33 @@ import (
 // KubescapeScanner implements Kubernetes security scanning using Kubescape.
 type KubescapeScanner struct {
 	*BaseScanner
+	kubeconfig string
 	contexts   []string
 	namespaces []string
 }
 
 // NewKubescapeScanner creates a new Kubescape scanner instance.
-func NewKubescapeScanner(config Config, contexts, namespaces []string) *KubescapeScanner {
-	return NewKubescapeScannerWithLogger(config, contexts, namespaces, logger.GetGlobalLogger())
+func NewKubescapeScanner(config Config, kubeconfig string, contexts, namespaces []string) *KubescapeScanner {
+	return NewKubescapeScannerWithLogger(config, kubeconfig, contexts, namespaces, logger.GetGlobalLogger())
 }
 
 // NewKubescapeScannerWithLogger creates a new Kubescape scanner instance with a custom logger.
-func NewKubescapeScannerWithLogger(config Config, contexts, namespaces []string, log logger.Logger) *KubescapeScanner {
+func NewKubescapeScannerWithLogger(config Config, kubeconfig string, contexts, namespaces []string, log logger.Logger) *KubescapeScanner {
 	// Default to current context if none specified
 	if len(contexts) == 0 {
 		contexts = []string{"current-context"}
 	}
 
+	// Expand tilde in kubeconfig path
+	if strings.HasPrefix(kubeconfig, "~/") {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			kubeconfig = filepath.Join(homeDir, kubeconfig[2:])
+		}
+	}
+
 	return &KubescapeScanner{
 		BaseScanner: NewBaseScannerWithLogger("kubescape", config, log),
+		kubeconfig:  kubeconfig,
 		contexts:    contexts,
 		namespaces:  namespaces,
 	}
@@ -95,6 +104,11 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 		"--format", "json",
 		"--output", outputFile,
 		"--verbose",
+	}
+
+	// Add kubeconfig if specified
+	if s.kubeconfig != "" {
+		args = append(args, "--kubeconfig", s.kubeconfig)
 	}
 
 	// Add context if not current-context

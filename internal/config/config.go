@@ -4,6 +4,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Veraticus/prismatic/pkg/pathutil"
@@ -42,6 +44,7 @@ type DockerConfig struct {
 
 // KubernetesConfig contains Kubernetes scanning configuration.
 type KubernetesConfig struct {
+	Kubeconfig string   `yaml:"kubeconfig,omitempty"` // Path to kubeconfig file
 	Contexts   []string `yaml:"contexts"`
 	Namespaces []string `yaml:"namespaces,omitempty"` // Empty means all namespaces
 }
@@ -126,6 +129,22 @@ func (c *Config) Validate() error {
 	if c.Suppressions.Global.DateBefore != "" {
 		if _, err := time.Parse("2006-01-02", c.Suppressions.Global.DateBefore); err != nil {
 			return fmt.Errorf("invalid date format for suppressions.global.date_before: %w", err)
+		}
+	}
+
+	// Validate kubeconfig file exists if specified
+	if c.Kubernetes != nil && c.Kubernetes.Kubeconfig != "" {
+		// Expand tilde to home directory
+		kubeconfigPath := c.Kubernetes.Kubeconfig
+		if strings.HasPrefix(kubeconfigPath, "~/") {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				kubeconfigPath = filepath.Join(homeDir, kubeconfigPath[2:])
+			}
+		}
+		
+		if _, err := os.Stat(kubeconfigPath); err != nil {
+			return fmt.Errorf("kubeconfig file not found: %s", c.Kubernetes.Kubeconfig)
 		}
 	}
 
