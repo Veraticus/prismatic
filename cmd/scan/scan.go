@@ -134,13 +134,13 @@ Examples:
 }
 
 func printScanProgress(msg string) {
-	logger.Info("➜ %s", msg)
+	logger.Info("➜ " + msg)
 }
 
 func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
 	logger.Info("🔍 Prismatic Security Scanner v1.0.0")
-	logger.Info("📋 Configuration: %s", opts.ConfigFile)
-	logger.Info("📁 Output: %s", opts.OutputDir)
+	logger.Info("📋 Configuration: " + opts.ConfigFile)
+	logger.Info("📁 Output: " + opts.OutputDir)
 
 	if opts.Mock {
 		logger.Info("⚠️  Running in MOCK mode - no real scans performed")
@@ -168,27 +168,27 @@ func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
 			}
 		}
 
-		logger.Info("[%d/%d] %s %s...", i+1, len(metadata.Scanners), status, scannerName)
-		logger.Info("      ⏱  %s", result.EndTime.Sub(result.StartTime).Round(time.Millisecond))
+		logger.Info(fmt.Sprintf("[%d/%d] %s %s...", i+1, len(metadata.Scanners), status, scannerName))
+		logger.Info("      ⏱  " + result.EndTime.Sub(result.StartTime).Round(time.Millisecond).String())
 
 		if result.Error == "" && len(result.Findings) > 0 {
 			criticalHigh := severityCounts["critical"] + severityCounts["high"]
 			if criticalHigh > 0 {
-				logger.Info("      🚨 %d findings (%d critical/high)", len(result.Findings), criticalHigh)
+				logger.Info(fmt.Sprintf("      🚨 %d findings (%d critical/high)", len(result.Findings), criticalHigh))
 			} else {
-				logger.Info("      ✨ %s", statusMsg)
+				logger.Info("      ✨ " + statusMsg)
 			}
 		} else if result.Error != "" {
-			logger.Info("      ❗ %s", result.Error)
+			logger.Info("      ❗ " + result.Error)
 		}
 	}
 
 	// Print overall summary
 	logger.Info("✅ Scan Summary:")
 	if metadata.Summary.SuppressedCount > 0 {
-		logger.Info("   Total Findings: %d (+ %d suppressed)", metadata.Summary.TotalFindings, metadata.Summary.SuppressedCount)
+		logger.Info(fmt.Sprintf("   Total Findings: %d (+ %d suppressed)", metadata.Summary.TotalFindings, metadata.Summary.SuppressedCount))
 	} else {
-		logger.Info("   Total Findings: %d", metadata.Summary.TotalFindings)
+		logger.Info(fmt.Sprintf("   Total Findings: %d", metadata.Summary.TotalFindings))
 	}
 
 	// Print severity breakdown
@@ -200,9 +200,9 @@ func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
 		}
 	}
 	if len(severityDisplay) > 0 {
-		logger.Info("   %s", strings.Join(severityDisplay, " | "))
+		logger.Info("   " + strings.Join(severityDisplay, " | "))
 	}
 
-	logger.Info("✨ Scan complete! Results saved to: %s", opts.OutputDir)
+	logger.Info("✨ Scan complete! Results saved to: " + opts.OutputDir)
 	logger.Info("🎯 Run 'prismatic report --scan latest' to generate report")
 }

@@ -101,10 +101,7 @@ func (f *ScannerFactory) createNucleiScanner() (Scanner, error) {
 // createGitleaksScanner creates and configures a Gitleaks scanner.
 func (f *ScannerFactory) createGitleaksScanner() (Scanner, error) {
 	// Gitleaks scans the current directory by default
-	target := f.outputDir
-	if target == "" {
-		target = "."
-	}
+	target := "."
 	return NewGitleaksScannerWithLogger(f.config, target, f.logger), nil
 }
 

@@ -262,7 +262,10 @@ func (s *ProwlerScanner) scanProfile(ctx context.Context, profile string) ([]byt
 	}
 
 	cmd := exec.CommandContext(ctx, "prowler", args...)
-	cmd.Dir = s.config.WorkingDir
+	// Only set working directory if it's not the scan output directory
+	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
+		cmd.Dir = s.config.WorkingDir
+	}
 
 	// Convert env map to slice of strings
 	if s.config.Env != nil {

@@ -2,6 +2,7 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -64,11 +65,22 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		findings, err := s.ParseResults(output)
 		if err != nil {
 			if s.config.Debug {
-				s.logger.Warn("Failed to parse Checkov results", "target", target, "error", err)
+				s.logger.Warn("Failed to parse Checkov results", "target", target, "error", err, "output_len", len(output))
+				// Log first 500 chars of output for debugging
+				if len(output) > 0 {
+					preview := string(output)
+					if len(preview) > 500 {
+						preview = preview[:500] + "..."
+					}
+					s.logger.Debug("Checkov output preview", "preview", preview)
+				}
 			}
 			continue
 		}
 
+		if s.config.Debug {
+			s.logger.Debug("Successfully parsed findings", "count", len(findings), "target", target)
+		}
 		result.Findings = append(result.Findings, findings...)
 	}
 
@@ -78,22 +90,58 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 
 // ParseResults converts Checkov JSON output to normalized findings.
 func (s *CheckovScanner) ParseResults(raw []byte) ([]models.Finding, error) {
+	// Checkov outputs different formats:
+	// - Single framework: object with results
+	// - Multiple frameworks: array of objects
+	
+	// Check if it's an array by looking at the first character
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return []models.Finding{}, nil
+	}
+	
+	if trimmed[0] == '[' {
+		// Handle array format
+		var reports []CheckovReport
+		if err := json.Unmarshal(raw, &reports); err != nil {
+			return nil, fmt.Errorf("parsing %s results as array: %w", s.Name(), err)
+		}
+		
+		var findings []models.Finding
+		for _, report := range reports {
+			reportFindings := s.parseReport(report)
+			findings = append(findings, reportFindings...)
+		}
+		return findings, nil
+	}
+	
+	// Handle single object format
 	var report CheckovReport
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, fmt.Errorf("parsing %s results: %w", s.Name(), err)
+		return nil, fmt.Errorf("parsing %s results as object: %w", s.Name(), err)
+	}
+	
+	return s.parseReport(report), nil
+}
+
+// parseReport processes a single Checkov report.
+func (s *CheckovScanner) parseReport(report CheckovReport) []models.Finding {
+	results := report.GetResults()
+	if results == nil {
+		return []models.Finding{}
 	}
 
 	// Pre-calculate total number of failed checks
 	totalFailedChecks := 0
-	for _, results := range report.Results {
-		totalFailedChecks += len(results.FailedChecks)
+	for _, checkResults := range results {
+		totalFailedChecks += len(checkResults.FailedChecks)
 	}
 
 	findings := make([]models.Finding, 0, totalFailedChecks)
 
 	// Process failed checks from all check types
-	for checkType, results := range report.Results {
-		for _, failedCheck := range results.FailedChecks {
+	for checkType, checkResults := range results {
+		for _, failedCheck := range checkResults.FailedChecks {
 			finding := s.createFindingFromCheck(checkType, failedCheck)
 			findings = append(findings, *finding)
 		}
@@ -105,7 +153,7 @@ func (s *CheckovScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 		findings = append(findings, *finding)
 	}
 
-	return findings, nil
+	return findings
 }
 
 // createFindingFromCheck creates a normalized finding from a Checkov failed check.
@@ -288,7 +336,10 @@ func (s *CheckovScanner) scanTarget(ctx context.Context, target string) ([]byte,
 	}
 
 	cmd := exec.CommandContext(ctx, "checkov", args...)
-	cmd.Dir = s.config.WorkingDir
+	// Only set working directory if it's not the scan output directory
+	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
+		cmd.Dir = s.config.WorkingDir
+	}
 
 	// Convert env map to slice of strings
 	if s.config.Env != nil {
@@ -327,10 +378,45 @@ func (s *CheckovScanner) getVersion(ctx context.Context) string {
 
 // CheckovReport represents the Checkov JSON output structure.
 type CheckovReport struct {
-	Results             map[string]CheckovCheckResults `json:"results"`
-	CheckType           string                         `json:"check_type"`
-	SecretsFailedChecks []CheckovSecretCheck           `json:"secrets_failed_checks"`
-	Summary             CheckovSummary                 `json:"summary"`
+	Results             interface{}          `json:"results"` // Can be map[string]CheckovCheckResults or CheckovCheckResults
+	CheckType           string               `json:"check_type"`
+	SecretsFailedChecks []CheckovSecretCheck `json:"secrets_failed_checks,omitempty"`
+	Summary             CheckovSummary       `json:"summary"`
+}
+
+// GetResults returns the results in a normalized format.
+func (r *CheckovReport) GetResults() map[string]CheckovCheckResults {
+	if r.Results == nil {
+		return nil
+	}
+	
+	// Check if it's already a map
+	if results, ok := r.Results.(map[string]interface{}); ok {
+		// Convert to the expected type
+		mapped := make(map[string]CheckovCheckResults)
+		for k, v := range results {
+			if jsonBytes, err := json.Marshal(v); err == nil {
+				var checkResults CheckovCheckResults
+				if err := json.Unmarshal(jsonBytes, &checkResults); err == nil {
+					mapped[k] = checkResults
+				}
+			}
+		}
+		return mapped
+	}
+	
+	// Check if it's a direct CheckovCheckResults
+	if jsonBytes, err := json.Marshal(r.Results); err == nil {
+		var checkResults CheckovCheckResults
+		if err := json.Unmarshal(jsonBytes, &checkResults); err == nil {
+			// Return as a single-entry map with the check type as key
+			return map[string]CheckovCheckResults{
+				r.CheckType: checkResults,
+			}
+		}
+	}
+	
+	return nil
 }
 
 // CheckovCheckResults represents results from a Checkov scan.

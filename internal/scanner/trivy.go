@@ -187,7 +187,6 @@ func (s *TrivyScanner) scanTarget(ctx context.Context, target string) ([]byte, e
 	args := []string{
 		"--format", "json",
 		"--quiet",
-		"--no-progress",
 	}
 
 	// Determine scan type based on target
@@ -204,7 +203,10 @@ func (s *TrivyScanner) scanTarget(ctx context.Context, target string) ([]byte, e
 	}
 
 	cmd := exec.CommandContext(ctx, "trivy", args...)
-	cmd.Dir = s.config.WorkingDir
+	// Only set working directory if it's not the scan output directory
+	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
+		cmd.Dir = s.config.WorkingDir
+	}
 	// Convert env map to slice of strings
 	if s.config.Env != nil {
 		for k, v := range s.config.Env {

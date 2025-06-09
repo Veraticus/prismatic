@@ -123,7 +123,10 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 
 	// Create command
 	cmd := exec.CommandContext(ctx, "kubescape", args...)
-	cmd.Dir = s.config.WorkingDir
+	// Only set working directory if it's not the scan output directory
+	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
+		cmd.Dir = s.config.WorkingDir
+	}
 
 	// Set timeout
 	if s.config.Timeout > 0 {
