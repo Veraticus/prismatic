@@ -74,7 +74,7 @@ func (b *BaseScanner) SimpleScan(ctx context.Context, opts SimpleScanOptions) (*
 		return result, nil
 	}
 
-	for _, target := range targets {
+	for i, target := range targets {
 		// Check for context cancellation
 		if err := ctx.Err(); err != nil {
 			result.EndTime = time.Now()
@@ -85,6 +85,9 @@ func (b *BaseScanner) SimpleScan(ctx context.Context, opts SimpleScanOptions) (*
 
 		targetDesc := opts.Iterator.TargetDescription(target)
 		b.logger.Debug("Scanning target", "scanner", opts.ScannerName, "target", targetDesc)
+
+		// Report progress
+		b.ReportProgress(i+1, len(targets), fmt.Sprintf("Scanning %s", targetDesc))
 
 		// Run the scan
 		output, err := opts.ScanTarget(ctx, target)

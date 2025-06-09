@@ -488,17 +488,24 @@ make test-race
 # Generate coverage report
 make test-coverage
 
-# Run linter
+# Run linter (must pass with 0 issues)
 make lint
 
 # Format code
 make fmt
+
+# Auto-fix common issues
+make fix
 
 # Run all checks (fmt, vet, lint, test)
 make check
 
 # Build for all platforms
 make build-all
+
+# Quick development workflow
+make quick    # Format and test
+make test-all # Comprehensive tests with all checks
 ```
 
 ### Adding a New Scanner
@@ -512,10 +519,30 @@ make build-all
        ParseResults(raw []byte) ([]models.Finding, error)
    }
    ```
-3. Add to factory in `internal/scanner/factory.go`
-4. Update configuration structures
-5. Add comprehensive tests
-6. Update documentation
+3. Embed the `BaseScanner` for common functionality:
+   ```go
+   type YourScanner struct {
+       *BaseScanner
+       // scanner-specific fields
+   }
+   ```
+4. Use the `SimpleScan` method if your scanner follows common patterns:
+   ```go
+   func (s *YourScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
+       return s.BaseScanner.SimpleScan(ctx, SimpleScanOptions{
+           ScannerName:     s.Name(),
+           GetVersion:      s.getVersion,
+           Iterator:        NewSimpleTargetIterator(s.targets, nil),
+           ScanTarget:      s.scanSingleTarget,
+           ParseOutput:     s.ParseResults,
+           ContinueOnError: true,
+       })
+   }
+   ```
+5. Add to factory in `internal/scanner/factory.go`
+6. Update configuration structures
+7. Add comprehensive tests following Go idioms
+8. Update documentation
 
 ## 🤝 Contributing
 
@@ -529,9 +556,11 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### Code Style
 
-- Follow standard Go conventions
-- Run `make fmt` before committing
-- Add tests for new functionality
+- Follow standard Go conventions and idioms
+- Run `make lint` before committing - must pass with 0 issues
+- Run `make fix` to auto-fix common issues  
+- Add tests for new functionality using table-driven tests
+- Avoid over-abstraction - prefer clarity over cleverness
 - Update documentation as needed
 
 ## 📝 License

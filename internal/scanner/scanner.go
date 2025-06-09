@@ -20,6 +20,12 @@ type Scanner interface {
 	ParseResults(raw []byte) ([]models.Finding, error)
 }
 
+// ProgressReporter is an optional interface that scanners can implement to report progress.
+type ProgressReporter interface {
+	// SetProgressCallback sets a callback function for progress updates
+	SetProgressCallback(callback func(current, total int, message string))
+}
+
 // Config holds common scanner configuration.
 type Config struct {
 	Env        map[string]string
@@ -30,10 +36,11 @@ type Config struct {
 
 // BaseScanner provides common functionality for all scanners.
 type BaseScanner struct {
-	logger  logger.Logger
-	name    string
-	version string
-	config  Config
+	logger           logger.Logger
+	progressCallback func(current, total int, message string)
+	name             string
+	version          string
+	config           Config
 }
 
 // NewBaseScanner creates a new base scanner instance.
@@ -90,4 +97,16 @@ func ValidateFinding(f *models.Finding) error {
 	}
 
 	return nil
+}
+
+// SetProgressCallback sets the progress callback function.
+func (b *BaseScanner) SetProgressCallback(callback func(current, total int, message string)) {
+	b.progressCallback = callback
+}
+
+// ReportProgress reports progress if a callback is set.
+func (b *BaseScanner) ReportProgress(current, total int, message string) {
+	if b.progressCallback != nil {
+		b.progressCallback(current, total, message)
+	}
 }

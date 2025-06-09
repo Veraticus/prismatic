@@ -119,9 +119,21 @@ Examples:
 		return fmt.Errorf("initializing scanners: %w", initErr)
 	}
 
+	// Set up status channel for real-time updates
+	statusChan := make(chan *models.ScannerStatus, 100)
+	orchestrator.SetStatusChannel(statusChan)
+
+	// Start status monitor in a goroutine
+	statusDone := make(chan bool)
+	go monitorScannerStatus(statusChan, statusDone)
+
 	// Run scans
 	printScanProgress("Starting scans...")
 	metadata, err := orchestrator.RunScans(ctx)
+
+	// Signal status monitor to stop
+	close(statusChan)
+	<-statusDone
 	if err != nil {
 		return fmt.Errorf("running scans: %w", err)
 	}
@@ -144,6 +156,105 @@ Examples:
 
 func printScanProgress(msg string) {
 	logger.Info("➜ " + msg)
+}
+
+// monitorScannerStatus displays real-time status updates for running scanners.
+func monitorScannerStatus(statusChan <-chan *models.ScannerStatus, done chan<- bool) {
+	defer func() { done <- true }()
+
+	statuses := make(map[string]*models.ScannerStatus)
+	lastLineCount := 0
+
+	for status := range statusChan {
+		statuses[status.Scanner] = status
+
+		// Clear previous lines using ANSI escape codes written to os.Stdout
+		for i := 0; i < lastLineCount; i++ {
+			_, _ = os.Stdout.WriteString("\033[F\033[K") // Move up and clear line
+		}
+
+		// Build and print status display
+		var lines []string
+		lines = append(lines, "📊 Scanner Status:")
+
+		// Add each scanner status
+		for _, s := range getSortedStatuses(statuses) {
+			icon := getStatusIcon(s.Status)
+			progressBar := ""
+
+			if s.Status == models.StatusRunning && s.Total > 0 {
+				progressBar = fmt.Sprintf(" [%d/%d]", s.Current, s.Total)
+			}
+
+			timeInfo := ""
+			if s.ElapsedTime != "" {
+				timeInfo = fmt.Sprintf(" (%s)", s.ElapsedTime)
+			}
+
+			message := ""
+			if s.Message != "" && s.Status != models.StatusFailed {
+				message = fmt.Sprintf(" - %s", s.Message)
+			}
+
+			line := fmt.Sprintf("   %s %s%s%s%s", icon, s.Scanner, progressBar, timeInfo, message)
+			lines = append(lines, line)
+		}
+
+		// Write all lines to stdout
+		for _, line := range lines {
+			_, _ = os.Stdout.WriteString(line + "\n")
+		}
+
+		lastLineCount = len(lines)
+	}
+
+	// Final empty line
+	_, _ = os.Stdout.WriteString("\n")
+}
+
+// getSortedStatuses returns statuses sorted by scanner name for consistent display.
+func getSortedStatuses(statuses map[string]*models.ScannerStatus) []*models.ScannerStatus {
+	result := make([]*models.ScannerStatus, 0, len(statuses))
+	names := make([]string, 0, len(statuses))
+
+	for name := range statuses {
+		names = append(names, name)
+	}
+
+	// Sort scanner names for consistent display
+	for i := range names {
+		for j := i + 1; j < len(names); j++ {
+			if names[i] > names[j] {
+				names[i], names[j] = names[j], names[i]
+			}
+		}
+	}
+
+	for _, name := range names {
+		result = append(result, statuses[name])
+	}
+
+	return result
+}
+
+// getStatusIcon returns an appropriate icon for the scanner status.
+func getStatusIcon(status string) string {
+	switch status {
+	case models.StatusPending:
+		return "⏳"
+	case models.StatusStarting:
+		return "🚀"
+	case models.StatusRunning:
+		return "🔄"
+	case models.StatusSuccess:
+		return "✅"
+	case models.StatusFailed:
+		return "❌"
+	case models.StatusSkipped:
+		return "⏭️"
+	default:
+		return "❓"
+	}
 }
 
 func printScanSummary(metadata *models.ScanMetadata, opts *Options) {

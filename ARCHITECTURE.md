@@ -7,10 +7,12 @@ Prismatic is a security scanning orchestrator that refracts multiple open-source
 ## Core Architecture
 
 ### Design Principles
-1. **Refraction Model**: Multiple security scanners (light sources) ? Prismatic (prism) ? Unified spectrum of findings (report)
+1. **Refraction Model**: Multiple security scanners (light sources) → Prismatic (prism) → Unified spectrum of findings (report)
 2. **Two-Phase Operation**: Separate scanning from reporting for flexibility
 3. **Client-Centric Configuration**: YAML configs per client/environment
 4. **Claude Code Optimized**: HTML output designed for AI readability
+5. **Idiomatic Go**: Prefer clarity and simplicity over clever abstractions
+6. **Zero Code Duplication**: Shared logic consolidated in base implementations
 
 ### Project Structure
 ```
@@ -134,18 +136,39 @@ metadata_enrichment:
 ```
 
 ### Scanner Execution Flow
+
+The scanner package provides a clean abstraction for all security scanners:
+
 ```go
+// internal/scanner/scanner.go
+type Scanner interface {
+    Name() string
+    Scan(ctx context.Context) (*ScanResult, error)
+    ParseResults(raw []byte) ([]Finding, error)
+}
+
+// internal/scanner/base_scanner.go
+type BaseScanner struct {
+    logger  logger.Logger
+    name    string
+    version string
+    config  Config
+}
+
+// SimpleScan provides a template implementation for common scanning patterns
+func (b *BaseScanner) SimpleScan(ctx context.Context, opts SimpleScanOptions) (*ScanResult, error) {
+    // Handles:
+    // - Context cancellation
+    // - Error handling and logging
+    // - Finding validation
+    // - Progress tracking
+}
+
 // internal/scanner/orchestrator.go
 type Orchestrator struct {
     config     *Config
     outputDir  string
     scanners   []Scanner
-}
-
-type Scanner interface {
-    Name() string
-    Scan(ctx context.Context) (*ScanResult, error)
-    ParseResults(raw []byte) ([]Finding, error)
 }
 
 type ScanResult struct {
@@ -446,28 +469,70 @@ type EnrichedFinding struct {
 
 ## Testing Strategy
 
+### Testing Philosophy
+- **Idiomatic Go**: Use standard table-driven tests
+- **No Over-Abstraction**: Avoid unnecessary test helpers that obscure test logic
+- **Clear Test Names**: Tests should document expected behavior
+- **Fast Feedback**: Unit tests run quickly, integration tests can be skipped with `-short`
+
 ### Unit Tests
-- Scanner output parsing
-- Finding normalization
-- Suppression logic
-- Severity override logic
-- Report generation
+All scanners follow consistent testing patterns:
+
+```go
+// Standard table-driven test structure
+func TestScannerName_ParseResults(t *testing.T) {
+    scanner := NewScanner(Config{}, /* params */)
+    
+    tests := []struct {
+        name     string
+        input    string
+        expected int
+        validate func(t *testing.T, findings []models.Finding)
+    }{
+        {
+            name: "descriptive test case name",
+            input: `{"test": "data"}`,
+            expected: 1,
+            validate: func(t *testing.T, findings []models.Finding) {
+                t.Helper()
+                // Specific assertions for this test case
+            },
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            findings, err := scanner.ParseResults([]byte(tt.input))
+            require.NoError(t, err)
+            assert.Len(t, findings, tt.expected)
+            
+            if tt.validate != nil {
+                tt.validate(t, findings)
+            }
+        })
+    }
+}
+```
 
 ### Integration Tests
 ```go
-// tests/integration/scanner_test.go
-func TestScannerIntegration(t *testing.T) {
-    tests := []struct {
-        name     string
-        scanner  string
-        fixture  string  // Sample output
-        expected int     // Expected findings count
-    }{
-        {"Prowler AWS", "prowler", "testdata/prowler-output.json", 15},
-        {"Trivy Container", "trivy", "testdata/trivy-output.json", 8},
-        {"Kubescape K8s", "kubescape", "testdata/kubescape-output.json", 12},
+func TestScanner_Integration(t *testing.T) {
+    if testing.Short() {
+        t.Skip("Skipping integration test")
     }
-    // ...
+    
+    // Check if tool is installed
+    if _, err := exec.LookPath("scanner-tool"); err != nil {
+        t.Skip("Scanner tool not found in PATH")
+    }
+    
+    // Run actual scanner
+    scanner := NewScanner(Config{Debug: true}, /* params */)
+    ctx := context.Background()
+    result, err := scanner.Scan(ctx)
+    
+    require.NoError(t, err)
+    assert.NotEmpty(t, result.Findings)
 }
 ```
 
@@ -603,37 +668,62 @@ $ prismatic scan --config configs/client-acme.yaml
 ## Implementation Notes
 
 ### Scanner Integration Pattern
+
+Each scanner follows a consistent implementation pattern:
+
 ```go
-// Standard pattern for each scanner
+// Example: Prowler scanner implementation
 type ProwlerScanner struct {
-    profile string
-    regions []string
+    *BaseScanner  // Embed for common functionality
+    profiles []string
+    regions  []string
+    services []string
 }
 
-func (s *ProwlerScanner) Scan(ctx context.Context) (*ScanResult, error) {
-    cmd := exec.CommandContext(ctx, "prowler",
-        "--profile", s.profile,
-        "--region", strings.Join(s.regions, ","),
-        "--output-formats", "json",
-        "--no-banner",
-        "--quiet")
-    
-    output, err := cmd.Output()
-    if err != nil {
-        return nil, fmt.Errorf("prowler execution failed: %w", err)
+// Constructor with dependency injection
+func NewProwlerScanner(config Config, profiles, regions, services []string) *ProwlerScanner {
+    return NewProwlerScannerWithLogger(config, profiles, regions, services, logger.GetGlobalLogger())
+}
+
+func NewProwlerScannerWithLogger(config Config, profiles, regions, services []string, log logger.Logger) *ProwlerScanner {
+    return &ProwlerScanner{
+        BaseScanner: NewBaseScannerWithLogger("prowler", config, log),
+        profiles:    profiles,
+        regions:     regions,
+        services:    services,
     }
+}
+
+// Scan can use SimpleScan for common patterns
+func (s *ProwlerScanner) Scan(ctx context.Context) (*ScanResult, error) {
+    // For scanners with simple iteration patterns:
+    return s.BaseScanner.SimpleScan(ctx, SimpleScanOptions{
+        ScannerName:     s.Name(),
+        GetVersion:      s.getVersion,
+        Iterator:        NewSimpleTargetIterator(s.profiles, nil),
+        ScanTarget:      s.scanProfile,
+        ParseOutput:     s.ParseResults,
+        ContinueOnError: true,
+    })
     
-    findings, err := s.ParseResults(output)
-    return &ScanResult{
-        Scanner:   "prowler",
-        Version:   s.getVersion(),
-        StartTime: start,
-        EndTime:   time.Now(),
-        RawOutput: output,
-        Findings:  findings,
-    }, nil
+    // Or implement custom logic for complex workflows
+}
+
+// ParseResults converts scanner output to normalized findings
+func (s *ProwlerScanner) ParseResults(raw []byte) ([]models.Finding, error) {
+    // Scanner-specific parsing logic
+    // Use models.NewFinding() for consistent ID generation
+    // Use models.NormalizeSeverity() for severity consistency
 }
 ```
+
+### Code Quality Standards
+
+1. **Zero Duplication**: Common patterns extracted to BaseScanner
+2. **Consistent Error Handling**: All scanners handle errors uniformly
+3. **Normalized Output**: All findings use the same severity scale and structure
+4. **Testable Design**: Dependency injection for loggers, clear interfaces
+5. **Idiomatic Go**: Standard patterns, no clever abstractions
 
 ### Repository Package
 
@@ -674,14 +764,51 @@ defer cleanup() // Ensures cleanup happens
 - **Caching**: Reuses existing clones when possible
 
 ### Development Workflow
-1. Start with `scan` command and 1-2 scanners
-2. Get basic finding normalization working
-3. Implement YAML config and suppressions
-4. Add `report` command with simple HTML
-5. Iterate on report styling
-6. Add remaining scanners
-7. Implement PDF generation
-8. Polish CLI output and error messages
+
+1. **Start Simple**: Begin with `scan` command and 1-2 scanners
+2. **Normalize Early**: Get finding normalization working with consistent IDs
+3. **Configuration**: Implement YAML config with suppressions and overrides
+4. **Report Generation**: Start with simple HTML, iterate on styling
+5. **Scale Up**: Add remaining scanners using BaseScanner patterns
+6. **PDF Support**: Implement PDF generation via HTML
+7. **Polish**: Improve CLI output, error messages, and user experience
+
+### Development Best Practices
+
+1. **Test-Driven**: Write tests first, especially for parsing logic
+2. **Incremental Commits**: Small, focused changes that pass all tests
+3. **Lint Continuously**: Run `make lint` frequently - must pass with 0 issues
+4. **Document as You Go**: Update README and architecture docs with changes
+5. **Refactor Regularly**: Extract common patterns to reduce duplication
+
+## Recent Refactoring Improvements
+
+The codebase has been refactored to eliminate duplication and improve maintainability:
+
+### Removed Unused Code
+- Eliminated unused methods (`WithBusinessContext`, `WithRemediationDetails`) that were defined but never called
+- Cleaned up TODOs that were already implemented
+
+### Consolidated Business Logic
+- Unified severity validation: Single `models.IsValidSeverity()` function used throughout
+- Centralized severity normalization in `models.NormalizeSeverity()`
+- Consistent finding ID generation with `models.GenerateFindingID()`
+
+### Enhanced BaseScanner
+- Added `SimpleScan()` method that provides a template for common scanning patterns:
+  - Context cancellation handling
+  - Error handling and logging
+  - Finding validation
+  - Progress tracking
+- Created `SimpleTargetIterator` for easy target management
+- Reduces boilerplate in scanner implementations by ~40%
+
+### Maintained Idiomatic Go
+- Kept standard table-driven tests without unnecessary abstractions
+- Avoided over-engineering test helpers that would obscure test logic
+- Followed Go's principle: "a little copying is better than a little dependency"
+
+The refactoring reduced the codebase by ~500 lines while improving consistency and maintainability.
 
 ## Future Enhancements
 

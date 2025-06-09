@@ -15,15 +15,16 @@ import (
 
 // Orchestrator manages multiple scanners and coordinates their execution.
 type Orchestrator struct {
-	logger       logger.Logger
-	config       *config.Config
-	repoPaths    map[string]string
-	outputDir    string
-	scanners     []Scanner
-	repoCleanups []func()
-	maxWorkers   int
-	scanTimeout  time.Duration
-	useMock      bool
+	logger        logger.Logger
+	config        *config.Config
+	repoPaths     map[string]string
+	statusChannel chan *models.ScannerStatus
+	outputDir     string
+	scanners      []Scanner
+	repoCleanups  []func()
+	maxWorkers    int
+	scanTimeout   time.Duration
+	useMock       bool
 }
 
 // NewOrchestrator creates a new scanner orchestrator.
@@ -57,6 +58,11 @@ func (o *Orchestrator) SetMaxWorkers(maxWorkers int) {
 // SetScanTimeout sets the timeout for individual scanner execution.
 func (o *Orchestrator) SetScanTimeout(timeout time.Duration) {
 	o.scanTimeout = timeout
+}
+
+// SetStatusChannel sets the channel for receiving scanner status updates.
+func (o *Orchestrator) SetStatusChannel(ch chan *models.ScannerStatus) {
+	o.statusChannel = ch
 }
 
 // PrepareRepositories clones all configured repositories before scanning.
@@ -173,6 +179,12 @@ func (o *Orchestrator) RunScans(ctx context.Context) (*models.ScanMetadata, erro
 		},
 	}
 
+	// Send initial pending status for all scanners
+	for _, scanner := range o.scanners {
+		status := models.NewScannerStatus(scanner.Name())
+		o.sendStatus(status)
+	}
+
 	// Create worker pool
 	jobs := make(chan Scanner, len(o.scanners))
 	results := make(chan *models.ScanResult, len(o.scanners))
@@ -219,16 +231,37 @@ func (o *Orchestrator) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-ch
 	defer wg.Done()
 
 	for scanner := range jobs {
+		// Send status update if channel is available
+		status := models.NewScannerStatus(scanner.Name())
+		o.sendStatus(status)
+
 		// Create scanner-specific context with timeout
 		scanCtx, cancel := context.WithTimeout(ctx, o.scanTimeout)
 
 		o.logger.Info("Running scanner", "name", scanner.Name())
+
+		// Update status to running
+		status.SetRunning("Scanning targets...")
+		o.sendStatus(status)
+
+		// Set up progress reporting if scanner supports it
+		if reporter, ok := scanner.(ProgressReporter); ok {
+			reporter.SetProgressCallback(func(current, total int, message string) {
+				status.SetProgress(current, total)
+				status.Message = message
+				o.sendStatus(status)
+			})
+		}
+
 		result, err := scanner.Scan(scanCtx)
 
 		cancel() // Clean up the context
 
 		if err != nil {
 			o.logger.Error("Scanner failed", "name", scanner.Name(), "error", err)
+			status.SetFailed(err)
+			o.sendStatus(status)
+
 			result = &models.ScanResult{
 				Scanner:   scanner.Name(),
 				StartTime: time.Now(),
@@ -236,6 +269,9 @@ func (o *Orchestrator) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-ch
 				Error:     err.Error(),
 				Findings:  []models.Finding{},
 			}
+		} else {
+			status.SetCompleted()
+			o.sendStatus(status)
 		}
 
 		select {
@@ -349,4 +385,15 @@ func (o *Orchestrator) detectScanners(onlyScanners []string) []string {
 	scanners = append(scanners, "gitleaks", "checkov")
 
 	return scanners
+}
+
+// sendStatus sends a status update if the status channel is available.
+func (o *Orchestrator) sendStatus(status *models.ScannerStatus) {
+	if o.statusChannel != nil {
+		select {
+		case o.statusChannel <- status:
+		default:
+			// Don't block if channel is full
+		}
+	}
 }
