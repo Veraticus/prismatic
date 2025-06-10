@@ -219,9 +219,7 @@ func (ui *ScannerUI) renderRepositories() {
 	}
 
 	// Calculate available width for repository display
-	availableWidth := ui.boxWidth - 4 // Account for box borders
 	repoNameWidth := 20
-	statusWidth := availableWidth - repoNameWidth - 2 // 2 for icon and space
 
 	lines := []string{}
 	for _, name := range ui.getSortedRepoNames() {
@@ -238,11 +236,11 @@ func (ui *ScannerUI) renderRepositories() {
 			status = fmt.Sprintf("Failed: %s", repo.Error)
 		}
 
-		// Format with proper padding
-		line := fmt.Sprintf("%s %-*s %-*s",
+		// Format with proper padding - don't truncate here, let drawBox handle it
+		line := fmt.Sprintf("%s %-*s %s",
 			icon,
 			repoNameWidth, ui.truncate(repo.Name, repoNameWidth),
-			statusWidth, ui.truncate(status, statusWidth))
+			status)
 		lines = append(lines, line)
 	}
 
@@ -296,7 +294,9 @@ func (ui *ScannerUI) renderScanners() {
 		progressWidth, "Progress",
 		colorReset)
 
-	// Create separator with proper width
+	// Create separator that exactly matches the header spacing
+	// Header format: "Scanner     │ Status      │ Time     │ Progress..."
+	// Each column has content + spaces, then " │ " (3 chars) between columns
 	separator := colorGray +
 		strings.Repeat("─", scannerWidth) + "┼" +
 		strings.Repeat("─", statusWidth+2) + "┼" +
@@ -458,26 +458,55 @@ func (ui *ScannerUI) drawBox(title string, lines []string) string {
 
 	// Top border with colored title
 	result.WriteString(colorCyan + "┌")
-	result.WriteString(colorBold + title + colorReset + colorCyan)
-	titleLen := ui.visualLength(title)
-	remaining := width - titleLen - 2
+
+	// Title with formatting
+	titleWithColor := colorBold + title + colorReset + colorCyan
+	result.WriteString(titleWithColor)
+
+	// Calculate remaining space for padding
+	// The visual title length + 2 for ┌ and ┐
+	titleVisualLen := ui.visualLength(title)
+	usedSpace := 1 + titleVisualLen + 1 // ┌ + title + ┐
+	remaining := width - usedSpace
+
 	if remaining > 0 {
 		result.WriteString(strings.Repeat("─", remaining))
+	} else if remaining < 0 {
+		// Title is too long, truncate it
+		truncatedTitle := ui.truncate(title, width-6) // Leave room for ┌ ┐ and some ─
+		result.Reset()                                // Reset
+		result.WriteString(colorCyan + "┌" + colorBold + truncatedTitle + colorReset + colorCyan + "──┐" + colorReset + "\n")
+		// Skip to content
+		goto content
 	}
+
 	result.WriteString("┐" + colorReset + "\n")
 
+content:
 	// Content lines
+	contentWidth := width - 4 // Account for "│ " and " │"
 	for _, line := range lines {
 		result.WriteString(colorCyan + "│ " + colorReset)
 
-		// Pad line to proper width considering ANSI codes
-		lineLen := ui.visualLength(line)
-		if lineLen < width-4 {
+		// Get the visual length of the line
+		lineVisualLen := ui.visualLength(line)
+
+		if lineVisualLen <= contentWidth {
+			// Line fits, add it with padding
 			result.WriteString(line)
-			result.WriteString(strings.Repeat(" ", width-4-lineLen))
+			padding := contentWidth - lineVisualLen
+			if padding > 0 {
+				result.WriteString(strings.Repeat(" ", padding))
+			}
 		} else {
-			// Truncate if too long
-			result.WriteString(ui.truncate(line, width-4))
+			// Line is too long, truncate it
+			truncated := ui.truncate(line, contentWidth)
+			truncatedLen := ui.visualLength(truncated)
+			result.WriteString(truncated)
+			// Add any remaining padding after truncation
+			if truncatedLen < contentWidth {
+				result.WriteString(strings.Repeat(" ", contentWidth-truncatedLen))
+			}
 		}
 
 		result.WriteString(" " + colorCyan + "│" + colorReset + "\n")
@@ -614,17 +643,51 @@ func (ui *ScannerUI) truncate(s string, width int) string {
 		return s
 	}
 
-	// Need to truncate - handle ANSI codes properly
-	// This is a simple implementation that strips ANSI codes
-	clean := ui.stripANSI(s)
-	if len(clean) <= width {
-		return s
+	// Handle very small widths
+	if width <= 0 {
+		return ""
 	}
 
-	if width > 3 {
-		return clean[:width-3] + "..."
+	// For small widths, just return the truncated string without ellipsis
+	if width < 3 {
+		clean := ui.stripANSI(s)
+		if len(clean) > width {
+			return clean[:width]
+		}
+		return clean
 	}
-	return clean[:width]
+
+	// Count visible characters and preserve ANSI codes
+	var result strings.Builder
+	visibleCount := 0
+	inAnsi := false
+
+	for i, ch := range s {
+		if ch == '\033' {
+			inAnsi = true
+		}
+
+		if inAnsi {
+			result.WriteRune(ch)
+			if ch == 'm' {
+				inAnsi = false
+			}
+		} else {
+			if visibleCount >= width-3 {
+				// Find the next ANSI reset if any to preserve color state
+				remainder := s[i:]
+				if idx := strings.Index(remainder, colorReset); idx >= 0 && idx < 20 {
+					result.WriteString(remainder[:idx+len(colorReset)])
+				}
+				result.WriteString("...")
+				break
+			}
+			result.WriteRune(ch)
+			visibleCount++
+		}
+	}
+
+	return result.String()
 }
 
 func (ui *ScannerUI) visualLength(s string) int {

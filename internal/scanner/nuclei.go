@@ -31,6 +31,7 @@ func NewNucleiScannerWithLogger(cfg Config, endpoints []string, log logger.Logge
 		endpoints:   endpoints,
 	}
 	s.version = s.getVersion()
+	log.Info("Nuclei scanner created", "endpoints", endpoints, "endpoint_count", len(endpoints))
 	return s
 }
 
@@ -54,6 +55,8 @@ func (s *NucleiScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		Version:   s.version,
 		StartTime: startTime,
 	}
+
+	s.logger.Info("Nuclei Scan called", "endpoints_in_scanner", s.endpoints, "count", len(s.endpoints))
 
 	if len(s.endpoints) == 0 {
 		s.logger.Info("Nuclei: No endpoints configured, skipping scan")
@@ -99,6 +102,11 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 	}
 
 	// Add endpoints
+	if len(endpoints) == 0 {
+		s.logger.Warn("No endpoints provided to runNuclei!")
+		return []models.Finding{}, fmt.Errorf("no endpoints provided")
+	}
+
 	for _, endpoint := range endpoints {
 		args = append(args, "-u", endpoint)
 	}
@@ -127,7 +135,13 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		s.logger.Info("Nuclei templates not found, will be downloaded on first run", "path", templatesPath)
 	}
 
-	s.logger.Info("Running nuclei command", "args", args, "endpoints", endpoints, "cmd", "nuclei "+strings.Join(args, " "))
+	// Log the full command being executed
+	fullCmd := append([]string{"nuclei"}, args...)
+	s.logger.Info("Running nuclei command",
+		"endpoints", endpoints,
+		"endpoint_count", len(endpoints),
+		"args", args,
+		"full_command", strings.Join(fullCmd, " "))
 
 	// Use CombinedOutput to capture both stdout and stderr
 	startTime := time.Now()
