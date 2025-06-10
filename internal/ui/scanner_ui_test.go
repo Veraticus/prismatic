@@ -121,11 +121,14 @@ func TestScannerUI_BoxDrawing(t *testing.T) {
 	// Test box drawing
 	box := ui.drawBox("─ Test Box ─", []string{"Line 1", "Line 2"})
 
-	lines := strings.Split(strings.TrimSpace(box), "\n")
+	// Strip ANSI codes for testing
+	cleanBox := ui.stripANSI(box)
+	lines := strings.Split(strings.TrimSpace(cleanBox), "\n")
 	assert.Len(t, lines, 4)
 
 	// Check borders
 	assert.True(t, strings.HasPrefix(lines[0], "┌"))
+	assert.True(t, strings.Contains(lines[0], "Test Box"))
 	assert.True(t, strings.HasSuffix(lines[0], "┐"))
 	assert.True(t, strings.HasPrefix(lines[1], "│"))
 	assert.True(t, strings.HasSuffix(lines[1], "│"))
@@ -159,7 +162,9 @@ func TestScannerUI_StatusIcons(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
 			got := ui.getScannerIcon(tt.status)
-			assert.Equal(t, tt.want, got)
+			// Strip ANSI color codes for comparison
+			cleanGot := ui.stripANSI(got)
+			assert.Equal(t, tt.want, cleanGot)
 		})
 	}
 }

@@ -119,7 +119,7 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		cmd.Env = env
 	}
 
-	s.logger.Debug("Running nuclei command", "args", args)
+	s.logger.Info("Running nuclei command", "args", args, "endpoints", endpoints)
 
 	// Use CombinedOutput to capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
@@ -163,6 +163,14 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		}
 	}
 
+	// Always log the output for debugging
+	if len(output) > 0 {
+		s.logger.Info("Nuclei output", "output_size", len(output), "json_lines", len(jsonLines), "error_lines", len(errorLines))
+		if len(errorLines) > 0 && len(errorLines) <= 10 {
+			s.logger.Info("Nuclei non-JSON output", "lines", errorLines)
+		}
+	}
+
 	if len(jsonLines) == 0 {
 		if err != nil {
 			// Check if it's a command not found error
@@ -173,7 +181,9 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 			if len(errorLines) > 0 {
 				return nil, fmt.Errorf("nuclei failed: %w. Output: %s", err, strings.Join(errorLines, "; "))
 			}
-			s.logger.Debug("Nuclei completed with error but no findings", "error", err)
+			s.logger.Info("Nuclei completed with error but no findings", "error", err)
+		} else {
+			s.logger.Info("Nuclei completed successfully with no findings")
 		}
 		return []models.Finding{}, nil
 	}

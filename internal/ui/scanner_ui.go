@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/Veraticus/prismatic/internal/models"
 )
 
@@ -45,6 +47,19 @@ const (
 	RepoStatusCloning  = "cloning"
 	RepoStatusComplete = "complete"
 	RepoStatusFailed   = "failed"
+)
+
+// ANSI color codes.
+const (
+	colorReset   = "\033[0m"
+	colorRed     = "\033[31m"
+	colorGreen   = "\033[32m"
+	colorYellow  = "\033[33m"
+	colorBlue    = "\033[34m"
+	colorMagenta = "\033[35m"
+	colorCyan    = "\033[36m"
+	colorGray    = "\033[90m"
+	colorBold    = "\033[1m"
 )
 
 // NewScannerUI creates a new scanner UI instance.
@@ -204,19 +219,36 @@ func (ui *ScannerUI) renderRepositories() {
 }
 
 func (ui *ScannerUI) renderScanners() {
+	// Only show scanners that have been registered
+	activeScanners := []string{}
+	for name := range ui.scannerStatuses {
+		activeScanners = append(activeScanners, name)
+	}
+
+	// Sort for consistent display
+	for i := range activeScanners {
+		for j := i + 1; j < len(activeScanners); j++ {
+			if activeScanners[i] > activeScanners[j] {
+				activeScanners[i], activeScanners[j] = activeScanners[j], activeScanners[i]
+			}
+		}
+	}
+
+	if len(activeScanners) == 0 {
+		return // No scanners to display
+	}
+
 	// Create header
 	lines := []string{
-		"Scanner     │ Status      │ Time   │ Progress                        ",
-		"────────────┼─────────────┼────────┼─────────────────────────────────",
+		fmt.Sprintf("%s%-11s │ %-12s │ %-7s │ %-31s%s",
+			colorBold, "Scanner", "Status", "Time", "Progress", colorReset),
+		colorGray + "────────────┼──────────────┼─────────┼─────────────────────────────────" + colorReset,
 	}
 
 	// Add scanner rows
-	for _, name := range ui.getSortedScannerNames() {
+	for _, name := range activeScanners {
 		status := ui.scannerStatuses[name]
 		if status == nil {
-			// Show pending scanners that haven't started yet
-			line := fmt.Sprintf("%-11s │ ○ Pending   │ -      │ Waiting to start", name)
-			lines = append(lines, line)
 			continue
 		}
 
@@ -229,8 +261,21 @@ func (ui *ScannerUI) renderScanners() {
 
 		progress := ui.getScannerProgress(status)
 
-		line := fmt.Sprintf("%-11s │ %s %-9s │ %-6s │ %-31s",
-			name, icon, statusText, timeStr, ui.truncate(progress, 31))
+		// Color the row based on status
+		rowColor := ""
+		switch status.Status {
+		case models.StatusFailed:
+			rowColor = colorRed
+		case models.StatusSuccess:
+			if status.TotalFindings > 0 && status.FindingCounts["critical"] > 0 {
+				rowColor = colorRed
+			} else if status.TotalFindings > 0 && status.FindingCounts["high"] > 0 {
+				rowColor = colorYellow
+			}
+		}
+
+		line := fmt.Sprintf("%s%-11s%s │ %s %-10s │ %-7s │ %-31s",
+			rowColor, name, colorReset, icon, statusText, timeStr, ui.truncate(progress, 31))
 		lines = append(lines, line)
 	}
 
@@ -256,45 +301,108 @@ func (ui *ScannerUI) renderSummary() {
 		}
 	}
 
-	summary := fmt.Sprintf("Total: %-4d  Critical: %-3d  High: %-3d  Medium: %-3d  Low: %-3d",
-		total, bySeverity["critical"], bySeverity["high"],
-		bySeverity["medium"], bySeverity["low"])
+	// Build colored summary
+	parts := []string{
+		fmt.Sprintf("%sTotal: %d%s", colorBold, total, colorReset),
+	}
 
+	if bySeverity["critical"] > 0 {
+		parts = append(parts, fmt.Sprintf("%sCritical: %d%s", colorRed, bySeverity["critical"], colorReset))
+	} else {
+		parts = append(parts, fmt.Sprintf("%sCritical: %d%s", colorGray, bySeverity["critical"], colorReset))
+	}
+
+	if bySeverity["high"] > 0 {
+		parts = append(parts, fmt.Sprintf("%sHigh: %d%s", colorYellow, bySeverity["high"], colorReset))
+	} else {
+		parts = append(parts, fmt.Sprintf("%sHigh: %d%s", colorGray, bySeverity["high"], colorReset))
+	}
+
+	if bySeverity["medium"] > 0 {
+		parts = append(parts, fmt.Sprintf("%sMedium: %d%s", colorBlue, bySeverity["medium"], colorReset))
+	} else {
+		parts = append(parts, fmt.Sprintf("%sMedium: %d%s", colorGray, bySeverity["medium"], colorReset))
+	}
+
+	if bySeverity["low"] > 0 {
+		parts = append(parts, fmt.Sprintf("%sLow: %d%s", colorGreen, bySeverity["low"], colorReset))
+	} else {
+		parts = append(parts, fmt.Sprintf("%sLow: %d%s", colorGray, bySeverity["low"], colorReset))
+	}
+
+	summary := strings.Join(parts, "  ")
 	_, _ = os.Stdout.WriteString(ui.drawBox("─ Finding Summary ─", []string{summary}))
 }
 
 func (ui *ScannerUI) renderErrors() {
-	_, _ = os.Stdout.WriteString(ui.drawBox("─ Recent Errors ─", ui.errorMessages))
+	// Color errors in red
+	coloredErrors := make([]string, len(ui.errorMessages))
+	for i, err := range ui.errorMessages {
+		coloredErrors[i] = colorRed + err + colorReset
+	}
+	_, _ = os.Stdout.WriteString(ui.drawBox("─ Recent Errors ─", coloredErrors))
 }
 
 // Helper functions
 
 func (ui *ScannerUI) drawBox(title string, lines []string) string {
 	width := ui.getTermWidth()
-	if width > 100 {
-		width = 100 // Cap max width
+	if width > 120 {
+		width = 120 // Cap max width for readability
 	}
 
 	var result strings.Builder
 
-	// Top border
-	result.WriteString("┌")
-	result.WriteString(title)
-	remaining := width - len(title) - 2
-	result.WriteString(strings.Repeat("─", remaining))
-	result.WriteString("┐\n")
+	// Calculate visual length (without ANSI codes)
+	visualLen := func(s string) int {
+		// Remove ANSI escape sequences for length calculation
+		clean := s
+		for _, code := range []string{colorReset, colorRed, colorGreen, colorYellow, colorBlue, colorMagenta, colorCyan, colorGray, colorBold} {
+			clean = strings.ReplaceAll(clean, code, "")
+		}
+		// Also remove other ANSI sequences
+		for strings.Contains(clean, "\033[") {
+			start := strings.Index(clean, "\033[")
+			end := strings.Index(clean[start:], "m")
+			if end == -1 {
+				break
+			}
+			clean = clean[:start] + clean[start+end+1:]
+		}
+		return len(clean)
+	}
+
+	// Top border with colored title
+	result.WriteString(colorCyan + "┌")
+	result.WriteString(colorBold + title + colorReset + colorCyan)
+	titleLen := visualLen(title)
+	remaining := width - titleLen - 2
+	if remaining > 0 {
+		result.WriteString(strings.Repeat("─", remaining))
+	}
+	result.WriteString("┐" + colorReset + "\n")
 
 	// Content lines
 	for _, line := range lines {
-		result.WriteString("│ ")
-		result.WriteString(ui.padRight(line, width-4))
-		result.WriteString(" │\n")
+		result.WriteString(colorCyan + "│ " + colorReset)
+
+		// Pad line to proper width considering ANSI codes
+		lineLen := visualLen(line)
+		if lineLen < width-4 {
+			result.WriteString(line)
+			result.WriteString(strings.Repeat(" ", width-4-lineLen))
+		} else {
+			// Truncate if too long
+			result.WriteString(ui.truncate(line, width-4))
+		}
+
+		result.WriteString(" " + colorCyan + "│" + colorReset + "\n")
 	}
 
 	// Bottom border
-	result.WriteString("└")
+	result.WriteString(colorCyan + "└")
 	result.WriteString(strings.Repeat("─", width-2))
-	result.WriteString("┘\n")
+	result.WriteString("┘" + colorReset + "\n")
 
 	return result.String()
 }
@@ -302,13 +410,13 @@ func (ui *ScannerUI) drawBox(title string, lines []string) string {
 func (ui *ScannerUI) getRepoIcon(status string) string {
 	switch status {
 	case RepoStatusPending:
-		return "○"
+		return colorGray + "○" + colorReset
 	case RepoStatusCloning:
-		return "⟳"
+		return colorYellow + "⟳" + colorReset
 	case RepoStatusComplete:
-		return "✓"
+		return colorGreen + "✓" + colorReset
 	case RepoStatusFailed:
-		return "✗"
+		return colorRed + "✗" + colorReset
 	default:
 		return "?"
 	}
@@ -317,17 +425,17 @@ func (ui *ScannerUI) getRepoIcon(status string) string {
 func (ui *ScannerUI) getScannerIcon(status string) string {
 	switch status {
 	case models.StatusPending:
-		return "○"
+		return colorGray + "○" + colorReset
 	case models.StatusStarting:
-		return "🚀"
+		return colorBlue + "🚀" + colorReset
 	case models.StatusRunning:
-		return "⟳"
+		return colorYellow + "⟳" + colorReset
 	case models.StatusSuccess:
-		return "✓"
+		return colorGreen + "✓" + colorReset
 	case models.StatusFailed:
-		return "✗"
+		return colorRed + "✗" + colorReset
 	case models.StatusSkipped:
-		return "⏭"
+		return colorGray + "⏭" + colorReset
 	default:
 		return "?"
 	}
@@ -404,12 +512,6 @@ func (ui *ScannerUI) getSortedRepoNames() []string {
 	return names
 }
 
-func (ui *ScannerUI) getSortedScannerNames() []string {
-	// Define preferred order
-	order := []string{"trivy", "kubescape", "nuclei", "gitleaks", "prowler", "checkov"}
-	return order
-}
-
 func (ui *ScannerUI) padRight(s string, width int) string {
 	if len(s) >= width {
 		return s[:width]
@@ -418,21 +520,61 @@ func (ui *ScannerUI) padRight(s string, width int) string {
 }
 
 func (ui *ScannerUI) truncate(s string, width int) string {
-	if len(s) <= width {
+	// Calculate visual length without ANSI codes
+	visualLen := ui.visualLength(s)
+	if visualLen <= width {
 		return s
 	}
-	if width > 3 {
-		return s[:width-3] + "..."
+
+	// Need to truncate - handle ANSI codes properly
+	// This is a simple implementation that strips ANSI codes
+	clean := ui.stripANSI(s)
+	if len(clean) <= width {
+		return s
 	}
-	return s[:width]
+
+	if width > 3 {
+		return clean[:width-3] + "..."
+	}
+	return clean[:width]
+}
+
+func (ui *ScannerUI) visualLength(s string) int {
+	// Remove ANSI escape sequences for length calculation
+	clean := ui.stripANSI(s)
+	return len(clean)
+}
+
+func (ui *ScannerUI) stripANSI(s string) string {
+	// Remove ANSI escape sequences
+	clean := s
+	for _, code := range []string{colorReset, colorRed, colorGreen, colorYellow, colorBlue, colorMagenta, colorCyan, colorGray, colorBold} {
+		clean = strings.ReplaceAll(clean, code, "")
+	}
+	// Also remove other ANSI sequences
+	for strings.Contains(clean, "\033[") {
+		start := strings.Index(clean, "\033[")
+		end := strings.Index(clean[start:], "m")
+		if end == -1 {
+			break
+		}
+		clean = clean[:start] + clean[start+end+1:]
+	}
+	return clean
 }
 
 func (ui *ScannerUI) getTermWidth() int {
-	// Default width
-	return 80
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width <= 0 {
+		return 80 // Default width
+	}
+	return width
 }
 
 func (ui *ScannerUI) getTermHeight() int {
-	// Default height
-	return 25
+	_, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || height <= 0 {
+		return 25 // Default height
+	}
+	return height
 }
