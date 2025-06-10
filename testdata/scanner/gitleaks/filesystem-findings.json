@@ -1,0 +1,42 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 8,
+  "EndLine": 8,
+  "StartColumn": 7,
+  "EndColumn": 53,
+  "Match": "app_secret\": \"abcdef1234567890abcdef1234567890\"",
+  "Secret": "abcdef1234567890abcdef1234567890",
+  "File": "oauth.json",
+  "SymlinkFile": "",
+  "Commit": "68aa2456b25f87d2362573e625e3f51975e68486",
+  "Entropy": 4,
+  "Author": "Test User",
+  "Email": "test@example.com",
+  "Date": "2025-06-10T05:42:06Z",
+  "Message": "Add OAuth credentials",
+  "Tags": [],
+  "Fingerprint": "68aa2456b25f87d2362573e625e3f51975e68486:oauth.json:generic-api-key:8"
+ },
+ {
+  "RuleID": "slack-webhook-url",
+  "Description": "Discovered a Slack Webhook, which could lead to unauthorized message posting and data leakage in Slack channels.",
+  "StartLine": 2,
+  "EndLine": 2,
+  "StartColumn": 11,
+  "EndColumn": 87,
+  "Match": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+  "Secret": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+  "File": "webhooks.yaml",
+  "SymlinkFile": "",
+  "Commit": "d5318fe3fa0f5f30ebe215794c9fbc08fd3175cf",
+  "Entropy": 3.4009645,
+  "Author": "Test User",
+  "Email": "test@example.com",
+  "Date": "2025-06-10T05:42:06Z",
+  "Message": "Add webhook URLs",
+  "Tags": [],
+  "Fingerprint": "d5318fe3fa0f5f30ebe215794c9fbc08fd3175cf:webhooks.yaml:slack-webhook-url:2"
+ }
+]

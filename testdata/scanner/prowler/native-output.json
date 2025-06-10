@@ -1,0 +1,102 @@
+[
+  {
+    "Provider": "aws",
+    "AccountId": "123456789012",
+    "Region": "us-east-1",
+    "CheckID": "s3_bucket_default_encryption",
+    "CheckTitle": "S3 buckets should have server-side encryption enabled",
+    "ServiceName": "s3",
+    "Status": "FAIL",
+    "StatusExtended": "S3 bucket 'my-unencrypted-bucket' does not have default encryption enabled",
+    "Severity": "medium",
+    "ResourceId": "my-unencrypted-bucket",
+    "ResourceArn": "arn:aws:s3:::my-unencrypted-bucket",
+    "ResourceType": "AwsS3Bucket",
+    "Description": "This control checks whether Amazon S3 buckets have server-side encryption enabled by default",
+    "Risk": "Data stored in S3 without encryption could be accessed if the bucket is compromised",
+    "Remediation": {
+      "Code": {
+        "CLI": "aws s3api put-bucket-encryption --bucket my-unencrypted-bucket --server-side-encryption-configuration '{\"Rules\": [{\"ApplyServerSideEncryptionByDefault\": {\"SSEAlgorithm\": \"AES256\"}}]}'"
+      },
+      "Recommendation": {
+        "Text": "Enable default encryption on the S3 bucket using AES-256 or AWS KMS",
+        "Url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/default-bucket-encryption.html"
+      }
+    }
+  },
+  {
+    "Provider": "aws",
+    "AccountId": "123456789012",
+    "Region": "global",
+    "CheckID": "iam_root_hardware_mfa_enabled",
+    "CheckTitle": "Ensure hardware MFA is enabled for the root user",
+    "ServiceName": "iam",
+    "Status": "FAIL",
+    "StatusExtended": "Root user does not have hardware MFA enabled, only virtual MFA",
+    "Severity": "critical",
+    "ResourceId": "root",
+    "ResourceArn": "arn:aws:iam::123456789012:root",
+    "ResourceType": "AwsIamUser",
+    "Description": "The root user is the most privileged user in an AWS account. Hardware MFA provides stronger protection than virtual MFA",
+    "Risk": "Without hardware MFA, the root account is more vulnerable to compromise through device theft or malware",
+    "Remediation": {
+      "Code": {
+        "CLI": "# Hardware MFA must be configured through the AWS Console"
+      },
+      "Recommendation": {
+        "Text": "Enable hardware MFA for the root user using a U2F security key or hardware token",
+        "Url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html#id_root-user_manage_mfa"
+      }
+    }
+  },
+  {
+    "Provider": "aws",
+    "AccountId": "123456789012",
+    "Region": "us-west-2",
+    "CheckID": "ec2_securitygroup_default_restrict_traffic",
+    "CheckTitle": "Default security groups should restrict all traffic",
+    "ServiceName": "ec2",
+    "Status": "FAIL",
+    "StatusExtended": "Default security group sg-0123456789abcdef0 has rules allowing traffic",
+    "Severity": "high",
+    "ResourceId": "sg-0123456789abcdef0",
+    "ResourceArn": "arn:aws:ec2:us-west-2:123456789012:security-group/sg-0123456789abcdef0",
+    "ResourceType": "AwsEc2SecurityGroup",
+    "Description": "Default security groups should not have any rules that allow inbound or outbound traffic",
+    "Risk": "Resources using default security groups with permissive rules may be exposed to unauthorized access",
+    "Remediation": {
+      "Code": {
+        "CLI": "aws ec2 revoke-security-group-ingress --group-id sg-0123456789abcdef0 --protocol all --source-group sg-0123456789abcdef0"
+      },
+      "Recommendation": {
+        "Text": "Remove all inbound and outbound rules from default security groups and create custom security groups for your resources",
+        "Url": "https://docs.aws.amazon.com/vpc/latest/userguide/VPC_SecurityGroups.html"
+      }
+    }
+  },
+  {
+    "Provider": "aws",
+    "AccountId": "123456789012",
+    "Region": "us-east-1",
+    "CheckID": "cloudtrail_logs_s3_bucket_access_logging_enabled",
+    "CheckTitle": "S3 buckets with CloudTrail logs should have access logging enabled",
+    "ServiceName": "cloudtrail",
+    "Status": "FAIL",
+    "StatusExtended": "CloudTrail S3 bucket 'aws-cloudtrail-logs-123456789012' does not have server access logging enabled",
+    "Severity": "low",
+    "ResourceId": "aws-cloudtrail-logs-123456789012",
+    "ResourceArn": "arn:aws:s3:::aws-cloudtrail-logs-123456789012",
+    "ResourceType": "AwsS3Bucket",
+    "Description": "S3 buckets containing CloudTrail logs should have server access logging enabled for security monitoring",
+    "Risk": "Without access logging, unauthorized access attempts to CloudTrail logs may go undetected",
+    "Remediation": {
+      "Code": {
+        "CLI": "aws s3api put-bucket-logging --bucket aws-cloudtrail-logs-123456789012 --bucket-logging-status '{\"LoggingEnabled\": {\"TargetBucket\": \"my-logging-bucket\", \"TargetPrefix\": \"cloudtrail-access-logs/\"}}'"
+      },
+      "Recommendation": {
+        "Text": "Enable S3 server access logging for buckets containing CloudTrail logs",
+        "Url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerLogs.html"
+      }
+    }
+  }
+]

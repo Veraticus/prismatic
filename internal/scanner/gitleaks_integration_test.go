@@ -43,14 +43,14 @@ func TestGitleaksScanner_Integration(t *testing.T) {
 	secretsFile := filepath.Join(tempDir, "secrets.py")
 	secretsContent := `# Test secrets that should be detected
 # Real-looking AWS access key (not the example one)
-aws_access_key_id = "AKIAJ7Q2VKXYKDT5WHFQ"
-aws_secret_access_key = "bPxRfiCYEXAMPLEKEY+wJalrXUtnFEMI/K7MDENG"
+aws_access_key_id = "AKIA_FAKE_TEST_J7Q2VKXYKDT5WHFQ"
+aws_secret_access_key = "FAKE_TEST_bPxRfiCYEXAMPLEKEY+wJalrXUtnFEMI/K7MDENG"
 
 # GitHub token
-github_token = "ghp_16C7e42F292c6912E7710c838347Ae178B4a"
+github_token = "ghp_FAKE_TEST_16C7e42F292c6912E7710c838347Ae178B4a"
 
 # Slack token
-slack_token = "xoxb-263594206564-2343594206564-WRjgnr4fNkfnvar4WV5cMFmo"
+slack_token = "xoxb-FAKE-263594206564-2343594206564-WRjgnr4fNkfnvar4WV5cMFmo"
 
 # Private key
 private_key = """-----BEGIN RSA PRIVATE KEY-----

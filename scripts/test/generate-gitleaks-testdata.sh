@@ -34,10 +34,10 @@ git commit -qm "Add AWS config"
 # 2. API keys
 cat > .env << 'EOF'
 # Application settings
-API_KEY=sk_live_abcdef123456789
-GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456
-SLACK_BOT_TOKEN=xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuvwx
-STRIPE_SECRET_KEY=sk_test_4eC39HqLyjWDarjtT1zdp7dc
+API_KEY=sk_live_FAKE_TEST_KEY_abcdef123456789
+GITHUB_TOKEN=ghp_FAKE_TEST_TOKEN_abcdefghijklmnopqrstuvwxyz123456
+SLACK_BOT_TOKEN=xoxb-FAKE-123456789012-1234567890123-abcdefghijklmnopqrstuvwx
+STRIPE_SECRET_KEY=sk_test_FAKE_4eC39HqLyjWDarjtT1zdp7dc
 EOF
 git add .env
 git commit -qm "Add environment variables"
