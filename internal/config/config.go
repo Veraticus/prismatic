@@ -14,15 +14,16 @@ import (
 
 // Config represents the complete configuration for a client scan.
 type Config struct {
-	Suppressions       SuppressionConfig  `yaml:"suppressions,omitempty"`
-	AWS                *AWSConfig         `yaml:"aws,omitempty"`
-	Docker             *DockerConfig      `yaml:"docker,omitempty"`
-	Kubernetes         *KubernetesConfig  `yaml:"kubernetes,omitempty"`
-	SeverityOverrides  map[string]string  `yaml:"severity_overrides,omitempty"`
-	MetadataEnrichment MetadataEnrichment `yaml:"metadata_enrichment,omitempty"`
-	Client             ClientConfig       `yaml:"client"`
-	Endpoints          []string           `yaml:"endpoints,omitempty"`
-	Repositories       []Repository       `yaml:"repositories,omitempty"`
+	AWS                *AWSConfig               `yaml:"aws,omitempty"`
+	Docker             *DockerConfig            `yaml:"docker,omitempty"`
+	Kubernetes         *KubernetesConfig        `yaml:"kubernetes,omitempty"`
+	SeverityOverrides  map[string]string        `yaml:"severity_overrides,omitempty"`
+	MetadataEnrichment MetadataEnrichment       `yaml:"metadata_enrichment,omitempty"`
+	Scanners           map[string]ScannerConfig `yaml:"scanners,omitempty"`
+	Client             ClientConfig             `yaml:"client"`
+	Suppressions       SuppressionConfig        `yaml:"suppressions,omitempty"`
+	Endpoints          []string                 `yaml:"endpoints,omitempty"`
+	Repositories       []Repository             `yaml:"repositories,omitempty"`
 }
 
 // ClientConfig contains client identification information.
@@ -79,6 +80,11 @@ type Repository struct {
 	Name   string `yaml:"name"`
 	Path   string `yaml:"path"` // Can be URL or local path
 	Branch string `yaml:"branch"`
+}
+
+// ScannerConfig contains configuration for individual scanners.
+type ScannerConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // LoadConfig reads and parses a YAML configuration file.

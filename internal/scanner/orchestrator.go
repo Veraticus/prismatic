@@ -376,9 +376,9 @@ func (o *Orchestrator) getScannerNames() []string {
 
 // detectScanners determines which scanners to use based on configuration.
 func (o *Orchestrator) detectScanners(onlyScanners []string) []string {
-	// If specific scanners requested, use only those
+	// If specific scanners requested, use only those (but still check if enabled)
 	if len(onlyScanners) > 0 {
-		return onlyScanners
+		return o.filterEnabledScanners(onlyScanners)
 	}
 
 	// Otherwise, determine based on configuration
@@ -407,7 +407,31 @@ func (o *Orchestrator) detectScanners(onlyScanners []string) []string {
 	// Always include these scanners if not filtered
 	scanners = append(scanners, "gitleaks", "checkov")
 
-	return scanners
+	return o.filterEnabledScanners(scanners)
+}
+
+// filterEnabledScanners filters out disabled scanners based on configuration.
+func (o *Orchestrator) filterEnabledScanners(scanners []string) []string {
+	// If no scanner configuration, all scanners are enabled by default
+	if o.config.Scanners == nil {
+		return scanners
+	}
+
+	enabled := make([]string, 0, len(scanners))
+	for _, scanner := range scanners {
+		// Check if scanner has explicit configuration
+		if scannerConfig, exists := o.config.Scanners[scanner]; exists {
+			// Skip if explicitly disabled
+			if !scannerConfig.Enabled {
+				o.logger.Debug("Scanner disabled by configuration", "scanner", scanner)
+				continue
+			}
+		}
+		// If no explicit config or enabled=true, include the scanner
+		enabled = append(enabled, scanner)
+	}
+
+	return enabled
 }
 
 // sendStatus sends a status update if the status channel is available.

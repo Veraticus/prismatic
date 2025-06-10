@@ -56,3 +56,19 @@ metadata_enrichment:
       data_classification: "confidential"
       business_impact: "Critical data storage"
       compliance_impact: ["GDPR", "HIPAA"]
+
+# Scanner configuration
+# By default, all scanners are enabled. Set enabled: false to skip a scanner.
+# scanners:
+#   prowler:
+#     enabled: true
+#   trivy:
+#     enabled: true
+#   kubescape:
+#     enabled: false  # Skip Kubernetes scanning
+#   nuclei:
+#     enabled: true
+#   gitleaks:
+#     enabled: true
+#   checkov:
+#     enabled: true
