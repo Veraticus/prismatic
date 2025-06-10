@@ -206,7 +206,7 @@ func TestScannerUI_ProgressFormatting(t *testing.T) {
 					"high":     10,
 				},
 			},
-			want: "25 findings (5 critical, 10 high)",
+			want: "25 findings: 5 crit, 10 high",
 		},
 		{
 			name: "running with progress",

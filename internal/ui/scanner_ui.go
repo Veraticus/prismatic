@@ -21,6 +21,7 @@ type ScannerUI struct {
 	stopChan        chan bool
 	renderTicker    *time.Ticker
 	errorMessages   []string
+	boxWidth        int // Fixed width for all boxes
 	mu              sync.Mutex
 }
 
@@ -64,13 +65,18 @@ const (
 
 // NewScannerUI creates a new scanner UI instance.
 func NewScannerUI(config Config) *ScannerUI {
-	return &ScannerUI{
+	ui := &ScannerUI{
 		config:          config,
 		repoStatuses:    make(map[string]RepoStatus),
 		scannerStatuses: make(map[string]*models.ScannerStatus),
 		errorMessages:   []string{},
 		stopChan:        make(chan bool),
 	}
+
+	// Set fixed box width based on terminal size
+	ui.updateBoxWidth()
+
+	return ui
 }
 
 // Start begins the UI rendering loop.
@@ -157,6 +163,16 @@ func (ui *ScannerUI) render() {
 	ui.mu.Lock()
 	defer ui.mu.Unlock()
 
+	// Update box width in case terminal was resized
+	ui.updateBoxWidth()
+
+	// Update elapsed time for all running scanners
+	for _, status := range ui.scannerStatuses {
+		if status.Status == models.StatusRunning || status.Status == models.StatusStarting {
+			status.UpdateElapsedTime()
+		}
+	}
+
 	// Move cursor to top
 	_, _ = os.Stdout.WriteString("\033[H")
 
@@ -181,13 +197,19 @@ func (ui *ScannerUI) render() {
 func (ui *ScannerUI) renderHeader() {
 	elapsed := time.Since(ui.config.StartTime).Round(time.Second)
 
+	// Calculate available width
+	availableWidth := ui.boxWidth - 4
+
+	// Format header lines with proper padding
+	lines := []string{
+		fmt.Sprintf("%-*s", availableWidth, fmt.Sprintf("Output: %s", ui.config.OutputDir)),
+		fmt.Sprintf("%-*s", availableWidth, fmt.Sprintf("Client: %s | Environment: %s | Elapsed: %s",
+			ui.config.ClientName, ui.config.Environment, elapsed)),
+	}
+
 	_, _ = os.Stdout.WriteString(ui.drawBox(
 		"─ Prismatic Security Scanner ─",
-		[]string{
-			fmt.Sprintf("Output: %s", ui.config.OutputDir),
-			fmt.Sprintf("Client: %s | Environment: %s | Elapsed: %s",
-				ui.config.ClientName, ui.config.Environment, elapsed),
-		},
+		lines,
 	))
 }
 
@@ -195,6 +217,11 @@ func (ui *ScannerUI) renderRepositories() {
 	if len(ui.repoStatuses) == 0 {
 		return
 	}
+
+	// Calculate available width for repository display
+	availableWidth := ui.boxWidth - 4 // Account for box borders
+	repoNameWidth := 20
+	statusWidth := availableWidth - repoNameWidth - 2 // 2 for icon and space
 
 	lines := []string{}
 	for _, name := range ui.getSortedRepoNames() {
@@ -211,7 +238,11 @@ func (ui *ScannerUI) renderRepositories() {
 			status = fmt.Sprintf("Failed: %s", repo.Error)
 		}
 
-		line := fmt.Sprintf("%s %-15s %s", icon, repo.Name, status)
+		// Format with proper padding
+		line := fmt.Sprintf("%s %-*s %-*s",
+			icon,
+			repoNameWidth, ui.truncate(repo.Name, repoNameWidth),
+			statusWidth, ui.truncate(status, statusWidth))
 		lines = append(lines, line)
 	}
 
@@ -238,12 +269,42 @@ func (ui *ScannerUI) renderScanners() {
 		return // No scanners to display
 	}
 
-	// Create header
-	lines := []string{
-		fmt.Sprintf("%s%-11s │ %-12s │ %-7s │ %-31s%s",
-			colorBold, "Scanner", "Status", "Time", "Progress", colorReset),
-		colorGray + "────────────┼──────────────┼─────────┼─────────────────────────────────" + colorReset,
+	// Calculate column widths based on available space
+	// We need 4 columns with separators: Scanner | Status | Time | Progress
+	// Account for: "│ " (2) at start, " │" (2) at end, and 3x " │ " (9) between columns
+	availableWidth := ui.boxWidth - 4 - 9
+	if availableWidth < 60 {
+		availableWidth = 60 // Minimum for readability
 	}
+
+	// Allocate column widths proportionally
+	// Give more space to progress column for better readability
+	scannerWidth := 11
+	statusWidth := 10
+	timeWidth := 8
+	progressWidth := availableWidth - scannerWidth - statusWidth - timeWidth
+	if progressWidth < 30 {
+		progressWidth = 30 // Minimum for progress column
+	}
+
+	// Create header
+	header := fmt.Sprintf("%s%-*s │ %-*s │ %-*s │ %-*s%s",
+		colorBold,
+		scannerWidth, "Scanner",
+		statusWidth, "Status",
+		timeWidth, "Time",
+		progressWidth, "Progress",
+		colorReset)
+
+	// Create separator with proper width
+	separator := colorGray +
+		strings.Repeat("─", scannerWidth) + "┼" +
+		strings.Repeat("─", statusWidth+2) + "┼" +
+		strings.Repeat("─", timeWidth+2) + "┼" +
+		strings.Repeat("─", progressWidth+2) +
+		colorReset
+
+	lines := []string{header, separator}
 
 	// Add scanner rows
 	for _, name := range activeScanners {
@@ -274,8 +335,13 @@ func (ui *ScannerUI) renderScanners() {
 			}
 		}
 
-		line := fmt.Sprintf("%s%-11s%s │ %s %-10s │ %-7s │ %-31s",
-			rowColor, name, colorReset, icon, statusText, timeStr, ui.truncate(progress, 31))
+		// Format row with proper column widths
+		// Account for icon taking 2 visual spaces (icon + space)
+		line := fmt.Sprintf("%s%-*s%s │ %s %-*s │ %-*s │ %-*s",
+			rowColor, scannerWidth, ui.truncate(name, scannerWidth), colorReset,
+			icon, statusWidth-2, ui.truncate(statusText, statusWidth-2),
+			timeWidth, ui.truncate(timeStr, timeWidth),
+			progressWidth, ui.truncate(progress, progressWidth))
 		lines = append(lines, line)
 	}
 
@@ -301,37 +367,63 @@ func (ui *ScannerUI) renderSummary() {
 		}
 	}
 
-	// Build colored summary
-	parts := []string{
-		fmt.Sprintf("%sTotal: %d%s", colorBold, total, colorReset),
+	// Calculate space for summary display
+	availableWidth := ui.boxWidth - 4
+
+	// Build colored summary with proper spacing
+	summaryItems := []struct {
+		label string
+		color string
+		value int
+	}{
+		{"Total", total, colorBold},
+		{"Critical", bySeverity["critical"], colorRed},
+		{"High", bySeverity["high"], colorYellow},
+		{"Medium", bySeverity["medium"], colorBlue},
+		{"Low", bySeverity["low"], colorGreen},
+		{"Info", bySeverity["info"], colorCyan},
 	}
 
-	if bySeverity["critical"] > 0 {
-		parts = append(parts, fmt.Sprintf("%sCritical: %d%s", colorRed, bySeverity["critical"], colorReset))
+	parts := []string{}
+	for _, item := range summaryItems {
+		if item.label == "Total" || item.value > 0 {
+			color := item.color
+			if item.label != "Total" && item.value == 0 {
+				color = colorGray
+			}
+			parts = append(parts, fmt.Sprintf("%s%s: %d%s", color, item.label, item.value, colorReset))
+		}
+	}
+
+	// Calculate spacing between items
+	itemsText := strings.Join(parts, "  ")
+	if ui.visualLength(itemsText) < availableWidth {
+		// We have space, use it
+		summary := itemsText
+		_, _ = os.Stdout.WriteString(ui.drawBox("─ Finding Summary ─", []string{summary}))
 	} else {
-		parts = append(parts, fmt.Sprintf("%sCritical: %d%s", colorGray, bySeverity["critical"], colorReset))
-	}
+		// Split into multiple lines if needed
+		lines := []string{}
+		currentLine := []string{}
+		currentLength := 0
 
-	if bySeverity["high"] > 0 {
-		parts = append(parts, fmt.Sprintf("%sHigh: %d%s", colorYellow, bySeverity["high"], colorReset))
-	} else {
-		parts = append(parts, fmt.Sprintf("%sHigh: %d%s", colorGray, bySeverity["high"], colorReset))
-	}
+		for _, part := range parts {
+			partLength := ui.visualLength(part) + 2 // +2 for spacing
+			if currentLength > 0 && currentLength+partLength > availableWidth {
+				lines = append(lines, strings.Join(currentLine, "  "))
+				currentLine = []string{part}
+				currentLength = ui.visualLength(part)
+			} else {
+				currentLine = append(currentLine, part)
+				currentLength += partLength
+			}
+		}
+		if len(currentLine) > 0 {
+			lines = append(lines, strings.Join(currentLine, "  "))
+		}
 
-	if bySeverity["medium"] > 0 {
-		parts = append(parts, fmt.Sprintf("%sMedium: %d%s", colorBlue, bySeverity["medium"], colorReset))
-	} else {
-		parts = append(parts, fmt.Sprintf("%sMedium: %d%s", colorGray, bySeverity["medium"], colorReset))
+		_, _ = os.Stdout.WriteString(ui.drawBox("─ Finding Summary ─", lines))
 	}
-
-	if bySeverity["low"] > 0 {
-		parts = append(parts, fmt.Sprintf("%sLow: %d%s", colorGreen, bySeverity["low"], colorReset))
-	} else {
-		parts = append(parts, fmt.Sprintf("%sLow: %d%s", colorGray, bySeverity["low"], colorReset))
-	}
-
-	summary := strings.Join(parts, "  ")
-	_, _ = os.Stdout.WriteString(ui.drawBox("─ Finding Summary ─", []string{summary}))
 }
 
 func (ui *ScannerUI) renderErrors() {
@@ -343,39 +435,31 @@ func (ui *ScannerUI) renderErrors() {
 	_, _ = os.Stdout.WriteString(ui.drawBox("─ Recent Errors ─", coloredErrors))
 }
 
-// Helper functions
-
-func (ui *ScannerUI) drawBox(title string, lines []string) string {
+// updateBoxWidth calculates the appropriate fixed width for all boxes.
+func (ui *ScannerUI) updateBoxWidth() {
 	width := ui.getTermWidth()
 	if width > 120 {
 		width = 120 // Cap max width for readability
 	}
+	ui.boxWidth = width
+}
+
+// Helper functions
+
+func (ui *ScannerUI) drawBox(title string, lines []string) string {
+	// Always use the fixed box width
+	width := ui.boxWidth
+	if width == 0 {
+		// Fallback if not initialized
+		width = 80
+	}
 
 	var result strings.Builder
-
-	// Calculate visual length (without ANSI codes)
-	visualLen := func(s string) int {
-		// Remove ANSI escape sequences for length calculation
-		clean := s
-		for _, code := range []string{colorReset, colorRed, colorGreen, colorYellow, colorBlue, colorMagenta, colorCyan, colorGray, colorBold} {
-			clean = strings.ReplaceAll(clean, code, "")
-		}
-		// Also remove other ANSI sequences
-		for strings.Contains(clean, "\033[") {
-			start := strings.Index(clean, "\033[")
-			end := strings.Index(clean[start:], "m")
-			if end == -1 {
-				break
-			}
-			clean = clean[:start] + clean[start+end+1:]
-		}
-		return len(clean)
-	}
 
 	// Top border with colored title
 	result.WriteString(colorCyan + "┌")
 	result.WriteString(colorBold + title + colorReset + colorCyan)
-	titleLen := visualLen(title)
+	titleLen := ui.visualLength(title)
 	remaining := width - titleLen - 2
 	if remaining > 0 {
 		result.WriteString(strings.Repeat("─", remaining))
@@ -387,7 +471,7 @@ func (ui *ScannerUI) drawBox(title string, lines []string) string {
 		result.WriteString(colorCyan + "│ " + colorReset)
 
 		// Pad line to proper width considering ANSI codes
-		lineLen := visualLen(line)
+		lineLen := ui.visualLength(line)
 		if lineLen < width-4 {
 			result.WriteString(line)
 			result.WriteString(strings.Repeat(" ", width-4-lineLen))
@@ -469,24 +553,28 @@ func (ui *ScannerUI) getScannerProgress(status *models.ScannerStatus) string {
 		if status.TotalFindings == 0 {
 			return "No findings"
 		}
-		// Build compact severity summary
+		// Build detailed severity summary
 		parts := []string{}
 		if c := status.FindingCounts["critical"]; c > 0 {
-			parts = append(parts, fmt.Sprintf("%d critical", c))
+			parts = append(parts, fmt.Sprintf("%d crit", c))
 		}
 		if h := status.FindingCounts["high"]; h > 0 {
 			parts = append(parts, fmt.Sprintf("%d high", h))
 		}
-		if status.TotalFindings > 0 {
-			return fmt.Sprintf("%d findings (%s)", status.TotalFindings, strings.Join(parts, ", "))
+		if m := status.FindingCounts["medium"]; m > 0 {
+			parts = append(parts, fmt.Sprintf("%d med", m))
 		}
+		if l := status.FindingCounts["low"]; l > 0 {
+			parts = append(parts, fmt.Sprintf("%d low", l))
+		}
+		return fmt.Sprintf("%d findings: %s", status.TotalFindings, strings.Join(parts, ", "))
 	}
 
 	if status.Total > 0 {
 		if status.Message != "" {
 			return fmt.Sprintf("[%d/%d] %s", status.Current, status.Total, status.Message)
 		}
-		return fmt.Sprintf("[%d/%d]", status.Current, status.Total)
+		return fmt.Sprintf("Progress: %d/%d", status.Current, status.Total)
 	}
 
 	if status.Message != "" {
