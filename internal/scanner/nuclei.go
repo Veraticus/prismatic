@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -119,10 +120,19 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		cmd.Env = env
 	}
 
-	s.logger.Info("Running nuclei command", "args", args, "endpoints", endpoints)
+	// Check if nuclei templates exist
+	homeDir, _ := os.UserHomeDir()
+	templatesPath := fmt.Sprintf("%s/.local/nuclei-templates", homeDir)
+	if _, err := os.Stat(templatesPath); os.IsNotExist(err) {
+		s.logger.Info("Nuclei templates not found, will be downloaded on first run", "path", templatesPath)
+	}
+
+	s.logger.Info("Running nuclei command", "args", args, "endpoints", endpoints, "cmd", "nuclei "+strings.Join(args, " "))
 
 	// Use CombinedOutput to capture both stdout and stderr
+	startTime := time.Now()
 	output, err := cmd.CombinedOutput()
+	duration := time.Since(startTime)
 
 	// Check if context was canceled
 	if ctx.Err() != nil {
@@ -163,9 +173,26 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		}
 	}
 
-	// Always log the output for debugging
+	// Always log the output for debugging with execution time
+	s.logger.Info("Nuclei completed", "duration", duration.String(), "output_size", len(output), "json_lines", len(jsonLines), "error_lines", len(errorLines))
+
+	// Save raw output for debugging if we have a working directory
+	if s.config.WorkingDir != "" && strings.Contains(s.config.WorkingDir, "data/scans") {
+		debugFile := filepath.Join(s.config.WorkingDir, fmt.Sprintf("nuclei-debug-%s.log", time.Now().Format("20060102-150405")))
+		if debugErr := os.WriteFile(debugFile, output, 0600); debugErr == nil {
+			s.logger.Info("Nuclei debug output saved", "file", debugFile)
+		}
+	}
+
+	// Log the first few lines of raw output for debugging
 	if len(output) > 0 {
-		s.logger.Info("Nuclei output", "output_size", len(output), "json_lines", len(jsonLines), "error_lines", len(errorLines))
+		lines := strings.Split(string(output), "\n")
+		preview := lines
+		if len(lines) > 5 {
+			preview = lines[:5]
+		}
+		s.logger.Info("Nuclei output preview", "lines", preview)
+
 		if len(errorLines) > 0 && len(errorLines) <= 10 {
 			s.logger.Info("Nuclei non-JSON output", "lines", errorLines)
 		}

@@ -216,7 +216,10 @@ func (l *uiLogger) Info(msg string, fields ...any) {
 			l.ui.UpdateRepository(name, "complete", path, nil)
 		}
 	default:
-		if strings.Contains(msg, "error") || strings.Contains(msg, "failed") {
+		// Show important Nuclei debugging info
+		if strings.Contains(msg, "Nuclei") {
+			l.ui.AddError("nuclei", fmt.Sprintf("%s %v", msg, fields))
+		} else if strings.Contains(msg, "error") || strings.Contains(msg, "failed") {
 			l.ui.AddError("info", fmt.Sprintf("%s %v", msg, fields))
 		}
 	}

@@ -376,12 +376,12 @@ func (ui *ScannerUI) renderSummary() {
 		color string
 		value int
 	}{
-		{"Total", total, colorBold},
-		{"Critical", bySeverity["critical"], colorRed},
-		{"High", bySeverity["high"], colorYellow},
-		{"Medium", bySeverity["medium"], colorBlue},
-		{"Low", bySeverity["low"], colorGreen},
-		{"Info", bySeverity["info"], colorCyan},
+		{"Total", colorBold, total},
+		{"Critical", colorRed, bySeverity["critical"]},
+		{"High", colorYellow, bySeverity["high"]},
+		{"Medium", colorBlue, bySeverity["medium"]},
+		{"Low", colorGreen, bySeverity["low"]},
+		{"Info", colorCyan, bySeverity["info"]},
 	}
 
 	parts := []string{}
