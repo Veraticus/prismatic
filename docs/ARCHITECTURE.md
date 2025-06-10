@@ -822,11 +822,16 @@ These features are intentionally deferred to keep the MVP focused:
 - Implementation approach: SQLite database for finding history
 
 ### Automated Remediation
-- Generate fix scripts for common issues:
-  - Terraform code for AWS misconfigurations
-  - Dockerfile updates for vulnerabilities
-  - Kubernetes manifests for security policies
-- Safety considerations: Always require manual review
+- Generate machine-actionable remediation manifests and fix bundles
+- LLM-ready instructions for assisted remediation
+- Integration with IaC repositories and GitOps workflows
+- See [REMEDIATION.md](REMEDIATION.md) for detailed design
+
+### AI-Powered Enrichment
+- Add contextual analysis and prioritization via LLMs
+- Generate business impact assessments
+- Provide environment-specific remediation guidance
+- See [ENRICHMENT.md](ENRICHMENT.md) for detailed design
 
 ### Additional Integrations
 - Jira/GitHub issue creation
