@@ -154,21 +154,6 @@ repositories:
     path: "https://github.com/mycompany/infrastructure"
     branch: main
 
-# Scanner Configuration
-scanners:
-  prowler:
-    enabled: true
-  trivy:
-    enabled: true
-  kubescape:
-    enabled: true
-  nuclei:
-    enabled: true
-  gitleaks:
-    enabled: true
-  checkov:
-    enabled: true
-
 # Output Configuration
 output:
   format: html  # or pdf
@@ -414,6 +399,71 @@ prismatic modifications comment <finding-id> \
 
 # Apply all modifications and regenerate report
 prismatic modifications apply -c mycompany.yaml
+```
+
+## 🔐 Scanner Configuration
+
+### Enabling/Disabling Scanners
+
+You can control which scanners run by using the `scanners` configuration section. By default, all scanners are enabled if their required resources are configured.
+
+```yaml
+# Disable specific scanners
+scanners:
+  prowler:
+    enabled: true   # Scan AWS infrastructure
+  trivy:
+    enabled: true   # Scan containers
+  kubescape:
+    enabled: false  # Skip Kubernetes scanning
+  nuclei:
+    enabled: true   # Scan web endpoints
+  gitleaks:
+    enabled: true   # Scan for secrets
+  checkov:
+    enabled: false  # Skip IaC scanning
+```
+
+**Key points:**
+- If no `scanners` section is provided, all scanners are enabled by default
+- Scanners set to `enabled: false` will be completely skipped (no output, no status)
+- This setting overrides the `--only` command line flag
+- Disabled scanners won't appear in reports or status outputs
+
+**Use cases:**
+- **Performance**: Disable scanners you don't need to speed up scans
+- **Licensing**: Disable scanners that require specific licenses or permissions
+- **Testing**: Focus on specific security areas during development
+- **Environment-specific**: Different scanner sets for dev/staging/production
+
+Example: Development environment with minimal scanning:
+
+```yaml
+# dev-config.yaml
+client:
+  name: MyCompany
+  environment: development
+
+# Only scan repositories in dev
+repositories:
+  - name: backend
+    path: "./backend"
+    branch: develop
+
+# Disable cloud scanners in development
+scanners:
+  prowler:
+    enabled: false  # No AWS in dev
+  trivy:
+    enabled: false  # No containers in dev
+  kubescape:
+    enabled: false  # No K8s in dev
+  nuclei:
+    enabled: false  # No web scanning in dev
+  gitleaks:
+    enabled: true   # Always scan for secrets
+  checkov:
+    enabled: true   # Always check IaC
 ```
 
 ## 🔧 Advanced Configuration
