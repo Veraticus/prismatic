@@ -98,12 +98,25 @@ Examples:
 	ui.Start()
 	defer ui.Stop()
 
+	// Create log file for debugging
+	logFile, err := createLogFile(opts.OutputDir)
+	if err != nil {
+		logger.Warn("Failed to create log file", "error", err)
+	} else {
+		defer func() {
+			if closeErr := logFile.Close(); closeErr != nil {
+				logger.Warn("Failed to close log file", "error", closeErr)
+			}
+		}()
+	}
+
 	// Create scan context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opts.Timeout)*time.Second)
 	defer cancel()
 
-	// Initialize orchestrator with UI-aware logger
-	orchestrator := scanner.NewOrchestratorWithLogger(cfg, opts.OutputDir, opts.Mock, &uiLogger{ui: ui})
+	// Initialize orchestrator with UI-aware logger that also logs to file
+	scanLogger := &uiLogger{ui: ui, logFile: logFile}
+	orchestrator := scanner.NewOrchestratorWithLogger(cfg, opts.OutputDir, opts.Mock, scanLogger)
 
 	// Prepare repositories if configured
 	if len(cfg.Repositories) > 0 {
@@ -192,16 +205,21 @@ func createScannerUI(cfg *config.Config, opts *Options) *ui.ScannerUI {
 	})
 }
 
-// uiLogger implements the logger interface and redirects to the UI.
+// uiLogger implements the logger interface and redirects to the UI and log file.
 type uiLogger struct {
-	ui *ui.ScannerUI
+	ui      *ui.ScannerUI
+	logFile *os.File
 }
 
-func (l *uiLogger) Debug(_ string, _ ...any) {
-	// Ignore debug messages in UI mode
+func (l *uiLogger) Debug(msg string, fields ...any) {
+	// Write debug to file only
+	l.writeToFile("DEBUG", msg, fields)
 }
 
 func (l *uiLogger) Info(msg string, fields ...any) {
+	// Always write to file
+	l.writeToFile("INFO", msg, fields)
+
 	// Handle repository status updates
 	switch msg {
 	case "Cloning repository":
@@ -217,7 +235,7 @@ func (l *uiLogger) Info(msg string, fields ...any) {
 		}
 	default:
 		// Show important Nuclei debugging info
-		if strings.Contains(msg, "Nuclei") {
+		if strings.Contains(msg, "Nuclei") || strings.Contains(msg, "nuclei") {
 			l.ui.AddError("nuclei", fmt.Sprintf("%s %v", msg, fields))
 		} else if strings.Contains(msg, "error") || strings.Contains(msg, "failed") {
 			l.ui.AddError("info", fmt.Sprintf("%s %v", msg, fields))
@@ -226,10 +244,13 @@ func (l *uiLogger) Info(msg string, fields ...any) {
 }
 
 func (l *uiLogger) Warn(msg string, fields ...any) {
+	l.writeToFile("WARN", msg, fields)
 	l.ui.AddError("warn", fmt.Sprintf("%s %v", msg, fields))
 }
 
 func (l *uiLogger) Error(msg string, fields ...any) {
+	l.writeToFile("ERROR", msg, fields)
+
 	// Handle repository clone failures
 	if msg == "Repository clone failed" {
 		name := l.extractField(fields, "name")
@@ -340,4 +361,55 @@ func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
 
 	logger.Info("✨ Scan complete! Results saved to: " + opts.OutputDir)
 	logger.Info("🎯 Run 'prismatic report --scan latest' to generate report")
+}
+
+// createLogFile creates a log file in the output directory.
+func createLogFile(outputDir string) (*os.File, error) {
+	// Ensure output directory exists
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
+		return nil, fmt.Errorf("creating output directory: %w", err)
+	}
+
+	logPath := filepath.Join(outputDir, "prismatic.log")
+	file, err := os.Create(filepath.Clean(logPath))
+	if err != nil {
+		return nil, fmt.Errorf("creating log file: %w", err)
+	}
+
+	// Write header
+	_, _ = fmt.Fprintf(file, "=== Prismatic Security Scanner Log ===\n")
+	_, _ = fmt.Fprintf(file, "Started at: %s\n", time.Now().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(file, "Output directory: %s\n", outputDir)
+	_, _ = fmt.Fprintf(file, "=====================================\n\n")
+
+	return file, nil
+}
+
+// writeToFile writes a log entry to the file.
+func (l *uiLogger) writeToFile(level, msg string, fields []any) {
+	if l.logFile == nil {
+		return
+	}
+
+	timestamp := time.Now().Format("15:04:05.000")
+
+	// Format fields
+	fieldStr := ""
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			if fieldStr != "" {
+				fieldStr += " "
+			}
+			fieldStr += fmt.Sprintf("%v=%v", fields[i], fields[i+1])
+		}
+	}
+
+	// Write log entry
+	logEntry := fmt.Sprintf("[%s] %s: %s", timestamp, level, msg)
+	if fieldStr != "" {
+		logEntry += " " + fieldStr
+	}
+	logEntry += "\n"
+
+	_, _ = l.logFile.WriteString(logEntry)
 }
