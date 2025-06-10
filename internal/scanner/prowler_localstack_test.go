@@ -184,7 +184,7 @@ func TestProwlerScanner_MockAWSEndpoint(t *testing.T) {
 		func (s *ProwlerScannerWithEndpoint) scanProfile(ctx context.Context, profile string) ([]byte, error) {
 			args := []string{
 				"aws",
-				"--output-modes", "json-ocsf",
+				"--output-formats", "json-ocsf",
 				"--profile", profile,
 			}
 

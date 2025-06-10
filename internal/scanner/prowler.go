@@ -253,7 +253,7 @@ func (s *ProwlerScanner) scanProfile(ctx context.Context, profile string) ([]byt
 
 	args := []string{
 		"aws",
-		"--output-modes", "json-ocsf",
+		"--output-formats", "json-ocsf",
 		"--output-directory", outputDir,
 		"--profile", profile,
 		"--status", "FAIL", // Only get failed checks
