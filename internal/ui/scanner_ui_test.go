@@ -241,14 +241,14 @@ func TestScannerUI_Truncation(t *testing.T) {
 		StartTime: time.Now(),
 	})
 
-	// Test truncate
-	assert.Equal(t, "abc", ui.truncate("abc", 10))
-	assert.Equal(t, "abcdefg...", ui.truncate("abcdefghijklmnop", 10))
-	assert.Equal(t, "ab", ui.truncate("abcdef", 2))
+	// Test smartTruncate
+	assert.Equal(t, "abc", ui.smartTruncate("abc", 10))
+	assert.Equal(t, "abcdefg...", ui.smartTruncate("abcdefghijklmnop", 10))
+	assert.Equal(t, "ab", ui.smartTruncate("abcdef", 2))
 
-	// Test padRight
-	assert.Equal(t, "abc       ", ui.padRight("abc", 10))
-	assert.Equal(t, "abcdefghij", ui.padRight("abcdefghijklmnop", 10))
+	// Test padOrTruncate
+	assert.Equal(t, "abc       ", ui.padOrTruncate("abc", 10))
+	assert.Equal(t, "abcdefg...", ui.padOrTruncate("abcdefghijklmnop", 10))
 }
 
 func TestScannerUI_ConcurrentUpdates(t *testing.T) {
