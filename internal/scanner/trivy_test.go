@@ -216,7 +216,7 @@ func TestTrivyScanner_Integration(t *testing.T) {
 	// This test requires Trivy to be installed
 	scanner := NewTrivyScanner(
 		Config{Debug: true},
-		[]string{"alpine:3.18"},
+		[]string{"node:12"}, // Node 12 is EOL and has known vulnerabilities
 	)
 
 	ctx := context.Background()
@@ -227,8 +227,9 @@ func TestTrivyScanner_Integration(t *testing.T) {
 	assert.NotZero(t, result.StartTime)
 	assert.NotZero(t, result.EndTime)
 
-	// Alpine 3.18 should have some known vulnerabilities
-	assert.NotEmpty(t, result.Findings)
+	// Node 12 is EOL and should have vulnerabilities
+	assert.NotEmpty(t, result.Findings, "Node 12 should have known vulnerabilities")
+	t.Logf("Trivy scan completed with %d findings", len(result.Findings))
 }
 
 func TestTrivyReport_ComplexStructure(t *testing.T) {

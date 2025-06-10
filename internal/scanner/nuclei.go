@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -54,14 +55,25 @@ func (s *NucleiScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 	}
 
 	if len(s.endpoints) == 0 {
+		s.logger.Info("Nuclei: No endpoints configured, skipping scan")
 		result.EndTime = time.Now()
-		return result, nil
+		return result, ErrNoTargets
 	}
+
+	s.logger.Info("Nuclei: Scanning endpoints", "count", len(s.endpoints), "endpoints", s.endpoints)
 
 	var allFindings []models.Finding
 
+	// Create a timeout context if not already present
+	scanCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		scanCtx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+	}
+
 	// Run Nuclei with all endpoints at once for efficiency
-	findings, err := s.runNuclei(ctx, s.endpoints)
+	findings, err := s.runNuclei(scanCtx, s.endpoints)
 	if err != nil {
 		result.Error = err.Error()
 	} else {
@@ -77,11 +89,13 @@ func (s *NucleiScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]models.Finding, error) {
 	// Build command arguments
 	args := []string{
-		"-json",
+		"-j", // JSON Lines output
 		"-severity", "info,low,medium,high,critical",
 		"-timeout", "30",
 		"-rate-limit", "10",
-		"-no-update-templates",
+		"-duc",    // Disable update check
+		"-nc",     // No color in output
+		"-silent", // Silent mode to reduce output
 	}
 
 	// Add endpoints
@@ -89,23 +103,58 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		args = append(args, "-u", endpoint)
 	}
 
-	// Execute scan using common helper
-	output, err := ExecuteScanner(ctx, "nuclei", args, s.config)
-	if err != nil {
-		// Check if it's a command not found error
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
-			return nil, fmt.Errorf("nuclei: command not found: %w", err)
-		}
-		// Nuclei returns non-zero exit code if vulnerabilities are found, which is expected
-		// We don't use HandleNonZeroExit here because nuclei doesn't have consistent exit codes
-		// for findings vs errors, so we always try to parse the output
+	// Execute command directly to handle Nuclei's output properly
+	cmd := exec.CommandContext(ctx, "nuclei", args...)
+
+	// Handle working directory
+	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
+		cmd.Dir = s.config.WorkingDir
 	}
 
-	if len(output) == 0 {
+	// Set environment if provided
+	if s.config.Env != nil {
+		env := os.Environ()
+		for k, v := range s.config.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		cmd.Env = env
+	}
+
+	s.logger.Debug("Running nuclei command", "args", args)
+
+	// Use CombinedOutput to capture both stdout and stderr
+	output, err := cmd.CombinedOutput()
+
+	// Check if context was canceled
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("nuclei scan canceled: %w", ctx.Err())
+	}
+
+	if err != nil {
+		s.logger.Debug("Nuclei completed with error", "error", err, "output_len", len(output))
+	}
+
+	// Extract JSON lines from output (nuclei outputs JSON to stdout even with other messages)
+	var jsonLines []byte
+	for _, line := range strings.Split(string(output), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+			jsonLines = append(jsonLines, []byte(trimmed+"\n")...)
+		}
+	}
+
+	if len(jsonLines) == 0 {
+		if err != nil {
+			// Check if it's a command not found error
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
+				return nil, fmt.Errorf("nuclei: command not found: %w", err)
+			}
+			s.logger.Debug("Nuclei completed with error but no findings", "error", err)
+		}
 		return []models.Finding{}, nil
 	}
 
-	return s.ParseResults(output)
+	return s.ParseResults(jsonLines)
 }
 
 // ParseResults parses Nuclei's JSON output into findings.
@@ -132,7 +181,8 @@ func (s *NucleiScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 func (s *NucleiScanner) resultToFinding(result nucleiResult) *models.Finding {
 
 	// Map template categories to finding types
-	findingType := s.mapTemplateToType(result.TemplateID, result.Info.Tags)
+	tags := strings.Join(result.Info.Tags, ",")
+	findingType := s.mapTemplateToType(result.TemplateID, tags)
 
 	// Create finding
 	finding := models.NewFinding(
@@ -162,8 +212,8 @@ func (s *NucleiScanner) resultToFinding(result nucleiResult) *models.Finding {
 		finding.Metadata["reference"] = result.Info.Reference
 	}
 
-	if result.Info.Tags != "" {
-		finding.Metadata["tags"] = result.Info.Tags
+	if len(result.Info.Tags) > 0 {
+		finding.Metadata["tags"] = tags // We already joined them above
 	}
 
 	if len(result.ExtractedResults) > 0 {
@@ -256,9 +306,10 @@ type nucleiResult struct {
 
 // nucleiInfo represents the info section of a Nuclei result.
 type nucleiInfo struct {
-	Name        string `json:"name"`
-	Severity    string `json:"severity"`
-	Description string `json:"description,omitempty"`
-	Reference   string `json:"reference,omitempty"`
-	Tags        string `json:"tags,omitempty"`
+	Name        string   `json:"name"`
+	Severity    string   `json:"severity"`
+	Description string   `json:"description,omitempty"`
+	Reference   string   `json:"reference,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Author      []string `json:"author,omitempty"`
 }

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privileged-pod
+  namespace: default
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+    securityContext:
+      privileged: true  # BAD: Running as privileged
+      runAsUser: 0      # BAD: Running as root
+      allowPrivilegeEscalation: true
+    ports:
+    - containerPort: 80

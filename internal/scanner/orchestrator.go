@@ -258,19 +258,42 @@ func (o *Orchestrator) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-ch
 		cancel() // Clean up the context
 
 		if err != nil {
-			o.logger.Error("Scanner failed", "name", scanner.Name(), "error", err)
-			status.SetFailed(err)
-			o.sendStatus(status)
+			if IsNoTargetsError(err) {
+				o.logger.Info("Scanner skipped", "name", scanner.Name(), "reason", "No targets configured")
+				status.SetSkipped("No targets configured")
+				o.sendStatus(status)
 
-			result = &models.ScanResult{
-				Scanner:   scanner.Name(),
-				StartTime: time.Now(),
-				EndTime:   time.Now(),
-				Error:     err.Error(),
-				Findings:  []models.Finding{},
+				result = &models.ScanResult{
+					Scanner:   scanner.Name(),
+					StartTime: time.Now(),
+					EndTime:   time.Now(),
+					Findings:  []models.Finding{},
+				}
+			} else {
+				o.logger.Error("Scanner failed", "name", scanner.Name(), "error", err)
+				status.SetFailed(err)
+				o.sendStatus(status)
+
+				result = &models.ScanResult{
+					Scanner:   scanner.Name(),
+					StartTime: time.Now(),
+					EndTime:   time.Now(),
+					Error:     err.Error(),
+					Findings:  []models.Finding{},
+				}
 			}
 		} else {
-			status.SetCompleted()
+			// Count findings by severity
+			findingCounts := make(map[string]int)
+			totalFindings := len(result.Findings)
+
+			for _, finding := range result.Findings {
+				if !finding.Suppressed {
+					findingCounts[finding.Severity]++
+				}
+			}
+
+			status.SetCompletedWithFindings(totalFindings, findingCounts)
 			o.sendStatus(status)
 		}
 

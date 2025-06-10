@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-access
+spec:
+  hostNetwork: true  # BAD: Uses host network
+  hostPID: true      # BAD: Can see host processes
+  hostIPC: true      # BAD: Can access host IPC
+  containers:
+  - name: debug
+    image: busybox
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - name: host-root
+      mountPath: /host
+  volumes:
+  - name: host-root
+    hostPath:
+      path: /      # BAD: Mounts host root filesystem

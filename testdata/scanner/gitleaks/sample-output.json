@@ -1,0 +1,42 @@
+[
+  {
+    "RuleID": "aws-access-token",
+    "Description": "Identified a pattern that may indicate AWS credentials",
+    "StartLine": 2,
+    "EndLine": 2,
+    "StartColumn": 21,
+    "EndColumn": 41,
+    "Match": "AKIAJ7Q2VKXYKDT5WHFQ",
+    "Secret": "AKIAJ7Q2VKXYKDT5WHFQ",
+    "File": "secrets.py",
+    "SymlinkFile": "",
+    "Commit": "abc123",
+    "Entropy": 3.9,
+    "Author": "Test User",
+    "Email": "test@example.com",
+    "Date": "2025-06-09T12:00:00Z",
+    "Message": "test commit",
+    "Tags": [],
+    "Fingerprint": "abc123:secrets.py:aws-access-token:2"
+  },
+  {
+    "RuleID": "github-pat",
+    "Description": "Uncovered a GitHub Personal Access Token",
+    "StartLine": 4,
+    "EndLine": 4,
+    "StartColumn": 17,
+    "EndColumn": 57,
+    "Match": "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+    "Secret": "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+    "File": "secrets.py",
+    "SymlinkFile": "",
+    "Commit": "abc123",
+    "Entropy": 4.5,
+    "Author": "Test User",
+    "Email": "test@example.com",
+    "Date": "2025-06-09T12:00:00Z",
+    "Message": "test commit",
+    "Tags": [],
+    "Fingerprint": "abc123:secrets.py:github-pat:4"
+  }
+]

@@ -54,7 +54,7 @@ func TestGitleaksScanner_ParseResults(t *testing.T) {
 				assert.Equal(t, "aws-access-token", finding.Metadata["rule_id"])
 				assert.Equal(t, "abc123", finding.Metadata["commit"])
 				assert.Equal(t, "John Doe", finding.Metadata["author"])
-				assert.Equal(t, "AKIA...MPLE", finding.Metadata["match_pattern"])
+				assert.Equal(t, "AKIAIOSFODNN7EXAMPLE", finding.Metadata["secret"])
 			},
 		},
 		{

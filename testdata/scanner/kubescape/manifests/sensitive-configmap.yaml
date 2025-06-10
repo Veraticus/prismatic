@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  database_url: "postgres://user:password@db:5432/myapp"  # BAD: Password in ConfigMap
+  api_token: "token_1234567890abcdef"
+  private_key: |
+    -----BEGIN RSA PRIVATE KEY-----
+    MIIEpAIBAAKCAQEA1234567890abcdefghijklmnop
+    -----END RSA PRIVATE KEY-----

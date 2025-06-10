@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -57,8 +58,11 @@ func (s *GitleaksScanner) Scan(ctx context.Context) (*models.ScanResult, error) 
 		Findings:  []models.Finding{},
 	}
 
-	// If we have multiple repositories, scan each one
-	if len(s.repoPaths) > 0 {
+	// Determine which scan mode to use
+	switch {
+	case len(s.repoPaths) > 0:
+		// Multiple repositories mode
+		s.logger.Info("Gitleaks: Scanning repositories", "count", len(s.repoPaths))
 		allFindings := []models.Finding{}
 
 		for repoName, repoPath := range s.repoPaths {
@@ -69,6 +73,7 @@ func (s *GitleaksScanner) Scan(ctx context.Context) (*models.ScanResult, error) 
 
 			// Run Gitleaks on this repository
 			output, err := s.runGitleaks(ctx)
+			s.logger.Debug("Gitleaks output", "repo", repoName, "output_len", len(output), "err", err)
 			if err != nil {
 				// Gitleaks returns exit code 1 when secrets are found
 				// Only treat it as an error if it's not an exit error
@@ -85,6 +90,8 @@ func (s *GitleaksScanner) Scan(ctx context.Context) (*models.ScanResult, error) 
 				continue
 			}
 
+			s.logger.Debug("Parsed findings", "repo", repoName, "count", len(findings))
+
 			// Add repository context to findings
 			for i := range findings {
 				findings[i].Metadata["repository"] = repoName
@@ -96,8 +103,10 @@ func (s *GitleaksScanner) Scan(ctx context.Context) (*models.ScanResult, error) 
 		}
 
 		result.Findings = allFindings
-	} else {
-		// Single target scanning (backward compatibility)
+		s.logger.Debug("Total findings collected", "count", len(allFindings))
+	case s.targetPath != "":
+		// Single target scanning
+		s.logger.Info("Gitleaks: Scanning single target", "path", s.targetPath)
 		output, err := s.runGitleaks(ctx)
 		if err != nil {
 			// Gitleaks returns exit code 1 when secrets are found
@@ -118,6 +127,11 @@ func (s *GitleaksScanner) Scan(ctx context.Context) (*models.ScanResult, error) 
 		}
 
 		result.Findings = findings
+	default:
+		// No repositories or targets configured
+		s.logger.Info("Gitleaks: No repositories configured, skipping scan")
+		result.EndTime = time.Now()
+		return result, ErrNoTargets
 	}
 
 	result.EndTime = time.Now()
@@ -188,21 +202,22 @@ func (s *GitleaksScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 		}
 
 		// Add metadata
-		finding.Metadata["rule_id"] = leak.RuleID
-		finding.Metadata["commit"] = leak.Commit
-		finding.Metadata["author"] = leak.Author
-		finding.Metadata["email"] = leak.Email
-		finding.Metadata["date"] = leak.Date
-		finding.Metadata["file"] = leak.File
+		finding.Metadata = map[string]string{
+			"rule_id":     leak.RuleID,
+			"description": leak.Description,
+			"secret":      leak.Match,
+			"commit":      leak.Commit,
+			"author":      leak.Author,
+			"email":       leak.Email,
+			"fingerprint": leak.Fingerprint,
+			"entropy":     fmt.Sprintf("%.2f", leak.Entropy),
+		}
+
 		if leak.StartLine > 0 {
 			finding.Metadata["start_line"] = fmt.Sprintf("%d", leak.StartLine)
 			finding.Metadata["end_line"] = fmt.Sprintf("%d", leak.EndLine)
 			finding.Metadata["start_column"] = fmt.Sprintf("%d", leak.StartColumn)
 			finding.Metadata["end_column"] = fmt.Sprintf("%d", leak.EndColumn)
-		}
-		if leak.Match != "" {
-			// Redact the actual secret value for security
-			finding.Metadata["match_pattern"] = s.redactSecret(leak.Match)
 		}
 
 		findings = append(findings, *finding)
@@ -213,26 +228,63 @@ func (s *GitleaksScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 
 // runGitleaks executes the gitleaks command.
 func (s *GitleaksScanner) runGitleaks(ctx context.Context) ([]byte, error) {
+	// Create a temporary file for the JSON report
+	reportFile, err := os.CreateTemp("", "gitleaks-report-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	reportPath := reportFile.Name()
+	if closeErr := reportFile.Close(); closeErr != nil {
+		return nil, fmt.Errorf("gitleaks: failed to close report file: %w", closeErr)
+	}
+	defer func() {
+		_ = os.Remove(reportPath)
+	}()
+
+	// Use 'git' command for git repositories
 	args := []string{
-		"detect",
-		"--report-format", "json",
+		"git",
+		".",
+		"--report-path", reportPath,
 		"--exit-code", "0", // Don't exit with error when secrets found
-		"--source", s.targetPath,
 	}
 
 	// Add config file if exists
 	configPath := filepath.Join(s.config.WorkingDir, ".gitleaks.toml")
-	if _, err := exec.LookPath(configPath); err == nil {
+	if _, lookupErr := exec.LookPath(configPath); lookupErr == nil {
 		args = append(args, "--config", configPath)
 	}
 
-	output, err := ExecuteScanner(ctx, "gitleaks", args, s.config)
+	// Run command with the target path as working directory
+	cmd := exec.CommandContext(ctx, "gitleaks", args...)
+	cmd.Dir = s.targetPath
+
+	s.logger.Debug("Running gitleaks command", "cmd", "gitleaks", "args", args, "dir", s.targetPath)
+
+	// Set environment if provided
+	if s.config.Env != nil {
+		env := os.Environ()
+		for k, v := range s.config.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		cmd.Env = env
+	}
+
+	output, err := cmd.CombinedOutput()
+
 	// Gitleaks returns exit code 1 when secrets are found
 	ok, realErr := HandleNonZeroExit(err, 1)
 	if !ok {
-		return nil, realErr
+		return nil, fmt.Errorf("gitleaks failed: %w, output: %s", realErr, string(output))
 	}
-	return output, nil
+
+	// Read the JSON report
+	jsonOutput, readErr := os.ReadFile(reportPath) // #nosec G304 - reportPath is internally generated tempfile
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read report file: %w", readErr)
+	}
+
+	return jsonOutput, nil
 }
 
 // getVersion returns the Gitleaks version.

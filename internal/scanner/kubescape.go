@@ -59,6 +59,15 @@ func (s *KubescapeScanner) Scan(ctx context.Context) (*models.ScanResult, error)
 		Findings:  []models.Finding{},
 	}
 
+	// Log scan configuration
+	if len(s.contexts) > 0 {
+		s.logger.Info("Kubescape: Scanning Kubernetes clusters", "count", len(s.contexts), "contexts", s.contexts, "namespaces", s.namespaces, "kubeconfig", s.kubeconfig)
+	} else {
+		s.logger.Info("Kubescape: No Kubernetes contexts configured, skipping scan")
+		result.EndTime = time.Now()
+		return result, ErrNoTargets
+	}
+
 	// Create output file for results
 	outputFile := filepath.Join(s.config.WorkingDir, fmt.Sprintf("kubescape-%d.json", time.Now().Unix()))
 	defer func() { _ = os.Remove(outputFile) }() // Clean up
@@ -139,44 +148,63 @@ func (s *KubescapeScanner) scanContext(ctx context.Context, kubeContext string, 
 
 // ParseResults parses Kubescape JSON output into findings.
 func (s *KubescapeScanner) ParseResults(raw []byte) ([]models.Finding, error) {
-	var report KubescapeReport
+	var report KubescapeV3Report
 	if err := json.Unmarshal(raw, &report); err != nil {
 		return nil, fmt.Errorf("kubescape: failed to parse JSON output: %w", err)
 	}
 
 	var findings []models.Finding
 
-	// Process each result
+	// Process each resource result
 	for _, result := range report.Results {
-		// Skip passed controls
-		if result.Status.Status == "passed" || result.Status.Status == "skipped" {
-			continue
-		}
+		// Get resource info from the object
+		resourceID := s.extractResourceID(result)
 
-		// Process each resource that failed the control
-		for _, resource := range result.ResourcesIDs {
+		// Process each control that this resource failed
+		for _, control := range result.Controls {
+			// Skip passed controls
+			if control.Status.Status == "passed" || control.Status.Status == "skipped" {
+				continue
+			}
+
+			// Get control details from summaryDetails
+			controlDetails, ok := report.SummaryDetails.Controls[control.ControlID]
+			if !ok {
+				// If we can't find control details, use what we have
+				controlDetails = &ControlSummary{
+					ControlID: control.ControlID,
+					Name:      control.Name,
+					Score:     5.0, // Default medium severity
+				}
+			}
+
 			finding := models.NewFinding(
 				s.Name(),
-				s.mapControlToType(result.ControlID),
-				s.formatResourceName(resource),
+				s.mapControlToType(control.ControlID),
+				s.formatResourceNameFromID(resourceID),
 				"", // Kubescape doesn't provide specific location
-			).WithSeverity(s.mapScoreToSeverityString(result.Score))
+			).WithSeverity(s.determineSeverity(control, controlDetails))
 
-			finding.Title = result.Name
-			finding.Description = s.formatDescription(result)
-			finding.Framework = s.extractFramework(result)
-			finding.Impact = s.formatImpact(result)
-			finding.Remediation = result.Remediation
-			finding.References = s.extractReferences(result)
+			finding.Title = control.Name
+			finding.Description = s.formatDescriptionFromControl(control, controlDetails)
+			finding.Framework = s.extractFrameworkFromCategory(controlDetails.Category)
+			finding.Impact = s.formatImpactFromControl(control, controlDetails)
+			finding.Remediation = s.extractRemediation(control)
+			finding.References = s.extractReferencesFromControl(control)
 
 			// Add metadata
-			finding.Metadata["control_id"] = result.ControlID
-			finding.Metadata["namespace"] = resource.Namespace
-			finding.Metadata["kind"] = resource.Kind
-			finding.Metadata["api_version"] = resource.APIVersion
+			finding.Metadata["control_id"] = control.ControlID
+			finding.Metadata["namespace"] = resourceID.Namespace
+			finding.Metadata["kind"] = resourceID.Kind
+			finding.Metadata["api_version"] = resourceID.APIVersion
 
-			if result.Status.SubStatus != "" {
-				finding.Metadata["sub_status"] = result.Status.SubStatus
+			if control.Status.SubStatus != "" {
+				finding.Metadata["sub_status"] = control.Status.SubStatus
+			}
+
+			// Add source path if available
+			if result.Object != nil && result.Object.SourcePath != "" {
+				finding.Location = result.Object.SourcePath
 			}
 
 			findings = append(findings, *finding)
@@ -266,6 +294,8 @@ func (s *KubescapeScanner) mapControlToType(controlID string) string {
 		"C-0088": "rbac-cluster-role-binding",
 		"C-0089": "rbac-roles",
 		"C-0090": "existing-privileged-container-cis",
+		"C-0270": "ensure-cpu-limits",
+		"C-0271": "ensure-memory-limits",
 	}
 
 	if mappedType, ok := typeMap[controlID]; ok {
@@ -276,15 +306,35 @@ func (s *KubescapeScanner) mapControlToType(controlID string) string {
 	return strings.ToLower(controlID)
 }
 
+// determineSeverity determines severity from control or score.
+func (s *KubescapeScanner) determineSeverity(control Control, controlSummary *ControlSummary) string {
+	// If control has explicit severity, use it
+	if control.Severity != "" {
+		return strings.ToLower(control.Severity)
+	}
+
+	// Otherwise use score from control summary
+	if controlSummary != nil {
+		return s.mapScoreToSeverityString(controlSummary.Score)
+	}
+
+	// Fallback to control's own score if available
+	if control.Score > 0 {
+		return s.mapScoreToSeverityString(control.Score)
+	}
+
+	return "medium" // Default
+}
+
 // mapScoreToSeverityString maps Kubescape score to severity string.
 func (s *KubescapeScanner) mapScoreToSeverityString(score float64) string {
-	// Kubescape uses score-based severity (0-10)
+	// Kubescape v3 uses score-based severity (0-100)
 	switch {
-	case score >= 9:
+	case score >= 90:
 		return "critical"
-	case score >= 7:
+	case score >= 70:
 		return "high"
-	case score >= 4:
+	case score >= 40:
 		return "medium"
 	default:
 		return "low"
@@ -299,25 +349,42 @@ func (s *KubescapeScanner) formatResourceName(resource ResourceID) string {
 	return fmt.Sprintf("%s/%s", resource.Kind, resource.Name)
 }
 
-// formatDescription creates a detailed description from the control result.
-func (s *KubescapeScanner) formatDescription(result KubescapeResult) string {
-	desc := result.Description
-	if result.Remediation != "" && result.Remediation != desc {
-		desc += "\n\nRemediation: " + result.Remediation
+// formatDescriptionFromControl creates a detailed description from control and summary.
+func (s *KubescapeScanner) formatDescriptionFromControl(control Control, _ *ControlSummary) string {
+	// Use control's description if available
+	desc := control.Description
+	if desc == "" {
+		desc = control.Name
 	}
+
+	// Add failed paths information if available
+	if len(control.Rules) > 0 {
+		for _, rule := range control.Rules {
+			if rule.Status == "failed" && len(rule.Paths) > 0 {
+				desc += "\n\nFailed checks:"
+				for _, path := range rule.Paths {
+					if path.FailedPath != "" {
+						desc += fmt.Sprintf("\n- %s", path.FailedPath)
+					}
+				}
+				break
+			}
+		}
+	}
+
 	return desc
 }
 
-// formatImpact describes the security impact.
-func (s *KubescapeScanner) formatImpact(result KubescapeResult) string {
-	impact := fmt.Sprintf("Failed control %s with score %.1f/10. ", result.ControlID, result.Score)
+// formatImpactFromControl describes the security impact from control data.
+func (s *KubescapeScanner) formatImpactFromControl(control Control, summary *ControlSummary) string {
+	impact := fmt.Sprintf("Failed control %s with score %.1f/100. ", control.ControlID, summary.Score)
 
-	if result.Category != "" {
-		impact += fmt.Sprintf("Category: %s. ", result.Category)
+	if summary.Category != nil && summary.Category.Name != "" {
+		impact += fmt.Sprintf("Category: %s. ", summary.Category.Name)
 	}
 
-	if len(result.RelatedResources) > 0 {
-		impact += fmt.Sprintf("Affects %d resources.", len(result.ResourcesIDs))
+	if summary.ScoreFactor > 0 {
+		impact += fmt.Sprintf("Score factor: %d. ", summary.ScoreFactor)
 	}
 
 	return impact
@@ -345,6 +412,14 @@ func (s *KubescapeScanner) extractFramework(result KubescapeResult) string {
 	return result.Category
 }
 
+// extractFrameworkFromCategory extracts framework from category info.
+func (s *KubescapeScanner) extractFrameworkFromCategory(category *Category) string {
+	if category == nil || category.Name == "" {
+		return "Security Best Practices"
+	}
+	return category.Name
+}
+
 // extractReferences extracts reference URLs.
 func (s *KubescapeScanner) extractReferences(result KubescapeResult) []string {
 	refs := []string{}
@@ -358,6 +433,96 @@ func (s *KubescapeScanner) extractReferences(result KubescapeResult) []string {
 	}
 
 	return refs
+}
+
+// extractReferencesFromControl extracts reference URLs from control.
+func (s *KubescapeScanner) extractReferencesFromControl(control Control) []string {
+	refs := []string{}
+
+	// Add Kubescape control documentation
+	refs = append(refs, fmt.Sprintf("https://hub.armosec.io/docs/controls/%s", strings.ToLower(control.ControlID)))
+
+	return refs
+}
+
+// extractRemediation extracts remediation from control rules.
+func (s *KubescapeScanner) extractRemediation(control Control) string {
+	// Use control's remediation field if available
+	if control.Remediation != "" {
+		return control.Remediation
+	}
+
+	var remediations []string
+
+	for _, rule := range control.Rules {
+		if rule.Status == "failed" && len(rule.Paths) > 0 {
+			for _, path := range rule.Paths {
+				if path.FixPath.Path != "" && path.FixPath.Value != "" {
+					remediations = append(remediations, fmt.Sprintf("Set %s to %s", path.FixPath.Path, path.FixPath.Value))
+				}
+			}
+		}
+	}
+
+	if len(remediations) > 0 {
+		return "Suggested fixes:\n- " + strings.Join(remediations, "\n- ")
+	}
+
+	return "Review and fix the failed security checks for this resource."
+}
+
+// extractResourceID extracts resource identification from result.
+func (s *KubescapeScanner) extractResourceID(result ResourceResult) ResourceID {
+	if result.Object == nil {
+		return ResourceID{}
+	}
+
+	// Parse resourceID to extract components
+	// Format: "path=123/api=v1/namespace/Kind/name" or similar
+	parts := strings.Split(result.ResourceID, "/")
+	var namespace, kind, name, apiVersion string
+
+	for i, part := range parts {
+		switch {
+		case strings.HasPrefix(part, "api="):
+			apiVersion = strings.TrimPrefix(part, "api=")
+		case i == len(parts)-1:
+			name = part
+		case i == len(parts)-2:
+			kind = part
+		case i == len(parts)-3 && !strings.Contains(part, "="):
+			namespace = part
+		}
+	}
+
+	// Try to get from object metadata if parsing failed
+	if kind == "" && result.Object.Kind != "" {
+		kind = result.Object.Kind
+	}
+	if name == "" && result.Object.Metadata.Name != "" {
+		name = result.Object.Metadata.Name
+	}
+	if namespace == "" && result.Object.Metadata.Namespace != "" {
+		namespace = result.Object.Metadata.Namespace
+	}
+	if apiVersion == "" && result.Object.APIVersion != "" {
+		apiVersion = result.Object.APIVersion
+	}
+
+	return ResourceID{
+		APIVersion: apiVersion,
+		Kind:       kind,
+		Name:       name,
+		Namespace:  namespace,
+	}
+}
+
+// formatResourceNameFromID formats a resource name from ResourceID.
+func (s *KubescapeScanner) formatResourceNameFromID(resource ResourceID) string {
+	if resource.Namespace != "" {
+		return fmt.Sprintf("%s/%s/%s", resource.Kind, resource.Namespace, resource.Name)
+	}
+	return fmt.Sprintf("%s/%s", resource.Kind, resource.Name)
 }
 
 // KubescapeReport represents the overall scan report.
@@ -418,4 +583,93 @@ type ResourceID struct {
 	Kind       string `json:"kind"`
 	Name       string `json:"name"`
 	Namespace  string `json:"namespace"`
+}
+
+// KubescapeV3Report represents the Kubescape v3 output format.
+type KubescapeV3Report struct {
+	SummaryDetails SummaryDetails   `json:"summaryDetails"`
+	Resources      []ResourceObject `json:"resources"`
+	Results        []ResourceResult `json:"results"`
+}
+
+// SummaryDetails contains control summaries.
+type SummaryDetails struct {
+	Controls   map[string]*ControlSummary `json:"controls"`
+	Frameworks []FrameworkSummary         `json:"frameworks"`
+}
+
+// ControlSummary contains summary info for a control.
+type ControlSummary struct {
+	Category    *Category `json:"category"`
+	ControlID   string    `json:"controlID"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	Score       float64   `json:"score"`
+	ScoreFactor int       `json:"scoreFactor"`
+}
+
+// Category represents control category.
+type Category struct {
+	SubCategory *Category `json:"subCategory,omitempty"`
+	Name        string    `json:"name"`
+	ID          string    `json:"id"`
+}
+
+// ResourceObject represents a scanned resource.
+type ResourceObject struct {
+	Object     *K8sObject `json:"object"`
+	ResourceID string     `json:"resourceID"`
+}
+
+// K8sObject represents a Kubernetes object.
+type K8sObject struct {
+	APIVersion string         `json:"apiVersion"`
+	Kind       string         `json:"kind"`
+	Metadata   ObjectMetadata `json:"metadata"`
+	SourcePath string         `json:"sourcePath"`
+}
+
+// ObjectMetadata represents Kubernetes object metadata.
+type ObjectMetadata struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+// ResourceResult represents scan results for a resource.
+type ResourceResult struct {
+	ResourceID string     `json:"resourceID"`
+	Object     *K8sObject `json:"object,omitempty"`
+	Controls   []Control  `json:"controls"`
+}
+
+// Control represents a control check on a resource.
+type Control struct {
+	Status      Status  `json:"status"`
+	ControlID   string  `json:"controlID"`
+	Name        string  `json:"name"`
+	Severity    string  `json:"severity,omitempty"`
+	Description string  `json:"description,omitempty"`
+	Remediation string  `json:"remediation,omitempty"`
+	Rules       []Rule  `json:"rules"`
+	Score       float64 `json:"score,omitempty"`
+}
+
+// Rule represents a specific rule check.
+type Rule struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Paths  []Path `json:"paths"`
+}
+
+// Path represents a failed path in the resource.
+type Path struct {
+	ResourceID string  `json:"resourceID"`
+	FailedPath string  `json:"failedPath"`
+	FixPath    FixPath `json:"fixPath"`
+}
+
+// FixPath represents a suggested fix.
+type FixPath struct {
+	Path  string `json:"path"`
+	Value string `json:"value"`
 }

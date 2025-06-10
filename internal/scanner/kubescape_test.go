@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/Veraticus/prismatic/internal/models"
@@ -55,38 +56,51 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 		expectedCount int
 	}{
 		{
-			name: "parses failed controls",
+			name: "parses v3 failed controls",
 			input: `{
-				"kind": "Report",
-				"metadata": {
-					"name": "test-scan",
-					"creationTimestamp": "2024-01-15T10:00:00Z"
-				},
-				"summary": {
-					"frameworks": [{
-						"name": "NSA",
-						"score": 65.5,
-						"totalResources": 100,
-						"failedResources": 35
-					}]
+				"summaryDetails": {
+					"controls": {
+						"C-0012": {
+							"controlID": "C-0012",
+							"name": "Applications credentials in configuration files",
+							"status": "failed",
+							"score": 79.16667,
+							"scoreFactor": 8,
+							"category": {
+								"name": "Secrets",
+								"id": "Cat-3"
+							}
+						}
+					}
 				},
 				"results": [{
-					"controlID": "C-0001",
-					"name": "Forbidden Container Registries",
-					"description": "Container images from untrusted registries",
-					"remediation": "Use only approved container registries",
-					"category": "Control plane",
-					"score": 8.5,
-					"baseScore": 8.5,
-					"status": {
-						"status": "failed",
-						"subStatus": "error"
+					"resourceID": "path=1579046608/api=/v1//ConfigMap/app-config",
+					"object": {
+						"apiVersion": "v1",
+						"kind": "ConfigMap",
+						"metadata": {
+							"name": "app-config"
+						},
+						"sourcePath": "testdata/scanner/kubescape/manifests/sensitive-configmap.yaml:0"
 					},
-					"resourceIDs": [{
-						"apiVersion": "apps/v1",
-						"kind": "Deployment",
-						"name": "webapp",
-						"namespace": "production"
+					"controls": [{
+						"controlID": "C-0012",
+						"name": "Applications credentials in configuration files",
+						"status": {
+							"status": "failed",
+							"subStatus": "error"
+						},
+						"rules": [{
+							"name": "rule-credentials-configmap",
+							"status": "failed",
+							"paths": [{
+								"failedPath": "data[api_token]",
+								"fixPath": {
+									"path": "",
+									"value": ""
+								}
+							}]
+						}]
 					}]
 				}]
 			}`,
@@ -95,58 +109,99 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 				t.Helper()
 				f := findings[0]
 				assert.Equal(t, "kubescape", f.Scanner)
-				assert.Equal(t, "forbidden-capabilities", f.Type)
-				assert.Equal(t, "Deployment/production/webapp", f.Resource)
-				assert.Equal(t, "Forbidden Container Registries", f.Title)
+				assert.Equal(t, "applications-credentials", f.Type)
+				assert.Equal(t, "ConfigMap/app-config", f.Resource)
+				assert.Equal(t, "Applications credentials in configuration files", f.Title)
 				assert.Equal(t, "high", f.Severity)
-				assert.Contains(t, f.Description, "Container images from untrusted registries")
-				assert.Equal(t, "Use only approved container registries", f.Remediation)
-				assert.Equal(t, "C-0001", f.Metadata["control_id"])
-				assert.Equal(t, "production", f.Metadata["namespace"])
-				assert.Equal(t, "Deployment", f.Metadata["kind"])
-				assert.Equal(t, "apps/v1", f.Metadata["api_version"])
+				assert.Contains(t, f.Description, "Failed checks:")
+				assert.Contains(t, f.Description, "data[api_token]")
+				assert.Equal(t, "C-0012", f.Metadata["control_id"])
+				assert.Equal(t, "", f.Metadata["namespace"])
+				assert.Equal(t, "ConfigMap", f.Metadata["kind"])
+				assert.Equal(t, "v1", f.Metadata["api_version"])
 				assert.Equal(t, "error", f.Metadata["sub_status"])
+				assert.Equal(t, "testdata/scanner/kubescape/manifests/sensitive-configmap.yaml:0", f.Location)
 			},
 		},
 		{
 			name: "skips passed controls",
 			input: `{
+				"summaryDetails": {
+					"controls": {}
+				},
 				"results": [{
-					"controlID": "C-0002",
-					"name": "Exec into container",
-					"status": {
-						"status": "passed"
-					},
-					"resourceIDs": [{
+					"resourceID": "path=123/api=/v1/default/Pod/test-pod",
+					"object": {
 						"kind": "Pod",
-						"name": "test-pod",
-						"namespace": "default"
+						"metadata": {
+							"name": "test-pod",
+							"namespace": "default"
+						}
+					},
+					"controls": [{
+						"controlID": "C-0002",
+						"name": "Exec into container",
+						"status": {
+							"status": "passed"
+						}
 					}]
 				}]
 			}`,
 			expectedCount: 0,
 		},
 		{
-			name: "handles multiple resources per control",
+			name: "handles multiple resources with same control",
 			input: `{
+				"summaryDetails": {
+					"controls": {
+						"C-0013": {
+							"controlID": "C-0013",
+							"name": "Non-root containers",
+							"status": "failed",
+							"score": 70.0,
+							"scoreFactor": 6,
+							"category": {
+								"name": "Workload",
+								"id": "Cat-5"
+							}
+						}
+					}
+				},
 				"results": [{
-					"controlID": "C-0013",
-					"name": "Non-root containers",
-					"description": "Containers running as root user",
-					"score": 7.0,
-					"status": {
-						"status": "failed"
-					},
-					"resourceIDs": [{
+					"resourceID": "path=123/api=/v1/ns1/Pod/pod1",
+					"object": {
 						"apiVersion": "v1",
 						"kind": "Pod",
-						"name": "pod1",
-						"namespace": "ns1"
-					}, {
-						"apiVersion": "v1", 
+						"metadata": {
+							"name": "pod1",
+							"namespace": "ns1"
+						}
+					},
+					"controls": [{
+						"controlID": "C-0013",
+						"name": "Non-root containers",
+						"status": {
+							"status": "failed"
+						},
+						"rules": []
+					}]
+				}, {
+					"resourceID": "path=456/api=/v1/ns2/Pod/pod2",
+					"object": {
+						"apiVersion": "v1",
 						"kind": "Pod",
-						"name": "pod2",
-						"namespace": "ns2"
+						"metadata": {
+							"name": "pod2",
+							"namespace": "ns2"
+						}
+					},
+					"controls": [{
+						"controlID": "C-0013",
+						"name": "Non-root containers",
+						"status": {
+							"status": "failed"
+						},
+						"rules": []
 					}]
 				}]
 			}`,
@@ -162,79 +217,136 @@ func TestKubescapeScanner_ParseResults(t *testing.T) {
 		{
 			name: "maps severity correctly",
 			input: `{
+				"summaryDetails": {
+					"controls": {
+						"C-0270": {
+							"controlID": "C-0270",
+							"name": "Ensure CPU limits are set",
+							"status": "failed",
+							"score": 30.0,
+							"scoreFactor": 8
+						},
+						"C-0057": {
+							"controlID": "C-0057",
+							"name": "Privileged container",
+							"status": "failed",
+							"score": 95.0,
+							"scoreFactor": 8
+						}
+					}
+				},
 				"results": [{
-					"controlID": "C-0004",
-					"name": "Resources limits",
-					"score": 3.0,
-					"status": {
-						"status": "failed"
-					},
-					"resourceIDs": [{
+					"resourceID": "path=123/api=/v1/default/Deployment/low-risk",
+					"object": {
 						"kind": "Deployment",
-						"name": "low-risk",
-						"namespace": "default"
+						"metadata": {
+							"name": "low-risk",
+							"namespace": "default"
+						}
+					},
+					"controls": [{
+						"controlID": "C-0270",
+						"name": "Ensure CPU limits are set",
+						"status": {
+							"status": "failed"
+						}
 					}]
 				}, {
-					"controlID": "C-0017",
-					"name": "Privileged container",
-					"score": 9.5,
-					"status": {
-						"status": "failed"
-					},
-					"resourceIDs": [{
+					"resourceID": "path=456/api=/v1/default/Pod/high-risk",
+					"object": {
 						"kind": "Pod",
-						"name": "high-risk",
-						"namespace": "default"
+						"metadata": {
+							"name": "high-risk",
+							"namespace": "default"
+						}
+					},
+					"controls": [{
+						"controlID": "C-0057",
+						"name": "Privileged container",
+						"status": {
+							"status": "failed"
+						}
 					}]
 				}]
 			}`,
 			expectedCount: 2,
 			validate: func(t *testing.T, findings []models.Finding) {
 				t.Helper()
-				// Low severity (score 3.0)
+				// Low severity (score 30.0)
 				assert.Equal(t, "low", findings[0].Severity)
-				// Critical severity (score 9.5)
+				// Critical severity (score 95.0)
 				assert.Equal(t, "critical", findings[1].Severity)
 			},
 		},
 		{
 			name: "extracts framework information",
 			input: `{
+				"summaryDetails": {
+					"controls": {
+						"C-0005": {
+							"controlID": "C-0005",
+							"name": "API server insecure port",
+							"status": "failed",
+							"score": 80.0,
+							"category": {
+								"name": "Control plane",
+								"id": "Cat-1"
+							}
+						}
+					}
+				},
 				"results": [{
-					"controlID": "C-0005",
-					"name": "API server insecure port",
-					"category": "NSA hardening",
-					"score": 8.0,
-					"status": {
-						"status": "failed"
-					},
-					"resourceIDs": [{
+					"resourceID": "path=123/api=/v1/default/Service/kubernetes",
+					"object": {
 						"kind": "Service",
-						"name": "kubernetes",
-						"namespace": "default"
+						"metadata": {
+							"name": "kubernetes",
+							"namespace": "default"
+						}
+					},
+					"controls": [{
+						"controlID": "C-0005",
+						"name": "API server insecure port",
+						"status": {
+							"status": "failed"
+						}
 					}]
 				}]
 			}`,
 			expectedCount: 1,
 			validate: func(t *testing.T, findings []models.Finding) {
 				t.Helper()
-				assert.Contains(t, findings[0].Framework, "NSA")
+				assert.Contains(t, findings[0].Framework, "Control plane")
 			},
 		},
 		{
 			name: "handles cluster-scoped resources",
 			input: `{
+				"summaryDetails": {
+					"controls": {
+						"C-0035": {
+							"controlID": "C-0035",
+							"name": "Administrative Roles",
+							"status": "failed",
+							"score": 90.0
+						}
+					}
+				},
 				"results": [{
-					"controlID": "C-0035",
-					"name": "Cluster-admin binding",
-					"score": 9.0,
-					"status": {
-						"status": "failed"
-					},
-					"resourceIDs": [{
+					"resourceID": "path=123/api=rbac.authorization.k8s.io/v1//ClusterRoleBinding/cluster-admin-binding",
+					"object": {
 						"apiVersion": "rbac.authorization.k8s.io/v1",
 						"kind": "ClusterRoleBinding",
-						"name": "cluster-admin-binding"
+						"metadata": {
+							"name": "cluster-admin-binding"
+						}
+					},
+					"controls": [{
+						"controlID": "C-0035",
+						"name": "Administrative Roles",
+						"status": {
+							"status": "failed"
+						}
 					}]
 				}]
 			}`,
@@ -307,20 +419,20 @@ func TestKubescapeScanner_MapSeverity(t *testing.T) {
 		expectedSeverity string
 		score            float64
 	}{
-		{"critical", 10.0},
-		{"critical", 9.5},
-		{"critical", 9.0},
-		{"high", 8.0},
-		{"high", 7.0},
-		{"medium", 6.0},
-		{"medium", 4.0},
-		{"low", 3.0},
-		{"low", 1.0},
+		{"critical", 100.0},
+		{"critical", 95.0},
+		{"critical", 90.0},
+		{"high", 85.0},
+		{"high", 70.0},
+		{"medium", 60.0},
+		{"medium", 40.0},
+		{"low", 30.0},
+		{"low", 10.0},
 		{"low", 0.0},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(rune(tt.score)), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%.0f", tt.score), func(t *testing.T) {
 			severity := scanner.mapScoreToSeverityString(tt.score)
 			assert.Equal(t, tt.expectedSeverity, severity)
 		})
@@ -454,81 +566,97 @@ func TestKubescapeScanner_Scan(t *testing.T) {
 	assert.Contains(t, result.Error, "scan canceled")
 }
 
-// TestKubescapeReport_ComplexStructure tests parsing a more complex report.
+// TestKubescapeReport_ComplexStructure tests parsing a more complex v3 report.
 func TestKubescapeReport_ComplexStructure(t *testing.T) {
 	scanner := &KubescapeScanner{
 		BaseScanner: NewBaseScanner("kubescape", Config{}),
 	}
 
 	complexReport := `{
-		"kind": "Report",
-		"metadata": {
-			"name": "cluster-scan-2024-01-15",
-			"namespace": "",
-			"uid": "12345",
-			"resourceVersion": "1",
-			"creationTimestamp": "2024-01-15T10:00:00Z"
-		},
-		"summary": {
-			"frameworks": [{
-				"name": "NSA",
-				"version": "v1.0",
-				"score": 72.5,
-				"totalResources": 150,
-				"failedResources": 42,
-				"passedResources": 108
-			}, {
-				"name": "MITER",
-				"version": "v1.0", 
-				"score": 68.0,
-				"totalResources": 150,
-				"failedResources": 48,
-				"passedResources": 102
-			}]
+		"summaryDetails": {
+			"controls": {
+				"C-0030": {
+					"controlID": "C-0030",
+					"name": "Ingress and Egress blocked",
+					"status": "failed",
+					"score": 65.0,
+					"scoreFactor": 6,
+					"category": {
+						"name": "Network",
+						"id": "Cat-4"
+					}
+				},
+				"C-0053": {
+					"controlID": "C-0053",
+					"name": "Access Kubernetes dashboard",
+					"status": "failed",
+					"score": 85.0,
+					"scoreFactor": 7,
+					"category": {
+						"name": "Access control",
+						"id": "Cat-2"
+					}
+				}
+			}
 		},
 		"results": [{
-			"controlID": "C-0030",
-			"name": "Ingress and Egress blocked",
-			"description": "Network policies are not configured",
-			"remediation": "Configure NetworkPolicy objects",
-			"category": "Network",
-			"score": 6.5,
-			"baseScore": 6.5,
-			"status": {
-				"status": "failed",
-				"subStatus": ""
-			},
-			"resourceIDs": [{
+			"resourceID": "path=123/api=/v1//Namespace/production",
+			"object": {
 				"apiVersion": "v1",
 				"kind": "Namespace",
-				"name": "production"
-			}, {
-				"apiVersion": "v1",
-				"kind": "Namespace", 
-				"name": "staging"
-			}],
-			"relatedObjects": [{
-				"apiVersion": "networking.k8s.io/v1",
-				"kind": "NetworkPolicy",
-				"name": "default-deny"
+				"metadata": {
+					"name": "production"
+				}
+			},
+			"controls": [{
+				"controlID": "C-0030",
+				"name": "Ingress and Egress blocked",
+				"status": {
+					"status": "failed",
+					"subStatus": ""
+				},
+				"rules": [{
+					"name": "ingress-and-egress-blocked",
+					"status": "failed",
+					"paths": []
+				}]
 			}]
 		}, {
-			"controlID": "C-0053",
-			"name": "Access Kubernetes dashboard",
-			"description": "Kubernetes dashboard is exposed",
-			"remediation": "Restrict access to the dashboard",
-			"category": "Access control",
-			"score": 8.5,
-			"baseScore": 8.5,
-			"status": {
-				"status": "failed",
-				"subStatus": "manual review needed"
+			"resourceID": "path=456/api=/v1//Namespace/staging",
+			"object": {
+				"apiVersion": "v1",
+				"kind": "Namespace",
+				"metadata": {
+					"name": "staging"
+				}
 			},
-			"resourceIDs": [{
+			"controls": [{
+				"controlID": "C-0030",
+				"name": "Ingress and Egress blocked",
+				"status": {
+					"status": "failed",
+					"subStatus": ""
+				},
+				"rules": []
+			}]
+		}, {
+			"resourceID": "path=789/api=/v1/kubernetes-dashboard/Service/kubernetes-dashboard",
+			"object": {
 				"apiVersion": "v1",
 				"kind": "Service",
-				"name": "kubernetes-dashboard",
-				"namespace": "kubernetes-dashboard"
+				"metadata": {
+					"name": "kubernetes-dashboard",
+					"namespace": "kubernetes-dashboard"
+				}
+			},
+			"controls": [{
+				"controlID": "C-0053",
+				"name": "Access Kubernetes dashboard",
+				"status": {
+					"status": "failed",
+					"subStatus": "manual review needed"
+				},
+				"rules": []
 			}]
 		}]
 	}`
@@ -540,7 +668,7 @@ func TestKubescapeReport_ComplexStructure(t *testing.T) {
 	// Validate first finding
 	assert.Equal(t, "Namespace/production", findings[0].Resource)
 	assert.Equal(t, "medium", findings[0].Severity)
-	assert.Contains(t, findings[0].Impact, "Affects 2 resources")
+	assert.Contains(t, findings[0].Impact, "Score factor: 6")
 
 	// Validate last finding
 	lastFinding := findings[len(findings)-1]

@@ -1,0 +1,18 @@
+# Vulnerable Dockerfile for testing Checkov
+
+# Running as root (bad practice)
+FROM ubuntu:latest
+
+# Not using specific version
+RUN apt-get update && apt-get install -y curl wget
+
+# No HEALTHCHECK instruction
+
+# Using ADD instead of COPY for local files
+ADD . /app
+
+# No USER instruction (running as root)
+
+EXPOSE 8080
+
+CMD ["bash"]

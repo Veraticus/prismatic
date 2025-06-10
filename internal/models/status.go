@@ -7,14 +7,16 @@ import (
 
 // ScannerStatus represents the current state of a scanner.
 type ScannerStatus struct {
-	StartTime   time.Time `json:"start_time"`
-	Scanner     string    `json:"scanner"`
-	Status      string    `json:"status"`
-	Message     string    `json:"message,omitempty"`
-	ElapsedTime string    `json:"elapsed_time,omitempty"`
-	Progress    int       `json:"progress,omitempty"`
-	Total       int       `json:"total,omitempty"`
-	Current     int       `json:"current,omitempty"`
+	StartTime     time.Time      `json:"start_time"`
+	FindingCounts map[string]int `json:"finding_counts,omitempty"`
+	Scanner       string         `json:"scanner"`
+	Status        string         `json:"status"`
+	Message       string         `json:"message,omitempty"`
+	ElapsedTime   string         `json:"elapsed_time,omitempty"`
+	Progress      int            `json:"progress,omitempty"`
+	Total         int            `json:"total,omitempty"`
+	Current       int            `json:"current,omitempty"`
+	TotalFindings int            `json:"total_findings,omitempty"`
 }
 
 // Scanner status constants.
@@ -60,12 +62,38 @@ func (s *ScannerStatus) SetCompleted() {
 	s.updateElapsedTime()
 }
 
+// SetCompletedWithFindings marks the scanner as completed with finding counts.
+func (s *ScannerStatus) SetCompletedWithFindings(totalFindings int, findingCounts map[string]int) {
+	s.Status = StatusSuccess
+	s.Progress = 100
+	s.TotalFindings = totalFindings
+	s.FindingCounts = findingCounts
+	s.updateElapsedTime()
+
+	// Update message to show finding counts
+	switch totalFindings {
+	case 0:
+		s.Message = "No findings"
+	case 1:
+		s.Message = "1 finding"
+	default:
+		s.Message = fmt.Sprintf("%d findings", totalFindings)
+	}
+}
+
 // SetFailed marks the scanner as failed.
 func (s *ScannerStatus) SetFailed(err error) {
 	s.Status = StatusFailed
 	if err != nil {
 		s.Message = err.Error()
 	}
+	s.updateElapsedTime()
+}
+
+// SetSkipped marks the scanner as skipped.
+func (s *ScannerStatus) SetSkipped(reason string) {
+	s.Status = StatusSkipped
+	s.Message = reason
 	s.updateElapsedTime()
 }
 

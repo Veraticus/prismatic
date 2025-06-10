@@ -45,6 +45,14 @@ func (s *CheckovScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		Findings:  []models.Finding{},
 	}
 
+	if len(s.targets) == 0 {
+		s.logger.Info("Checkov: No targets configured, skipping scan")
+		result.EndTime = time.Now()
+		return result, ErrNoTargets
+	}
+
+	s.logger.Info("Checkov: Scanning targets", "count", len(s.targets), "targets", s.targets)
+
 	// Scan each target directory
 	for _, target := range s.targets {
 		if err := ctx.Err(); err != nil {
@@ -126,25 +134,15 @@ func (s *CheckovScanner) ParseResults(raw []byte) ([]models.Finding, error) {
 
 // parseReport processes a single Checkov report.
 func (s *CheckovScanner) parseReport(report CheckovReport) []models.Finding {
-	results := report.GetResults()
-	if results == nil {
-		return []models.Finding{}
-	}
-
 	// Pre-calculate total number of failed checks
-	totalFailedChecks := 0
-	for _, checkResults := range results {
-		totalFailedChecks += len(checkResults.FailedChecks)
-	}
+	totalFailedChecks := len(report.Results.FailedChecks) + len(report.SecretsFailedChecks)
 
 	findings := make([]models.Finding, 0, totalFailedChecks)
 
-	// Process failed checks from all check types
-	for checkType, checkResults := range results {
-		for _, failedCheck := range checkResults.FailedChecks {
-			finding := s.createFindingFromCheck(checkType, failedCheck)
-			findings = append(findings, *finding)
-		}
+	// Process failed checks
+	for _, failedCheck := range report.Results.FailedChecks {
+		finding := s.createFindingFromCheck(report.CheckType, failedCheck)
+		findings = append(findings, *finding)
 	}
 
 	// Process secrets findings if present
@@ -186,10 +184,16 @@ func (s *CheckovScanner) createFindingFromCheck(checkType string, check CheckovF
 		return finding
 	}
 
+	// Clean up file path - remove leading slash if present
+	filePath := check.FilePath
+	if strings.HasPrefix(filePath, "/") && len(filePath) > 1 {
+		filePath = filePath[1:]
+	}
+
 	// Determine resource path
-	resource := check.FilePath
+	resource := filePath
 	if check.ResourceAddress != "" {
-		resource = fmt.Sprintf("%s:%s", check.FilePath, check.ResourceAddress)
+		resource = fmt.Sprintf("%s:%s", filePath, check.ResourceAddress)
 	}
 
 	// Determine location
@@ -203,7 +207,27 @@ func (s *CheckovScanner) createFindingFromCheck(checkType string, check CheckovF
 		s.mapCheckIDToType(check.CheckID),
 		resource,
 		location,
-	).WithSeverity(check.Severity)
+	)
+
+	// Set severity - use default if not provided
+	if check.Severity != "" {
+		finding = finding.WithSeverity(check.Severity)
+	} else {
+		// Default severity based on check ID patterns
+		switch {
+		case strings.Contains(check.CheckID, "_ENCRYPT"):
+			finding = finding.WithSeverity("high")
+		case strings.HasPrefix(check.CheckID, "CKV_SECRET_"):
+			finding = finding.WithSeverity("high")
+		case strings.Contains(check.CheckID, "_IAM") || strings.Contains(check.CheckID, "_RBAC"):
+			finding = finding.WithSeverity("high")
+		case strings.Contains(check.CheckID, "_NETWORK"):
+			finding = finding.WithSeverity("medium")
+		default:
+			finding = finding.WithSeverity("medium")
+		}
+	}
+
 	finding.Title = check.CheckName
 	if finding.Title == "" {
 		finding.Title = fmt.Sprintf("%s: %s", check.CheckID, check.CheckName)
@@ -227,7 +251,7 @@ func (s *CheckovScanner) createFindingFromCheck(checkType string, check CheckovF
 	finding.Metadata["check_id"] = check.CheckID
 	finding.Metadata["check_type"] = checkType
 	finding.Metadata["check_class"] = check.CheckClass
-	finding.Metadata["file_path"] = check.FilePath
+	finding.Metadata["file_path"] = filePath // Use the cleaned path from above
 	finding.Metadata["resource"] = check.Resource
 
 	if check.ResourceAddress != "" {
@@ -367,53 +391,17 @@ func (s *CheckovScanner) getVersion(ctx context.Context) string {
 
 // CheckovReport represents the Checkov JSON output structure.
 type CheckovReport struct {
-	Results             any                  `json:"results"` // Can be map[string]CheckovCheckResults or CheckovCheckResults
+	Results             CheckovResults       `json:"results"`
 	CheckType           string               `json:"check_type"`
 	SecretsFailedChecks []CheckovSecretCheck `json:"secrets_failed_checks,omitempty"`
 	Summary             CheckovSummary       `json:"summary"`
 }
 
-// GetResults returns the results in a normalized format.
-func (r *CheckovReport) GetResults() map[string]CheckovCheckResults {
-	if r.Results == nil {
-		return nil
-	}
-
-	// Check if it's already a map
-	if results, ok := r.Results.(map[string]any); ok {
-		// Convert to the expected type
-		mapped := make(map[string]CheckovCheckResults)
-		for k, v := range results {
-			if jsonBytes, err := json.Marshal(v); err == nil {
-				var checkResults CheckovCheckResults
-				if err := json.Unmarshal(jsonBytes, &checkResults); err == nil {
-					mapped[k] = checkResults
-				}
-			}
-		}
-		return mapped
-	}
-
-	// Check if it's a direct CheckovCheckResults
-	if jsonBytes, err := json.Marshal(r.Results); err == nil {
-		var checkResults CheckovCheckResults
-		if err := json.Unmarshal(jsonBytes, &checkResults); err == nil {
-			// Return as a single-entry map with the check type as key
-			return map[string]CheckovCheckResults{
-				r.CheckType: checkResults,
-			}
-		}
-	}
-
-	return nil
-}
-
-// CheckovCheckResults represents results from a Checkov scan.
-type CheckovCheckResults struct {
-	CheckType     string               `json:"check_type"`
+// CheckovResults represents the results field that contains the failed checks.
+type CheckovResults struct {
 	FailedChecks  []CheckovFailedCheck `json:"failed_checks"`
-	PassedChecks  []any                `json:"passed_checks"`
-	SkippedChecks []any                `json:"skipped_checks"`
+	PassedChecks  []any                `json:"passed_checks,omitempty"`
+	SkippedChecks []any                `json:"skipped_checks,omitempty"`
 }
 
 // CheckovFailedCheck represents a failed check from Checkov.

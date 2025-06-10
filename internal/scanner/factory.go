@@ -103,9 +103,9 @@ func (f *Factory) createGitleaksScanner() (Scanner, error) {
 		return NewGitleaksScannerWithRepositories(f.baseConfig, f.repositoryPaths, f.logger), nil
 	}
 
-	// Otherwise, scan current directory
-	target := "."
-	return NewGitleaksScannerWithLogger(f.baseConfig, target, f.logger), nil
+	// No repositories configured - create scanner with empty target
+	// The scanner will detect this and skip execution
+	return NewGitleaksScannerWithLogger(f.baseConfig, "", f.logger), nil
 }
 
 // createCheckovScanner creates and configures a Checkov scanner.
@@ -119,8 +119,8 @@ func (f *Factory) createCheckovScanner() (Scanner, error) {
 		return NewCheckovScannerWithLogger(f.baseConfig, targets, f.logger), nil
 	}
 
-	// Otherwise use default target (current directory)
-	// Note: The original GetCheckovTargets() method doesn't exist in config
-	targets := []string{"."}
+	// No repositories configured - create scanner with empty targets
+	// The scanner will detect this and skip execution
+	targets := []string{}
 	return NewCheckovScannerWithLogger(f.baseConfig, targets, f.logger), nil
 }

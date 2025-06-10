@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -41,6 +43,15 @@ func (s *TrivyScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		Version:   s.getVersion(scanCtx),
 		StartTime: time.Now(),
 		Findings:  []models.Finding{},
+	}
+
+	// Log scan configuration
+	if len(s.targets) > 0 {
+		s.logger.Info("Trivy: Scanning targets", "count", len(s.targets), "targets", s.targets)
+	} else {
+		s.logger.Info("Trivy: No targets configured, skipping scan")
+		result.EndTime = time.Now()
+		return result, ErrNoTargets
 	}
 
 	// Process each target
@@ -198,22 +209,63 @@ func (s *TrivyScanner) scanTarget(ctx context.Context, target string) ([]byte, e
 	args := []string{
 		"--format", "json",
 		"--quiet",
+		"--exit-code", "0", // Always exit with 0, we'll check results in JSON
 	}
 
 	// Determine scan type based on target
-	switch {
-	case strings.Contains(target, ":") || strings.Contains(target, "/"):
-		// Image scan
+	// Check if it's a file/directory path first
+	if fileInfo, err := os.Stat(target); err == nil {
+		// It's a file or directory that exists
+		if fileInfo.IsDir() || !strings.HasSuffix(target, ".tar") {
+			// Directory or non-tar file: filesystem scan with all scanners
+			args = append(args, "fs", "--scanners", "vuln,misconfig,secret", target)
+		} else {
+			// Tar archive
+			args = append(args, "image", "--input", target)
+		}
+	} else {
+		// Not a local file/directory, assume it's an image reference
 		args = append(args, "image", target)
-	case strings.HasSuffix(target, ".tar"):
-		// Archive scan
-		args = append(args, "image", "--input", target)
-	default:
-		// Filesystem/repo scan
-		args = append(args, "fs", target)
 	}
 
-	return ExecuteScanner(ctx, "trivy", args, s.config)
+	// Execute command with our own implementation to ensure --exit-code works
+	cmd := exec.CommandContext(ctx, "trivy", args...)
+
+	// Handle working directory
+	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
+		cmd.Dir = s.config.WorkingDir
+	}
+
+	// Set environment if provided
+	if s.config.Env != nil {
+		env := os.Environ()
+		for k, v := range s.config.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		cmd.Env = env
+	}
+
+	// Log the command being run for debugging
+	s.logger.Debug("Running trivy command", "args", args, "dir", cmd.Dir)
+
+	// Use CombinedOutput to get both stdout and stderr
+	output, err := cmd.CombinedOutput()
+
+	// Trivy might still exit with non-zero even with --exit-code 0 in some cases
+	// If we have JSON output, try to use it regardless of exit code
+	if len(output) > 0 {
+		// Check if output looks like JSON
+		trimmed := strings.TrimSpace(string(output))
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			return []byte(trimmed), nil
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("trivy scan failed: %w, output: %s", err, string(output))
+	}
+
+	return output, nil
 }
 
 // getVersion returns the Trivy version.

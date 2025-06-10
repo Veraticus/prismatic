@@ -52,6 +52,15 @@ func (s *ProwlerScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 		Findings:  []models.Finding{},
 	}
 
+	// Log scan configuration
+	if len(s.profiles) > 0 {
+		s.logger.Info("Prowler: Scanning AWS profiles", "count", len(s.profiles), "profiles", s.profiles, "regions", s.regions, "services", s.services)
+	} else {
+		s.logger.Info("Prowler: No AWS profiles configured, skipping scan")
+		result.EndTime = time.Now()
+		return result, ErrNoTargets
+	}
+
 	// Scan each profile
 	for _, profile := range s.profiles {
 		if err := ctx.Err(); err != nil {

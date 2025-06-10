@@ -193,7 +193,24 @@ func monitorScannerStatus(statusChan <-chan *models.ScannerStatus, done chan<- b
 
 			message := ""
 			if s.Message != "" && s.Status != models.StatusFailed {
-				message = fmt.Sprintf(" - %s", s.Message)
+				// If we have finding counts, show detailed breakdown
+				if s.Status == models.StatusSuccess && s.FindingCounts != nil && s.TotalFindings > 0 {
+					// Build severity breakdown
+					severities := []string{}
+					// Order by severity levels
+					for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
+						if count, ok := s.FindingCounts[sev]; ok && count > 0 {
+							severities = append(severities, fmt.Sprintf("%d %s", count, sev))
+						}
+					}
+					if len(severities) > 0 {
+						message = fmt.Sprintf(" - %s (%s)", s.Message, strings.Join(severities, ", "))
+					} else {
+						message = fmt.Sprintf(" - %s", s.Message)
+					}
+				} else {
+					message = fmt.Sprintf(" - %s", s.Message)
+				}
 			}
 
 			line := fmt.Sprintf("   %s %s%s%s%s", icon, s.Scanner, progressBar, timeInfo, message)
@@ -251,7 +268,7 @@ func getStatusIcon(status string) string {
 	case models.StatusFailed:
 		return "❌"
 	case models.StatusSkipped:
-		return "⏭️"
+		return "⏩"
 	default:
 		return "❓"
 	}
