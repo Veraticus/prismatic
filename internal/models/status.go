@@ -101,10 +101,15 @@ func (s *ScannerStatus) SetSkipped(reason string) {
 func (s *ScannerStatus) updateElapsedTime() {
 	elapsed := time.Since(s.StartTime)
 	if elapsed < time.Minute {
-		s.ElapsedTime = elapsed.Round(time.Second).String()
+		s.ElapsedTime = fmt.Sprintf("%ds", int(elapsed.Seconds()))
 	} else {
 		minutes := int(elapsed.Minutes())
 		seconds := int(elapsed.Seconds()) % 60
 		s.ElapsedTime = fmt.Sprintf("%dm%ds", minutes, seconds)
 	}
+}
+
+// UpdateElapsedTime is a public method to update elapsed time.
+func (s *ScannerStatus) UpdateElapsedTime() {
+	s.updateElapsedTime()
 }

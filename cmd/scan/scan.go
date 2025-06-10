@@ -41,7 +41,7 @@ func Run(args []string) error {
 	fs.StringVar(&opts.OutputDir, "output", "", "Output directory for scan results")
 	fs.StringVar(&opts.AWSProfile, "aws-profile", "", "AWS profile to use")
 	fs.StringVar(&opts.K8sContext, "k8s-context", "", "Kubernetes context to use")
-	fs.IntVar(&opts.Timeout, "timeout", 300, "Timeout in seconds per scanner")
+	fs.IntVar(&opts.Timeout, "timeout", 600, "Timeout in seconds per scanner")
 	fs.BoolVar(&opts.Mock, "mock", false, "Use mock scanners for testing")
 
 	// Handle --only flag
@@ -164,69 +164,93 @@ func monitorScannerStatus(statusChan <-chan *models.ScannerStatus, done chan<- b
 
 	statuses := make(map[string]*models.ScannerStatus)
 	lastLineCount := 0
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
-	for status := range statusChan {
-		statuses[status.Scanner] = status
+	// Initial display
+	displayScannerStatus(statuses, &lastLineCount)
 
-		// Clear previous lines using ANSI escape codes written to os.Stdout
-		for i := 0; i < lastLineCount; i++ {
-			_, _ = os.Stdout.WriteString("\033[F\033[K") // Move up and clear line
+	for {
+		select {
+		case status, ok := <-statusChan:
+			if !ok {
+				// Channel closed, display final status
+				displayScannerStatus(statuses, &lastLineCount)
+				// Final empty line
+				_, _ = os.Stdout.WriteString("\n")
+				return
+			}
+			statuses[status.Scanner] = status
+			displayScannerStatus(statuses, &lastLineCount)
+		case <-ticker.C:
+			// Update elapsed times for running scanners
+			for _, s := range statuses {
+				if s.Status == models.StatusRunning || s.Status == models.StatusStarting {
+					s.UpdateElapsedTime()
+				}
+			}
+			displayScannerStatus(statuses, &lastLineCount)
+		}
+	}
+}
+
+// displayScannerStatus renders the current scanner status display.
+func displayScannerStatus(statuses map[string]*models.ScannerStatus, lastLineCount *int) {
+	// Clear previous lines using ANSI escape codes
+	for i := 0; i < *lastLineCount; i++ {
+		_, _ = os.Stdout.WriteString("\033[F\033[K") // Move up and clear line
+	}
+
+	// Build and print status display
+	lines := make([]string, 0, len(statuses)+1)
+	lines = append(lines, "📊 Scanner Status:")
+
+	// Add each scanner status
+	for _, s := range getSortedStatuses(statuses) {
+		icon := getStatusIcon(s.Status)
+		progressBar := ""
+
+		if s.Status == models.StatusRunning && s.Total > 0 {
+			progressBar = fmt.Sprintf(" [%d/%d]", s.Current, s.Total)
 		}
 
-		// Build and print status display
-		var lines []string
-		lines = append(lines, "📊 Scanner Status:")
+		timeInfo := ""
+		if s.ElapsedTime != "" {
+			timeInfo = fmt.Sprintf(" (%s)", s.ElapsedTime)
+		}
 
-		// Add each scanner status
-		for _, s := range getSortedStatuses(statuses) {
-			icon := getStatusIcon(s.Status)
-			progressBar := ""
-
-			if s.Status == models.StatusRunning && s.Total > 0 {
-				progressBar = fmt.Sprintf(" [%d/%d]", s.Current, s.Total)
-			}
-
-			timeInfo := ""
-			if s.ElapsedTime != "" {
-				timeInfo = fmt.Sprintf(" (%s)", s.ElapsedTime)
-			}
-
-			message := ""
-			if s.Message != "" && s.Status != models.StatusFailed {
-				// If we have finding counts, show detailed breakdown
-				if s.Status == models.StatusSuccess && s.FindingCounts != nil && s.TotalFindings > 0 {
-					// Build severity breakdown
-					severities := []string{}
-					// Order by severity levels
-					for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
-						if count, ok := s.FindingCounts[sev]; ok && count > 0 {
-							severities = append(severities, fmt.Sprintf("%d %s", count, sev))
-						}
+		message := ""
+		if s.Message != "" && s.Status != models.StatusFailed {
+			// If we have finding counts, show detailed breakdown
+			if s.Status == models.StatusSuccess && s.FindingCounts != nil && s.TotalFindings > 0 {
+				// Build severity breakdown
+				severities := []string{}
+				// Order by severity levels
+				for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
+					if count, ok := s.FindingCounts[sev]; ok && count > 0 {
+						severities = append(severities, fmt.Sprintf("%d %s", count, sev))
 					}
-					if len(severities) > 0 {
-						message = fmt.Sprintf(" - %s (%s)", s.Message, strings.Join(severities, ", "))
-					} else {
-						message = fmt.Sprintf(" - %s", s.Message)
-					}
+				}
+				if len(severities) > 0 {
+					message = fmt.Sprintf(" - %s (%s)", s.Message, strings.Join(severities, ", "))
 				} else {
 					message = fmt.Sprintf(" - %s", s.Message)
 				}
+			} else {
+				message = fmt.Sprintf(" - %s", s.Message)
 			}
-
-			line := fmt.Sprintf("   %s %s%s%s%s", icon, s.Scanner, progressBar, timeInfo, message)
-			lines = append(lines, line)
 		}
 
-		// Write all lines to stdout
-		for _, line := range lines {
-			_, _ = os.Stdout.WriteString(line + "\n")
-		}
-
-		lastLineCount = len(lines)
+		line := fmt.Sprintf("   %s %s%s%s%s", icon, s.Scanner, progressBar, timeInfo, message)
+		lines = append(lines, line)
 	}
 
-	// Final empty line
-	_, _ = os.Stdout.WriteString("\n")
+	// Write all lines to stdout
+	for _, line := range lines {
+		_, _ = os.Stdout.WriteString(line + "\n")
+	}
+
+	*lastLineCount = len(lines)
 }
 
 // getSortedStatuses returns statuses sorted by scanner name for consistent display.

@@ -19,11 +19,11 @@ import (
 func TestDisabledScanners_Integration(t *testing.T) {
 	// Create a test configuration with some scanners disabled
 	testDir := t.TempDir()
-	
+
 	// Create test repo for gitleaks/checkov
 	repoDir := filepath.Join(testDir, "test-repo")
 	require.NoError(t, os.MkdirAll(repoDir, 0755))
-	
+
 	// Create a simple file
 	testFile := filepath.Join(repoDir, "test.py")
 	require.NoError(t, os.WriteFile(testFile, []byte("print('hello')"), 0600))
@@ -56,10 +56,10 @@ func TestDisabledScanners_Integration(t *testing.T) {
 
 	// Get scanner names
 	scannerNames := orch.getScannerNames()
-	
+
 	// Verify gitleaks is NOT included
 	assert.NotContains(t, scannerNames, "gitleaks")
-	
+
 	// Verify checkov IS included
 	assert.Contains(t, scannerNames, "checkov")
 
@@ -83,7 +83,7 @@ func TestDisabledScanners_Integration(t *testing.T) {
 func TestDisabledScannersWithOnlyFlag_Integration(t *testing.T) {
 	// Test that --only flag still respects disabled scanners
 	testDir := t.TempDir()
-	
+
 	cfg := &config.Config{
 		Client: config.ClientConfig{
 			Name:        "test-only-disabled",
@@ -115,11 +115,11 @@ func TestDisabledScannersWithOnlyFlag_Integration(t *testing.T) {
 
 	// Get scanner names
 	scannerNames := orch.getScannerNames()
-	
+
 	// Verify disabled scanners are NOT included even when explicitly requested
 	assert.NotContains(t, scannerNames, "trivy")
 	assert.NotContains(t, scannerNames, "gitleaks")
-	
+
 	// Verify enabled scanner IS included
 	assert.Contains(t, scannerNames, "checkov")
 }

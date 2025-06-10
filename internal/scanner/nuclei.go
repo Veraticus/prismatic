@@ -68,7 +68,7 @@ func (s *NucleiScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 	scanCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		scanCtx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+		scanCtx, cancel = context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 	}
 
@@ -93,9 +93,8 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		"-severity", "info,low,medium,high,critical",
 		"-timeout", "30",
 		"-rate-limit", "10",
-		"-duc",    // Disable update check
-		"-nc",     // No color in output
-		"-silent", // Silent mode to reduce output
+		"-nc", // No color in output
+		"-ud", // Update templates if needed (auto-download)
 	}
 
 	// Add endpoints

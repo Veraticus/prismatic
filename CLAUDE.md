@@ -84,6 +84,8 @@ Reports are optimized for AI readability with:
 
 **IMPORTANT**: ALL tests and linters MUST pass before any changes are considered complete. This is non-negotiable for CI/CD pipeline success.
 
+**IMPORTANT**: Do NOT commit changes. The user will handle all git commits. Focus on making the changes and ensuring they work correctly.
+
 ### Before Committing Any Changes:
 
 1. **Run all tests**: `make test`
