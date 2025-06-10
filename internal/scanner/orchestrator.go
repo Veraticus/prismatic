@@ -90,10 +90,11 @@ func (o *Orchestrator) PrepareRepositories(ctx context.Context) error {
 
 	// Clone all repositories
 	for _, repo := range o.config.Repositories {
-		o.logger.Debug("Preparing repository", "name", repo.Name, "path", repo.Path)
+		o.logger.Info("Cloning repository", "name", repo.Name, "url", repo.Path)
 
 		localPath, cleanup, err := resolver(ctx, repo)
 		if err != nil {
+			o.logger.Error("Repository clone failed", "name", repo.Name, "error", err)
 			// Clean up any previously cloned repos
 			o.CleanupRepositories()
 			return fmt.Errorf("failed to prepare repository %s: %w", repo.Name, err)

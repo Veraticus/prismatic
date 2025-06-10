@@ -126,6 +126,20 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 
 	// Check if context was canceled
 	if ctx.Err() != nil {
+		// Include output in error for debugging
+		if len(output) > 0 {
+			// Extract non-JSON error messages
+			var errorLines []string
+			for _, line := range strings.Split(string(output), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed != "" && !strings.HasPrefix(trimmed, "{") {
+					errorLines = append(errorLines, trimmed)
+				}
+			}
+			if len(errorLines) > 0 {
+				return nil, fmt.Errorf("nuclei scan canceled: %w. Output: %s", ctx.Err(), strings.Join(errorLines, "; "))
+			}
+		}
 		return nil, fmt.Errorf("nuclei scan canceled: %w", ctx.Err())
 	}
 
@@ -135,10 +149,17 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 
 	// Extract JSON lines from output (nuclei outputs JSON to stdout even with other messages)
 	var jsonLines []byte
+	var errorLines []string
 	for _, line := range strings.Split(string(output), "\n") {
 		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
 		if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
 			jsonLines = append(jsonLines, []byte(trimmed+"\n")...)
+		} else if err != nil {
+			// Capture non-JSON lines as potential error messages
+			errorLines = append(errorLines, trimmed)
 		}
 	}
 
@@ -147,6 +168,10 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 			// Check if it's a command not found error
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
 				return nil, fmt.Errorf("nuclei: command not found: %w", err)
+			}
+			// Include captured error output
+			if len(errorLines) > 0 {
+				return nil, fmt.Errorf("nuclei failed: %w. Output: %s", err, strings.Join(errorLines, "; "))
 			}
 			s.logger.Debug("Nuclei completed with error but no findings", "error", err)
 		}

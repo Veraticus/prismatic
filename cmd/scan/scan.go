@@ -17,6 +17,7 @@ import (
 	"github.com/Veraticus/prismatic/internal/models"
 	"github.com/Veraticus/prismatic/internal/scanner"
 	"github.com/Veraticus/prismatic/internal/storage"
+	"github.com/Veraticus/prismatic/internal/ui"
 	"github.com/Veraticus/prismatic/pkg/logger"
 )
 
@@ -92,23 +93,30 @@ Examples:
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	logger.Info("Starting security scan",
-		"client", cfg.Client.Name,
-		"environment", cfg.Client.Environment,
-		"output", opts.OutputDir,
-	)
+	// Create and start UI
+	ui := createScannerUI(cfg, opts)
+	ui.Start()
+	defer ui.Stop()
 
 	// Create scan context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opts.Timeout)*time.Second)
 	defer cancel()
 
-	// Initialize orchestrator
-	orchestrator := scanner.NewOrchestrator(cfg, opts.OutputDir, opts.Mock)
+	// Initialize orchestrator with UI-aware logger
+	orchestrator := scanner.NewOrchestratorWithLogger(cfg, opts.OutputDir, opts.Mock, &uiLogger{ui: ui})
 
 	// Prepare repositories if configured
 	if len(cfg.Repositories) > 0 {
-		printScanProgress("Cloning repositories...")
-		if prepErr := orchestrator.PrepareRepositories(ctx); prepErr != nil {
+		// Initialize repository status in UI
+		for _, repo := range cfg.Repositories {
+			ui.UpdateRepository(repo.Name, "pending", "", nil)
+		}
+
+		// Hook into repository preparation
+		prepErr := prepareRepositoriesWithUI(ctx, orchestrator, ui, cfg.Repositories)
+		if prepErr != nil {
+			ui.AddError("repository", prepErr.Error())
+			time.Sleep(2 * time.Second) // Let user see the error
 			return fmt.Errorf("preparing repositories: %w", prepErr)
 		}
 		defer orchestrator.CleanupRepositories()
@@ -116,6 +124,8 @@ Examples:
 
 	// Initialize scanners
 	if initErr := orchestrator.InitializeScanners(opts.OnlyScanners); initErr != nil {
+		ui.AddError("init", initErr.Error())
+		time.Sleep(2 * time.Second) // Let user see the error
 		return fmt.Errorf("initializing scanners: %w", initErr)
 	}
 
@@ -123,18 +133,30 @@ Examples:
 	statusChan := make(chan *models.ScannerStatus, 100)
 	orchestrator.SetStatusChannel(statusChan)
 
-	// Start status monitor in a goroutine
+	// Start status monitor
 	statusDone := make(chan bool)
-	go monitorScannerStatus(statusChan, statusDone)
+	go func() {
+		defer func() { statusDone <- true }()
+		for status := range statusChan {
+			ui.UpdateScanner(status)
+
+			// Capture error messages
+			if status.Status == models.StatusFailed && status.Message != "" {
+				ui.AddError(status.Scanner, status.Message)
+			}
+		}
+	}()
 
 	// Run scans
-	printScanProgress("Starting scans...")
 	metadata, err := orchestrator.RunScans(ctx)
 
 	// Signal status monitor to stop
 	close(statusChan)
 	<-statusDone
+
 	if err != nil {
+		ui.AddError("scan", err.Error())
+		time.Sleep(2 * time.Second) // Let user see the error
 		return fmt.Errorf("running scans: %w", err)
 	}
 
@@ -145,157 +167,106 @@ Examples:
 	// Save results
 	store := storage.NewStorage("data")
 	if err := store.SaveScanResults(opts.OutputDir, metadata); err != nil {
+		ui.AddError("save", err.Error())
+		time.Sleep(2 * time.Second) // Let user see the error
 		return fmt.Errorf("saving results: %w", err)
 	}
 
-	// Print scan summary
+	// Final render before exit
+	time.Sleep(1 * time.Second)
+
+	// Print scan summary after UI is stopped
+	ui.Stop()
 	printScanSummary(metadata, opts)
 
 	return nil
 }
 
-func printScanProgress(msg string) {
-	logger.Info("➜ " + msg)
+// createScannerUI creates and configures the scanner UI.
+func createScannerUI(cfg *config.Config, opts *Options) *ui.ScannerUI {
+	return ui.NewScannerUI(ui.Config{
+		OutputDir:   opts.OutputDir,
+		ClientName:  cfg.Client.Name,
+		Environment: cfg.Client.Environment,
+		StartTime:   time.Now(),
+	})
 }
 
-// monitorScannerStatus displays real-time status updates for running scanners.
-func monitorScannerStatus(statusChan <-chan *models.ScannerStatus, done chan<- bool) {
-	defer func() { done <- true }()
-
-	statuses := make(map[string]*models.ScannerStatus)
-	lastLineCount := 0
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	// Initial display
-	displayScannerStatus(statuses, &lastLineCount)
-
-	for {
-		select {
-		case status, ok := <-statusChan:
-			if !ok {
-				// Channel closed, display final status
-				displayScannerStatus(statuses, &lastLineCount)
-				// Final empty line
-				_, _ = os.Stdout.WriteString("\n")
-				return
-			}
-			statuses[status.Scanner] = status
-			displayScannerStatus(statuses, &lastLineCount)
-		case <-ticker.C:
-			// Update elapsed times for running scanners
-			for _, s := range statuses {
-				if s.Status == models.StatusRunning || s.Status == models.StatusStarting {
-					s.UpdateElapsedTime()
-				}
-			}
-			displayScannerStatus(statuses, &lastLineCount)
-		}
-	}
+// uiLogger implements the logger interface and redirects to the UI.
+type uiLogger struct {
+	ui *ui.ScannerUI
 }
 
-// displayScannerStatus renders the current scanner status display.
-func displayScannerStatus(statuses map[string]*models.ScannerStatus, lastLineCount *int) {
-	// Clear previous lines using ANSI escape codes
-	for i := 0; i < *lastLineCount; i++ {
-		_, _ = os.Stdout.WriteString("\033[F\033[K") // Move up and clear line
-	}
-
-	// Build and print status display
-	lines := make([]string, 0, len(statuses)+1)
-	lines = append(lines, "📊 Scanner Status:")
-
-	// Add each scanner status
-	for _, s := range getSortedStatuses(statuses) {
-		icon := getStatusIcon(s.Status)
-		progressBar := ""
-
-		if s.Status == models.StatusRunning && s.Total > 0 {
-			progressBar = fmt.Sprintf(" [%d/%d]", s.Current, s.Total)
-		}
-
-		timeInfo := ""
-		if s.ElapsedTime != "" {
-			timeInfo = fmt.Sprintf(" (%s)", s.ElapsedTime)
-		}
-
-		message := ""
-		if s.Message != "" && s.Status != models.StatusFailed {
-			// If we have finding counts, show detailed breakdown
-			if s.Status == models.StatusSuccess && s.FindingCounts != nil && s.TotalFindings > 0 {
-				// Build severity breakdown
-				severities := []string{}
-				// Order by severity levels
-				for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
-					if count, ok := s.FindingCounts[sev]; ok && count > 0 {
-						severities = append(severities, fmt.Sprintf("%d %s", count, sev))
-					}
-				}
-				if len(severities) > 0 {
-					message = fmt.Sprintf(" - %s (%s)", s.Message, strings.Join(severities, ", "))
-				} else {
-					message = fmt.Sprintf(" - %s", s.Message)
-				}
-			} else {
-				message = fmt.Sprintf(" - %s", s.Message)
-			}
-		}
-
-		line := fmt.Sprintf("   %s %s%s%s%s", icon, s.Scanner, progressBar, timeInfo, message)
-		lines = append(lines, line)
-	}
-
-	// Write all lines to stdout
-	for _, line := range lines {
-		_, _ = os.Stdout.WriteString(line + "\n")
-	}
-
-	*lastLineCount = len(lines)
+func (l *uiLogger) Debug(_ string, _ ...any) {
+	// Ignore debug messages in UI mode
 }
 
-// getSortedStatuses returns statuses sorted by scanner name for consistent display.
-func getSortedStatuses(statuses map[string]*models.ScannerStatus) []*models.ScannerStatus {
-	result := make([]*models.ScannerStatus, 0, len(statuses))
-	names := make([]string, 0, len(statuses))
-
-	for name := range statuses {
-		names = append(names, name)
-	}
-
-	// Sort scanner names for consistent display
-	for i := range names {
-		for j := i + 1; j < len(names); j++ {
-			if names[i] > names[j] {
-				names[i], names[j] = names[j], names[i]
-			}
+func (l *uiLogger) Info(msg string, fields ...any) {
+	// Handle repository status updates
+	switch msg {
+	case "Cloning repository":
+		name := l.extractField(fields, "name")
+		if name != "" {
+			l.ui.UpdateRepository(name, "cloning", "", nil)
 		}
-	}
-
-	for _, name := range names {
-		result = append(result, statuses[name])
-	}
-
-	return result
-}
-
-// getStatusIcon returns an appropriate icon for the scanner status.
-func getStatusIcon(status string) string {
-	switch status {
-	case models.StatusPending:
-		return "⏳"
-	case models.StatusStarting:
-		return "🚀"
-	case models.StatusRunning:
-		return "🔄"
-	case models.StatusSuccess:
-		return "✅"
-	case models.StatusFailed:
-		return "❌"
-	case models.StatusSkipped:
-		return "⏩"
+	case "Repository prepared":
+		name := l.extractField(fields, "name")
+		path := l.extractField(fields, "local_path")
+		if name != "" {
+			l.ui.UpdateRepository(name, "complete", path, nil)
+		}
 	default:
-		return "❓"
+		if strings.Contains(msg, "error") || strings.Contains(msg, "failed") {
+			l.ui.AddError("info", fmt.Sprintf("%s %v", msg, fields))
+		}
 	}
+}
+
+func (l *uiLogger) Warn(msg string, fields ...any) {
+	l.ui.AddError("warn", fmt.Sprintf("%s %v", msg, fields))
+}
+
+func (l *uiLogger) Error(msg string, fields ...any) {
+	// Handle repository clone failures
+	if msg == "Repository clone failed" {
+		name := l.extractField(fields, "name")
+		errMsg := l.extractField(fields, "error")
+		if name != "" {
+			l.ui.UpdateRepository(name, "failed", "", fmt.Errorf("%s", errMsg))
+		}
+	}
+	l.ui.AddError("error", fmt.Sprintf("%s %v", msg, fields))
+}
+
+// With creates a new logger with additional context fields.
+func (l *uiLogger) With(_ ...any) logger.Logger {
+	// Return the same logger since we don't need context fields for UI
+	return l
+}
+
+// WithGroup creates a new logger with a group name.
+func (l *uiLogger) WithGroup(_ string) logger.Logger {
+	// Return the same logger since we don't need groups for UI
+	return l
+}
+
+// extractField extracts a field value from logger fields.
+func (l *uiLogger) extractField(fields []any, key string) string {
+	for i := 0; i < len(fields)-1; i += 2 {
+		if fields[i] == key {
+			if val, ok := fields[i+1].(string); ok {
+				return val
+			}
+			return fmt.Sprintf("%v", fields[i+1])
+		}
+	}
+	return ""
+}
+
+// prepareRepositoriesWithUI prepares repositories with UI updates.
+func prepareRepositoriesWithUI(ctx context.Context, orchestrator *scanner.Orchestrator, _ *ui.ScannerUI, _ []config.Repository) error {
+	// The UI updates are handled through the logger callbacks
+	return orchestrator.PrepareRepositories(ctx)
 }
 
 func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
