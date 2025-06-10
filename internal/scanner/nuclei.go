@@ -97,8 +97,8 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		"-severity", "info,low,medium,high,critical",
 		"-timeout", "30",
 		"-rate-limit", "10",
-		"-nc", // No color in output
-		"-ud", // Update templates if needed (auto-download)
+		"-nc",    // No color in output
+		"-stats", // Show scanning statistics
 	}
 
 	// Add endpoints
@@ -128,11 +128,40 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		cmd.Env = env
 	}
 
-	// Check if nuclei templates exist
+	// Check if nuclei templates exist in possible locations
 	homeDir, _ := os.UserHomeDir()
-	templatesPath := fmt.Sprintf("%s/.local/nuclei-templates", homeDir)
-	if _, err := os.Stat(templatesPath); os.IsNotExist(err) {
-		s.logger.Info("Nuclei templates not found, will be downloaded on first run", "path", templatesPath)
+	templatePaths := []string{
+		filepath.Join(homeDir, "nuclei-templates"),
+		filepath.Join(homeDir, ".local", "nuclei-templates"),
+	}
+
+	templatesFound := false
+	for _, path := range templatePaths {
+		if _, err := os.Stat(path); err == nil {
+			s.logger.Info("Nuclei templates found", "path", path)
+			templatesFound = true
+			break
+		}
+	}
+
+	if !templatesFound {
+		s.logger.Info("Nuclei templates not found, downloading...")
+
+		// Run nuclei with -update-templates to download templates
+		updateCmd := exec.CommandContext(ctx, "nuclei", "-update-templates")
+		updateOutput, updateErr := updateCmd.CombinedOutput()
+
+		if updateErr != nil {
+			s.logger.Error("Failed to download nuclei templates", "error", updateErr, "output", string(updateOutput))
+			return nil, fmt.Errorf("failed to download nuclei templates: %w", updateErr)
+		}
+
+		outputLen := len(updateOutput)
+		previewLen := 500
+		if outputLen < previewLen {
+			previewLen = outputLen
+		}
+		s.logger.Info("Nuclei templates downloaded successfully", "output_preview", string(updateOutput[:previewLen]))
 	}
 
 	// Log the full command being executed
@@ -198,14 +227,25 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		}
 	}
 
-	// Log the first few lines of raw output for debugging
+	// Log the output for debugging
 	if len(output) > 0 {
 		lines := strings.Split(string(output), "\n")
+
+		// Log first few lines
 		preview := lines
-		if len(lines) > 5 {
-			preview = lines[:5]
+		if len(lines) > 10 {
+			preview = lines[:10]
 		}
 		s.logger.Info("Nuclei output preview", "lines", preview)
+
+		// Check if we see template statistics
+		for _, line := range lines {
+			if strings.Contains(line, "Templates loaded for scan") ||
+				strings.Contains(line, "Templates loaded for current scan") ||
+				strings.Contains(line, "[INF]") {
+				s.logger.Info("Nuclei template info", "line", line)
+			}
+		}
 
 		if len(errorLines) > 0 && len(errorLines) <= 10 {
 			s.logger.Info("Nuclei non-JSON output", "lines", errorLines)

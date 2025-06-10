@@ -226,8 +226,10 @@ func (ui *ScannerUI) renderRepositories() {
 			status = fmt.Sprintf("Failed: %s", repo.Error)
 		}
 
-		// Format line: icon + space + name (20 chars) + space + status
-		line := fmt.Sprintf("%s %-20s %s", icon, name, status)
+		// Build line with proper spacing
+		// Icon takes 1 visual char, then space, then name padded to 20, then space, then status
+		paddedName := ui.padOrTruncate(repo.Name, 20)
+		line := fmt.Sprintf("%s %s %s", icon, paddedName, status)
 		lines = append(lines, line)
 	}
 
@@ -264,27 +266,20 @@ func (ui *ScannerUI) buildScannerTable(scanners []string) []string {
 	// Calculate available width for the table content
 	contentWidth := ui.boxWidth - 4 // Account for box borders "│ " and " │"
 
-	// Define minimum column widths
-	minScannerWidth := 11
-	minStatusWidth := 10
-	minTimeWidth := 8
-	minProgressWidth := 20
+	// Define column widths
+	scannerWidth := 11
+	statusWidth := 10
+	timeWidth := 8
 
-	// Calculate column separators overhead: 3 separators × 3 chars each = 9
+	// Calculate separators: " │ " between each column = 3 chars × 3 = 9
 	separatorOverhead := 9
 
-	// Calculate available width for columns
-	availableWidth := contentWidth - separatorOverhead
+	// Give all remaining space to progress column
+	progressWidth := contentWidth - separatorOverhead - scannerWidth - statusWidth - timeWidth
 
-	// Distribute width among columns
-	scannerWidth := minScannerWidth
-	statusWidth := minStatusWidth
-	timeWidth := minTimeWidth
-
-	// Give remaining space to progress column
-	progressWidth := availableWidth - scannerWidth - statusWidth - timeWidth
-	if progressWidth < minProgressWidth {
-		progressWidth = minProgressWidth
+	// Ensure progress column has reasonable width
+	if progressWidth < 20 {
+		progressWidth = 20
 	}
 
 	// Build header
@@ -493,8 +488,9 @@ func (ui *ScannerUI) drawBoxLine(content string, width int) string {
 		result.WriteString(content)
 		result.WriteString(strings.Repeat(" ", contentWidth-contentLen))
 	} else {
-		// Content too long, truncate
-		result.WriteString(ui.smartTruncate(content, contentWidth))
+		// Content too long, truncate with ellipsis at the end
+		truncated := ui.truncatePreservingANSI(content, contentWidth-4)
+		result.WriteString(truncated + " ...")
 	}
 
 	result.WriteString(" " + colorCyan + "│" + colorReset + "\n")
