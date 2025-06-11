@@ -1,13 +1,8 @@
 package cache
 
 import (
-	"context"
 	"time"
-
-	"github.com/joshsymonds/prismatic/internal/enrichment"
 )
-
-// Cache defines the interface for caching enrichments.
 
 // KeyGenerator generates cache keys for findings.
 
