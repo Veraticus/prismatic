@@ -1,10 +1,35 @@
 package cache
 
 import (
+	"context"
 	"time"
+
+	"github.com/joshsymonds/prismatic/internal/enrichment"
 )
 
+// Cache defines the interface for caching enrichments.
+type Cache interface {
+	// Get retrieves an enrichment from the cache
+	Get(ctx context.Context, findingID string) (*enrichment.FindingEnrichment, error)
+	
+	// Set stores an enrichment in the cache
+	Set(ctx context.Context, enrichment *enrichment.FindingEnrichment, ttl time.Duration) error
+	
+	// Delete removes an enrichment from the cache
+	Delete(ctx context.Context, findingID string) error
+	
+	// Clear removes all entries from the cache
+	Clear(ctx context.Context) error
+	
+	// Stats returns cache statistics
+	Stats(ctx context.Context) (*Stats, error)
+}
+
 // KeyGenerator generates cache keys for findings.
+type KeyGenerator interface {
+	// GenerateKey creates a cache key for a finding
+	GenerateKey(findingID string, context map[string]interface{}) string
+}
 
 // Stats contains cache statistics.
 type Stats struct {

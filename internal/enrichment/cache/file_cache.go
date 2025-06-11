@@ -13,19 +13,6 @@ import (
 )
 
 // Cache defines the interface for caching enrichments.
-type Cache interface {
-	// Get retrieves a cached enrichment
-	Get(ctx context.Context, findingID string) (*enrichment.FindingEnrichment, error)
-	
-	// Set stores an enrichment in the cache
-	Set(ctx context.Context, enrichment *enrichment.FindingEnrichment, ttl time.Duration) error
-	
-	// Clear removes all entries from the cache
-	Clear(ctx context.Context) error
-	
-	// Stats returns cache statistics
-	Stats(ctx context.Context) (*Stats, error)
-}
 
 // FileCache implements Cache interface using file storage.
 type FileCache struct {

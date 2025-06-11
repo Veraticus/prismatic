@@ -356,14 +356,15 @@ func (ui *ScannerUI) buildScannerTable(scanners []string) []string {
 		progressWidth, "Progress",
 		colorReset)
 
-	// Build separator line matching the visual column widths
-	// The separator uses the same spacing as the header
+	// Build separator line matching the exact header format
+	// The separator should match: "───────────┼────────────┼──────────┼────────..."
+	// Format is: dashes matching column width, then ┼ separator between columns
 	separator := fmt.Sprintf("%s%s┼%s┼%s┼%s%s",
 		colorGray,
-		strings.Repeat("─", scannerWidth),    // Match the scanner column width
+		strings.Repeat("─", scannerWidth),    // Exact column width
 		strings.Repeat("─", statusWidth+2),   // +2 for spaces around │
 		strings.Repeat("─", timeWidth+2),     // +2 for spaces around │
-		strings.Repeat("─", progressWidth+2), // +2 to match expected format
+		strings.Repeat("─", progressWidth+2), // +2 to match closing border
 		colorReset)
 
 	lines := []string{header, separator}

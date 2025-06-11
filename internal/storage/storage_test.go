@@ -556,7 +556,7 @@ func TestSaveEnrichmentsWithInvalidPath(t *testing.T) {
 	// Test with invalid scan directory path
 	err := storage.SaveEnrichments("/invalid\x00path", []enrichment.FindingEnrichment{}, nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid scan directory")
+	assert.Contains(t, err.Error(), "creating enrichments directory")
 }
 
 func TestLoadEnrichmentsWithInvalidPath(t *testing.T) {
@@ -565,7 +565,7 @@ func TestLoadEnrichmentsWithInvalidPath(t *testing.T) {
 	// Test with invalid scan directory path
 	_, _, err := storage.LoadEnrichments("/invalid\x00path")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid scan directory")
+	assert.Contains(t, err.Error(), "reading enrichments directory")
 }
 
 func TestSaveEnrichmentsPartialFailure(t *testing.T) {
