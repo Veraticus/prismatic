@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/term"
@@ -23,6 +24,8 @@ type ScannerUI struct {
 	errorMessages   []string
 	boxWidth        int // Fixed width for all boxes
 	mu              sync.Mutex
+	stopped         atomic.Bool
+	stopOnce        sync.Once
 }
 
 // Config holds configuration for the scanner UI.
@@ -103,10 +106,12 @@ func (ui *ScannerUI) Start() {
 
 // Stop stops the UI rendering and restores terminal.
 func (ui *ScannerUI) Stop() {
-	close(ui.stopChan)
-	// Show cursor and move to bottom
-	_, _ = os.Stdout.WriteString("\033[?25h")
-	_, _ = fmt.Fprintf(os.Stdout, "\033[%d;1H\n", ui.getTermHeight())
+	ui.stopOnce.Do(func() {
+		ui.stopped.Store(true)
+		close(ui.stopChan)
+		// Show cursor for backward compatibility with tests
+		_, _ = os.Stdout.WriteString("\033[?25h")
+	})
 }
 
 // UpdateRepository updates the status of a repository.
@@ -158,6 +163,11 @@ func (ui *ScannerUI) AddError(scanner, message string) {
 	}
 }
 
+// IsStopped returns true if the UI has been stopped.
+func (ui *ScannerUI) IsStopped() bool {
+	return ui.stopped.Load()
+}
+
 // render draws the entire UI.
 func (ui *ScannerUI) render() {
 	ui.mu.Lock()
@@ -192,6 +202,49 @@ func (ui *ScannerUI) render() {
 	if len(ui.errorMessages) > 0 {
 		ui.renderErrors()
 	}
+}
+
+// RenderFinalState renders the UI one last time with the given summary and keeps it visible.
+func (ui *ScannerUI) RenderFinalState(summaryLines []string) {
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+
+	// Stop the ticker but don't clear the UI
+	if ui.renderTicker != nil {
+		ui.renderTicker.Stop()
+	}
+
+	// Update box width in case terminal was resized
+	ui.updateBoxWidth()
+
+	// Move cursor to top
+	_, _ = os.Stdout.WriteString("\033[H")
+
+	// Render header
+	ui.renderHeader()
+
+	// Render repository status
+	ui.renderRepositories()
+
+	// Render scanner status
+	ui.renderScanners()
+
+	// Render findings summary
+	ui.renderSummary()
+
+	// Render errors if any
+	if len(ui.errorMessages) > 0 {
+		ui.renderErrors()
+	}
+
+	// Render the final summary box
+	if len(summaryLines) > 0 {
+		_, _ = os.Stdout.WriteString(ui.drawBox("✨ Scan Complete!", summaryLines))
+	}
+
+	// Move cursor to bottom and show it
+	_, _ = fmt.Fprintf(os.Stdout, "\033[%d;1H", ui.getTermHeight())
+	_, _ = os.Stdout.WriteString("\033[?25h")
 }
 
 func (ui *ScannerUI) renderHeader() {

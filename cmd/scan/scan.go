@@ -10,9 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
-
 	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/scanner"
@@ -42,7 +39,7 @@ func Run(args []string) error {
 	fs.StringVar(&opts.OutputDir, "output", "", "Output directory for scan results")
 	fs.StringVar(&opts.AWSProfile, "aws-profile", "", "AWS profile to use")
 	fs.StringVar(&opts.K8sContext, "k8s-context", "", "Kubernetes context to use")
-	fs.IntVar(&opts.Timeout, "timeout", 600, "Timeout in seconds per scanner")
+	fs.IntVar(&opts.Timeout, "timeout", 1800, "Timeout in seconds per scanner")
 	fs.BoolVar(&opts.Mock, "mock", false, "Use mock scanners for testing")
 
 	// Handle --only flag
@@ -118,6 +115,9 @@ Examples:
 	scanLogger := &uiLogger{ui: ui, logFile: logFile}
 	orchestrator := scanner.NewOrchestratorWithLogger(cfg, opts.OutputDir, opts.Mock, scanLogger)
 
+	// Set the timeout from command line flag
+	orchestrator.SetScanTimeout(time.Duration(opts.Timeout) * time.Second)
+
 	// Prepare repositories if configured
 	if len(cfg.Repositories) > 0 {
 		// Initialize repository status in UI
@@ -188,9 +188,14 @@ Examples:
 	// Final render before exit
 	time.Sleep(1 * time.Second)
 
-	// Print scan summary after UI is stopped
+	// Build summary lines for the final UI render
+	summaryLines := buildScanSummaryLines(metadata, opts)
+
+	// Render final state with summary
+	ui.RenderFinalState(summaryLines)
+
+	// Stop the UI (this just stops the rendering loop)
 	ui.Stop()
-	printScanSummary(metadata, opts)
 
 	return nil
 }
@@ -293,74 +298,11 @@ func prepareRepositoriesWithUI(ctx context.Context, orchestrator *scanner.Orches
 	return orchestrator.PrepareRepositories(ctx)
 }
 
-func printScanSummary(metadata *models.ScanMetadata, opts *Options) {
-	logger.Info("🔍 Prismatic Security Scanner v1.0.0")
-	logger.Info("📋 Configuration: " + opts.ConfigFile)
-	logger.Info("📁 Output: " + opts.OutputDir)
-
-	if opts.Mock {
-		logger.Info("⚠️  Running in MOCK mode - no real scans performed")
+func buildScanSummaryLines(_ *models.ScanMetadata, opts *Options) []string {
+	return []string{
+		fmt.Sprintf("📁 Results saved to: %s", opts.OutputDir),
+		"🎯 Run 'prismatic report --scan latest' to generate report",
 	}
-
-	// Print scanner results
-	logger.Info("📊 Scanner Results:")
-	for i, scannerName := range metadata.Scanners {
-		result, ok := metadata.Results[scannerName]
-		if !ok {
-			continue
-		}
-
-		status := "✅"
-		statusMsg := fmt.Sprintf("%d findings", len(result.Findings))
-		if result.Error != "" {
-			status = "❌"
-			statusMsg = "failed"
-		}
-
-		severityCounts := make(map[string]int)
-		for _, finding := range result.Findings {
-			if !finding.Suppressed {
-				severityCounts[finding.Severity]++
-			}
-		}
-
-		logger.Info(fmt.Sprintf("[%d/%d] %s %s...", i+1, len(metadata.Scanners), status, scannerName))
-		logger.Info("      ⏱  " + result.EndTime.Sub(result.StartTime).Round(time.Millisecond).String())
-
-		if result.Error == "" && len(result.Findings) > 0 {
-			criticalHigh := severityCounts["critical"] + severityCounts["high"]
-			if criticalHigh > 0 {
-				logger.Info(fmt.Sprintf("      🚨 %d findings (%d critical/high)", len(result.Findings), criticalHigh))
-			} else {
-				logger.Info("      ✨ " + statusMsg)
-			}
-		} else if result.Error != "" {
-			logger.Info("      ❗ " + result.Error)
-		}
-	}
-
-	// Print overall summary
-	logger.Info("✅ Scan Summary:")
-	if metadata.Summary.SuppressedCount > 0 {
-		logger.Info(fmt.Sprintf("   Total Findings: %d (+ %d suppressed)", metadata.Summary.TotalFindings, metadata.Summary.SuppressedCount))
-	} else {
-		logger.Info(fmt.Sprintf("   Total Findings: %d", metadata.Summary.TotalFindings))
-	}
-
-	// Print severity breakdown
-	severityOrder := []string{"critical", "high", "medium", "low"}
-	severityDisplay := []string{}
-	for _, sev := range severityOrder {
-		if count, ok := metadata.Summary.BySeverity[sev]; ok && count > 0 {
-			severityDisplay = append(severityDisplay, fmt.Sprintf("%s: %d", cases.Title(language.English).String(sev), count))
-		}
-	}
-	if len(severityDisplay) > 0 {
-		logger.Info("   " + strings.Join(severityDisplay, " | "))
-	}
-
-	logger.Info("✨ Scan complete! Results saved to: " + opts.OutputDir)
-	logger.Info("🎯 Run 'prismatic report --scan latest' to generate report")
 }
 
 // createLogFile creates a log file in the output directory.

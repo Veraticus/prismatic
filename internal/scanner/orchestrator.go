@@ -40,7 +40,7 @@ func NewOrchestratorWithLogger(cfg *config.Config, outputDir string, useMock boo
 		useMock:      useMock,
 		scanners:     []Scanner{},
 		maxWorkers:   3, // Default to 3 concurrent scanners
-		scanTimeout:  10 * time.Minute,
+		scanTimeout:  30 * time.Minute,
 		logger:       log,
 		repoPaths:    make(map[string]string),
 		repoCleanups: []func(){},
