@@ -114,9 +114,17 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 	// Execute command directly to handle Nuclei's output properly
 	cmd := exec.CommandContext(ctx, "nuclei", args...)
 
-	// Handle working directory
-	if s.config.WorkingDir != "" && !strings.Contains(s.config.WorkingDir, "data/scans") {
+	// Handle working directory - always use a specific directory
+	if s.config.WorkingDir != "" {
 		cmd.Dir = s.config.WorkingDir
+	} else {
+		// Create a temp directory if no working directory is specified
+		tempDir, err := os.MkdirTemp("", "nuclei-scan-*")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp directory for nuclei scan: %w", err)
+		}
+		defer os.RemoveAll(tempDir)
+		cmd.Dir = tempDir
 	}
 
 	// Set environment if provided
@@ -147,8 +155,16 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 	if !templatesFound {
 		s.logger.Info("Nuclei templates not found, downloading...")
 
+		// Create a temporary directory for nuclei to work in
+		tempDir, err := os.MkdirTemp("", "nuclei-update-*")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp directory for nuclei: %w", err)
+		}
+		defer os.RemoveAll(tempDir)
+
 		// Run nuclei with -update-templates to download templates
 		updateCmd := exec.CommandContext(ctx, "nuclei", "-update-templates")
+		updateCmd.Dir = tempDir // Set working directory to temp directory
 		updateOutput, updateErr := updateCmd.CombinedOutput()
 
 		if updateErr != nil {
