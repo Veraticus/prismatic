@@ -249,7 +249,7 @@ func (o *Orchestrator) saveEnrichments(ctx context.Context, enrichments []enrich
 	enrichmentDir := filepath.Join(scanDir, "enrichments")
 
 	// Create enrichments directory
-	if err := os.MkdirAll(enrichmentDir, 0755); err != nil {
+	if err := os.MkdirAll(enrichmentDir, 0750); err != nil {
 		return fmt.Errorf("failed to create enrichments directory: %w", err)
 	}
 
@@ -265,7 +265,7 @@ func (o *Orchestrator) saveEnrichments(ctx context.Context, enrichments []enrich
 			continue
 		}
 
-		if err := os.WriteFile(filename, data, 0644); err != nil {
+		if err := os.WriteFile(filename, data, 0600); err != nil {
 			o.logger.Error("Failed to save enrichment",
 				"finding_id", enrichment.FindingID,
 				"error", err,
@@ -281,7 +281,7 @@ func (o *Orchestrator) saveEnrichments(ctx context.Context, enrichments []enrich
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := os.WriteFile(metadataFile, data, 0644); err != nil {
+	if err := os.WriteFile(metadataFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to save metadata: %w", err)
 	}
 

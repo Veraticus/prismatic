@@ -48,9 +48,9 @@ func TestDefaultKeyGenerator(t *testing.T) {
 	}
 }
 
-func TestCacheError(t *testing.T) {
+func TestError(t *testing.T) {
 	baseErr := fmt.Errorf("underlying error")
-	cacheErr := &CacheError{
+	cacheErr := &Error{
 		Op:  "get",
 		Key: "test-key",
 		Err: baseErr,
@@ -106,7 +106,7 @@ func TestMockCacheOperations(t *testing.T) {
 					},
 				}, nil
 			}
-			return nil, &CacheError{Op: "get", Key: findingID, Err: fmt.Errorf("not found")}
+			return nil, &Error{Op: "get", Key: findingID, Err: fmt.Errorf("not found")}
 		},
 		SetFunc: func(ctx context.Context, e *enrichment.FindingEnrichment, ttl time.Duration) error {
 			if e.FindingID == "" {

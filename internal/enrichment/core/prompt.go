@@ -72,7 +72,7 @@ func buildEnrichmentPrompt(findings []models.Finding, batch *batch.Batch, knowle
 			sb.WriteString(fmt.Sprintf("Type: %s\n", f.Type))
 			sb.WriteString(fmt.Sprintf("Resource: %s\n", f.Resource))
 
-			if len(f.Remediation) > 0 {
+			if f.Remediation != "" {
 				sb.WriteString(fmt.Sprintf("Scanner Remediation: %s\n", f.Remediation))
 			}
 

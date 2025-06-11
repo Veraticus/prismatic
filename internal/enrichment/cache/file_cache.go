@@ -22,7 +22,7 @@ type FileCache struct {
 // NewFileCache creates a new file-based cache.
 func NewFileCache(basePath string) (*FileCache, error) {
 	// Create cache directory if it doesn't exist
-	if err := os.MkdirAll(basePath, 0755); err != nil {
+	if err := os.MkdirAll(basePath, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -39,7 +39,10 @@ func NewFileCache(basePath string) (*FileCache, error) {
 	}
 
 	// Load stats if they exist
-	fc.loadStats()
+	_ = fc.loadStats()
+
+	// Save initial stats
+	_ = fc.saveStats()
 
 	return fc, nil
 }
@@ -56,29 +59,29 @@ func (fc *FileCache) Get(ctx context.Context, findingID string) (*enrichment.Fin
 	if err != nil {
 		if os.IsNotExist(err) {
 			fc.recordMiss()
-			return nil, nil // Cache miss
+			return nil, fmt.Errorf("cache miss: key %s not found", findingID)
 		}
-		return nil, &CacheError{Op: "get", Key: findingID, Err: err}
+		return nil, &Error{Op: "get", Key: findingID, Err: err}
 	}
 
 	// Read file
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, &CacheError{Op: "get", Key: findingID, Err: err}
+		return nil, &Error{Op: "get", Key: findingID, Err: err}
 	}
 
 	// Unmarshal enrichment
 	var entry cacheEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil, &CacheError{Op: "unmarshal", Key: findingID, Err: err}
+		return nil, &Error{Op: "unmarshal", Key: findingID, Err: err}
 	}
 
 	// Check if expired
 	if time.Now().After(entry.ExpiresAt) {
 		// Remove expired entry
-		os.Remove(filename)
+		_ = os.Remove(filename)
 		fc.recordMiss()
-		return nil, nil
+		return nil, fmt.Errorf("cache miss: key %s expired", findingID)
 	}
 
 	// Update oldest entry tracking
@@ -107,20 +110,20 @@ func (fc *FileCache) Set(ctx context.Context, findingEnrichment *enrichment.Find
 	// Marshal entry
 	data, err := json.Marshal(entry)
 	if err != nil {
-		return &CacheError{Op: "marshal", Key: findingEnrichment.FindingID, Err: err}
+		return &Error{Op: "marshal", Key: findingEnrichment.FindingID, Err: err}
 	}
 
 	// Write to file
 	filename := fc.getFilename(findingEnrichment.FindingID)
 	if err := os.WriteFile(filename, data, 0644); err != nil {
-		return &CacheError{Op: "write", Key: findingEnrichment.FindingID, Err: err}
+		return &Error{Op: "write", Key: findingEnrichment.FindingID, Err: err}
 	}
 
 	// Update stats
 	fc.stats.TotalEntries++
 	fc.stats.TotalSize += int64(len(data))
 
-	fc.saveStats()
+	_ = fc.saveStats()
 
 	return nil
 }
@@ -138,19 +141,19 @@ func (fc *FileCache) Delete(ctx context.Context, findingID string) error {
 		if os.IsNotExist(err) {
 			return nil // Already deleted
 		}
-		return &CacheError{Op: "stat", Key: findingID, Err: err}
+		return &Error{Op: "stat", Key: findingID, Err: err}
 	}
 
 	// Remove file
 	if err := os.Remove(filename); err != nil {
-		return &CacheError{Op: "delete", Key: findingID, Err: err}
+		return &Error{Op: "delete", Key: findingID, Err: err}
 	}
 
 	// Update stats
 	fc.stats.TotalEntries--
 	fc.stats.TotalSize -= info.Size()
 
-	fc.saveStats()
+	_ = fc.saveStats()
 
 	return nil
 }
@@ -186,7 +189,7 @@ func (fc *FileCache) Clear(ctx context.Context) error {
 	// Remove all cache files
 	entries, err := os.ReadDir(fc.basePath)
 	if err != nil {
-		return &CacheError{Op: "readdir", Key: fc.basePath, Err: err}
+		return &Error{Op: "readdir", Key: fc.basePath, Err: err}
 	}
 
 	for _, entry := range entries {
@@ -202,7 +205,7 @@ func (fc *FileCache) Clear(ctx context.Context) error {
 		// Remove cache file
 		filename := filepath.Join(fc.basePath, entry.Name())
 		if err := os.Remove(filename); err != nil {
-			return &CacheError{Op: "delete", Key: entry.Name(), Err: err}
+			return &Error{Op: "delete", Key: entry.Name(), Err: err}
 		}
 	}
 
@@ -216,7 +219,7 @@ func (fc *FileCache) Clear(ctx context.Context) error {
 		TokensSaved:  0,
 	}
 
-	fc.saveStats()
+	_ = fc.saveStats()
 
 	return nil
 }

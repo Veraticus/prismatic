@@ -23,7 +23,7 @@ func (m *MockCache) Get(ctx context.Context, findingID string) (*enrichment.Find
 	if m.GetFunc != nil {
 		return m.GetFunc(ctx, findingID)
 	}
-	return nil, &CacheError{Op: "get", Key: findingID, Err: fmt.Errorf("not found")}
+	return nil, &Error{Op: "get", Key: findingID, Err: fmt.Errorf("not found")}
 }
 
 // Set implements Cache interface.

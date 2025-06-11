@@ -11,11 +11,11 @@ import (
 
 // Manifest represents a complete remediation manifest.
 type Manifest struct {
-	ManifestVersion string           `yaml:"manifest_version"`
 	GeneratedAt     time.Time        `yaml:"generated_at"`
+	ManifestVersion string           `yaml:"manifest_version"`
 	ScanID          string           `yaml:"scan_id"`
-	Metadata        ManifestMetadata `yaml:"metadata"`
 	Remediations    []Remediation    `yaml:"remediations"`
+	Metadata        ManifestMetadata `yaml:"metadata"`
 }
 
 // ManifestMetadata contains summary information about the manifest.
@@ -28,18 +28,18 @@ type ManifestMetadata struct {
 
 // Remediation represents a single remediation action that may fix multiple findings.
 type Remediation struct {
-	Context        RemediationContext `yaml:"context"`
 	Rollback       RollbackProcedure  `yaml:"rollback"`
 	Title          string             `yaml:"title"`
 	Description    string             `yaml:"description"`
 	Severity       string             `yaml:"severity"`
 	ID             string             `yaml:"id"`
-	Implementation Implementation     `yaml:"implementation"`
+	Context        RemediationContext `yaml:"context"`
 	Target         RemediationTarget  `yaml:"target"`
-	FindingRefs    []string           `yaml:"finding_refs"`
 	Validation     []ValidationStep   `yaml:"validation"`
+	FindingRefs    []string           `yaml:"finding_refs"`
 	Dependencies   []string           `yaml:"dependencies"`
 	Blocks         []string           `yaml:"blocks"`
+	Implementation Implementation     `yaml:"implementation"`
 	Priority       int                `yaml:"priority"`
 }
 

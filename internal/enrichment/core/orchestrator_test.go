@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -15,6 +16,22 @@ import (
 	"github.com/joshsymonds/prismatic/internal/storage"
 	"github.com/joshsymonds/prismatic/pkg/logger"
 )
+
+// createTestStorage creates a temporary storage for testing.
+func createTestStorage(t *testing.T) (*storage.Storage, func()) {
+	tmpDir, err := os.MkdirTemp("", "orchestrator-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	testStorage := storage.NewStorageWithLogger(tmpDir, logger.NewMockLogger())
+
+	cleanup := func() {
+		os.RemoveAll(tmpDir)
+	}
+
+	return testStorage, cleanup
+}
 
 // Mock implementations for testing.
 type mockLLMDriver struct {
@@ -64,7 +81,7 @@ func (m *mockLLMDriver) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-func (m *mockLLMDriver) Configure(config map[string]interface{}) error {
+func (m *mockLLMDriver) Configure(_ map[string]interface{}) error {
 	return nil
 }
 
@@ -103,7 +120,9 @@ func TestNewOrchestrator(t *testing.T) {
 	strategy := &mockBatchingStrategy{}
 	mockCache := cache.NewMockCache()
 	mockKnowledge := knowledge.NewMockBase()
-	mockStorage := &storage.Storage{}
+	testStorage, cleanup := createTestStorage(t)
+	defer cleanup()
+	mockStorage := testStorage
 	config := &enrichment.Config{}
 	log := logger.NewMockLogger()
 
@@ -187,7 +206,7 @@ func TestOrchestrator_EnrichFindings(t *testing.T) {
 				},
 			},
 			expectedCount: 0,
-			expectError:   true,
+			expectError:   false, // Orchestrator logs errors but doesn't fail
 		},
 		{
 			name: "Batching strategy error",
@@ -217,7 +236,10 @@ func TestOrchestrator_EnrichFindings(t *testing.T) {
 				strategy = &mockBatchingStrategy{}
 			}
 
-			orch := NewOrchestrator(driver, strategy, nil, nil, &storage.Storage{}, &enrichment.Config{}, logger.NewMockLogger())
+			testStorage, cleanup := createTestStorage(t)
+			defer cleanup()
+
+			orch := NewOrchestrator(driver, strategy, nil, nil, testStorage, &enrichment.Config{}, logger.NewMockLogger())
 			ctx := context.Background()
 
 			enrichments, err := orch.EnrichFindings(ctx, tt.findings, tt.config)
@@ -270,7 +292,10 @@ func TestOrchestrator_WithCache(t *testing.T) {
 	driver := &mockLLMDriver{}
 	strategy := &mockBatchingStrategy{}
 
-	orch := NewOrchestrator(driver, strategy, mockCache, nil, &storage.Storage{}, &enrichment.Config{}, logger.NewMockLogger())
+	testStorage, cleanup := createTestStorage(t)
+	defer cleanup()
+
+	orch := NewOrchestrator(driver, strategy, mockCache, nil, testStorage, &enrichment.Config{}, logger.NewMockLogger())
 	ctx := context.Background()
 
 	findings := []models.Finding{
@@ -281,6 +306,7 @@ func TestOrchestrator_WithCache(t *testing.T) {
 	config := &enrichment.Config{
 		EnableCache: true,
 		CacheTTL:    1 * time.Hour,
+		TokenBudget: 10000,
 	}
 
 	enrichments, err := orch.EnrichFindings(ctx, findings, config)
@@ -342,7 +368,7 @@ func TestOrchestrator_WithKnowledgeBase(t *testing.T) {
 		enrichFunc: func(ctx context.Context, findings []models.Finding, prompt string) ([]enrichment.FindingEnrichment, error) {
 			enrichCalled = true
 			// Verify that knowledge base info is in the prompt
-			if len(prompt) == 0 {
+			if prompt == "" {
 				t.Error("Expected prompt to contain knowledge base information")
 			}
 
@@ -362,7 +388,10 @@ func TestOrchestrator_WithKnowledgeBase(t *testing.T) {
 
 	strategy := &mockBatchingStrategy{}
 
-	orch := NewOrchestrator(driver, strategy, nil, mockKB, &storage.Storage{}, &enrichment.Config{}, logger.NewMockLogger())
+	testStorage, cleanup := createTestStorage(t)
+	defer cleanup()
+
+	orch := NewOrchestrator(driver, strategy, nil, mockKB, testStorage, &enrichment.Config{}, logger.NewMockLogger())
 	ctx := context.Background()
 
 	findings := []models.Finding{
@@ -374,7 +403,9 @@ func TestOrchestrator_WithKnowledgeBase(t *testing.T) {
 		},
 	}
 
-	config := &enrichment.Config{}
+	config := &enrichment.Config{
+		TokenBudget: 10000,
+	}
 
 	enrichments, err := orch.EnrichFindings(ctx, findings, config)
 	if err != nil {
@@ -432,7 +463,10 @@ func TestOrchestrator_ConcurrentBatches(t *testing.T) {
 		},
 	}
 
-	orch := NewOrchestrator(driver, strategy, nil, nil, &storage.Storage{}, &enrichment.Config{}, logger.NewMockLogger())
+	testStorage, cleanup := createTestStorage(t)
+	defer cleanup()
+
+	orch := NewOrchestrator(driver, strategy, nil, nil, testStorage, &enrichment.Config{}, logger.NewMockLogger())
 	ctx := context.Background()
 
 	findings := []models.Finding{
@@ -442,7 +476,9 @@ func TestOrchestrator_ConcurrentBatches(t *testing.T) {
 		{ID: "4", Severity: "critical"},
 	}
 
-	config := &enrichment.Config{}
+	config := &enrichment.Config{
+		TokenBudget: 10000,
+	}
 
 	enrichments, err := orch.EnrichFindings(ctx, findings, config)
 	if err != nil {

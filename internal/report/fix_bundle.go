@@ -17,14 +17,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// FixBundleGenerator generates a directory structure with remediation files
+// FixBundleGenerator generates a directory structure with remediation files.
 type FixBundleGenerator struct {
 	remediationGen *RemediationReporter
 	config         *config.Config
 	logger         logger.Logger
 }
 
-// NewFixBundleGenerator creates a new fix bundle generator
+// NewFixBundleGenerator creates a new fix bundle generator.
 func NewFixBundleGenerator(cfg *config.Config, log logger.Logger) *FixBundleGenerator {
 	return &FixBundleGenerator{
 		remediationGen: NewRemediationReporter(cfg, log),
@@ -33,7 +33,7 @@ func NewFixBundleGenerator(cfg *config.Config, log logger.Logger) *FixBundleGene
 	}
 }
 
-// Generate creates the fix bundle directory structure
+// Generate creates the fix bundle directory structure.
 func (g *FixBundleGenerator) Generate(findings []models.Finding, outputPath string) error {
 	g.logger.Info("Generating fix bundle", "output", outputPath)
 
@@ -86,7 +86,7 @@ func (g *FixBundleGenerator) Generate(findings []models.Finding, outputPath stri
 	return nil
 }
 
-// generateManifest uses the existing RemediationReporter to create a manifest
+// generateManifest uses the existing RemediationReporter to create a manifest.
 func (g *FixBundleGenerator) generateManifest(findings []models.Finding) (*remediation.Manifest, error) {
 	// Create a temporary file for the manifest
 	tmpFile, err := os.CreateTemp("", "manifest-*.yaml")
@@ -122,7 +122,7 @@ func (g *FixBundleGenerator) generateManifest(findings []models.Finding) (*remed
 	return &manifest, nil
 }
 
-// writeManifest writes the manifest to a file
+// writeManifest writes the manifest to a file.
 func (g *FixBundleGenerator) writeManifest(manifest *remediation.Manifest, path string) error {
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
@@ -131,7 +131,7 @@ func (g *FixBundleGenerator) writeManifest(manifest *remediation.Manifest, path 
 	return os.WriteFile(path, data, 0644)
 }
 
-// generateRemediationDir creates the directory structure for a single remediation
+// generateRemediationDir creates the directory structure for a single remediation.
 func (g *FixBundleGenerator) generateRemediationDir(rem remediation.Remediation, basePath string) error {
 	remDir := filepath.Join(basePath, "remediations", rem.ID)
 	if err := os.MkdirAll(remDir, 0755); err != nil {
@@ -161,7 +161,7 @@ func (g *FixBundleGenerator) generateRemediationDir(rem remediation.Remediation,
 	return nil
 }
 
-// generateRemediationReadme creates a README for a specific remediation
+// generateRemediationReadme creates a README for a specific remediation.
 func (g *FixBundleGenerator) generateRemediationReadme(rem remediation.Remediation, dir string) error {
 	tmpl := `# {{.Title}}
 
@@ -214,7 +214,7 @@ Run ` + "`./validation.sh`" + ` after applying the fix to ensure it worked corre
 	return t.Execute(file, rem)
 }
 
-// generateFixFiles creates the actual fix files based on the remediation strategy
+// generateFixFiles creates the actual fix files based on the remediation strategy.
 func (g *FixBundleGenerator) generateFixFiles(rem remediation.Remediation, dir string) error {
 	// Determine the fix strategy from the implementation
 	strategy := g.detectStrategy(rem)
@@ -242,7 +242,7 @@ func (g *FixBundleGenerator) generateFixFiles(rem remediation.Remediation, dir s
 	}
 }
 
-// detectStrategy attempts to determine the fix strategy from the remediation
+// detectStrategy attempts to determine the fix strategy from the remediation.
 func (g *FixBundleGenerator) detectStrategy(rem remediation.Remediation) string {
 	// Check the title and description for clues
 	title := strings.ToLower(rem.Title)
@@ -279,7 +279,7 @@ func (g *FixBundleGenerator) detectStrategy(rem remediation.Remediation) string 
 	return "generic"
 }
 
-// generateTerraformS3Fix generates Terraform files for S3 public access fixes
+// generateTerraformS3Fix generates Terraform files for S3 public access fixes.
 func (g *FixBundleGenerator) generateTerraformS3Fix(rem remediation.Remediation, dir string) error {
 	// Create terraform directory
 	tfDir := filepath.Join(dir, "terraform")
@@ -365,7 +365,7 @@ index 0000000..1111111 100644
 	return os.WriteFile(patchPath, []byte(patchContent), 0644)
 }
 
-// generateValidationScript creates a validation script for the remediation
+// generateValidationScript creates a validation script for the remediation.
 func (g *FixBundleGenerator) generateValidationScript(rem remediation.Remediation, dir string) error {
 	// Start with a basic template
 	scriptContent := `#!/bin/bash
@@ -442,7 +442,7 @@ exit 0
 	return os.Chmod(scriptPath, 0755)
 }
 
-// generateS3ValidationScript creates a specific validation script for S3 fixes
+// generateS3ValidationScript creates a specific validation script for S3 fixes.
 func (g *FixBundleGenerator) generateS3ValidationScript(rem remediation.Remediation) string {
 	return `#!/bin/bash
 # S3 Public Access Block Validation Script
@@ -488,7 +488,7 @@ fi
 `
 }
 
-// generateK8sValidationScript creates a validation script for Kubernetes fixes
+// generateK8sValidationScript creates a validation script for Kubernetes fixes.
 func (g *FixBundleGenerator) generateK8sValidationScript(rem remediation.Remediation) string {
 	return `#!/bin/bash
 # Kubernetes Security Context Validation Script
@@ -541,7 +541,7 @@ fi
 `
 }
 
-// generateLLMPrompt creates an LLM prompt file for the remediation
+// generateLLMPrompt creates an LLM prompt file for the remediation.
 func (g *FixBundleGenerator) generateLLMPrompt(rem remediation.Remediation, dir string) error {
 	promptContent := fmt.Sprintf(`# LLM Remediation Instructions for %s
 
@@ -580,7 +580,7 @@ func (g *FixBundleGenerator) generateLLMPrompt(rem remediation.Remediation, dir 
 	return os.WriteFile(promptPath, []byte(promptContent), 0644)
 }
 
-// generateSummaryReadme creates the top-level README
+// generateSummaryReadme creates the top-level README.
 func (g *FixBundleGenerator) generateSummaryReadme(manifest *remediation.Manifest, outputPath string) error {
 	tmpl := `# Prismatic Security Fix Bundle
 
@@ -660,7 +660,7 @@ For questions or issues, please refer to the Prismatic documentation.
 	return t.Execute(file, manifest)
 }
 
-// generateScripts creates the automation scripts
+// generateScripts creates the automation scripts.
 func (g *FixBundleGenerator) generateScripts(manifest *remediation.Manifest, outputPath string) error {
 	scriptsDir := filepath.Join(outputPath, "scripts")
 
@@ -682,7 +682,7 @@ func (g *FixBundleGenerator) generateScripts(manifest *remediation.Manifest, out
 	return nil
 }
 
-// generateApplyCriticalScript creates a script to apply all critical fixes
+// generateApplyCriticalScript creates a script to apply all critical fixes.
 func (g *FixBundleGenerator) generateApplyCriticalScript(manifest *remediation.Manifest, scriptsDir string) error {
 	scriptContent := `#!/bin/bash
 # Apply all critical priority fixes
@@ -738,7 +738,7 @@ echo "Please run validate-all.sh to verify the fixes"
 	return os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 }
 
-// generateValidateAllScript creates a script to validate all fixes
+// generateValidateAllScript creates a script to validate all fixes.
 func (g *FixBundleGenerator) generateValidateAllScript(manifest *remediation.Manifest, scriptsDir string) error {
 	scriptContent := `#!/bin/bash
 # Validate all remediations
@@ -1093,23 +1093,23 @@ After applying the fix, verify it worked by:
 	return os.WriteFile(instructionsPath, []byte(patchContent), 0644)
 }
 
-// fixBundleFormat adapts FixBundleGenerator to the ReportFormat interface
+// fixBundleFormat adapts FixBundleGenerator to the ReportFormat interface.
 type fixBundleFormat struct {
 	generator *FixBundleGenerator
 }
 
-// Generate implements the ReportFormat interface
+// Generate implements the ReportFormat interface.
 func (f *fixBundleFormat) Generate(findings []models.Finding, enrichments map[string]*enrichment.FindingEnrichment, metadata *models.ScanMetadata, outputPath string) error {
 	// The FixBundleGenerator doesn't use enrichments or metadata directly
 	return f.generator.Generate(findings, outputPath)
 }
 
-// Name returns the format identifier
+// Name returns the format identifier.
 func (f *fixBundleFormat) Name() string {
 	return "fix-bundle"
 }
 
-// Description returns a human-readable description
+// Description returns a human-readable description.
 func (f *fixBundleFormat) Description() string {
 	return "Directory structure with remediation files, scripts, and patches"
 }

@@ -467,16 +467,16 @@ func TestFileCache_CleanupExpired(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Trigger cleanup by trying to get expired entry
-	_, _ = cache.Get(ctx, "short-ttl-key")
+	_, _ = cache.Get(ctx, "short-ttl")
 
 	// Verify short TTL entry is gone
-	_, err = cache.Get(ctx, "short-ttl-key")
+	_, err = cache.Get(ctx, "short-ttl")
 	if err == nil {
 		t.Error("Expected short TTL entry to be expired")
 	}
 
 	// Verify long TTL entry still exists
-	_, err = cache.Get(ctx, "long-ttl-key")
+	_, err = cache.Get(ctx, "long-ttl")
 	if err != nil {
 		t.Error("Expected long TTL entry to still exist")
 	}

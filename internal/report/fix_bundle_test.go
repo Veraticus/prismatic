@@ -88,8 +88,8 @@ func TestFixBundleGenerator_detectStrategy(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		rem      remediation.Remediation
 		expected string
+		rem      remediation.Remediation
 	}{
 		{
 			name: "S3 public access",
@@ -286,8 +286,8 @@ func TestFixBundleGenerator_generateValidationScript(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		rem          remediation.Remediation
 		checkContent []string
+		rem          remediation.Remediation
 	}{
 		{
 			name: "S3 validation",
@@ -604,7 +604,7 @@ func TestFixBundleGenerator_Integration(t *testing.T) {
 	}
 }
 
-// Test helper to verify file permissions
+// Test helper to verify file permissions.
 func assertFilePermission(t *testing.T, path string, expected os.FileMode) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
