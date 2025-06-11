@@ -36,10 +36,10 @@ exit %d
 
 	// Add to PATH
 	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", tmpDir+":"+oldPath)
+	_ = os.Setenv("PATH", tmpDir+":"+oldPath)
 
 	cleanup := func() {
-		os.Setenv("PATH", oldPath)
+		_ = os.Setenv("PATH", oldPath)
 		os.RemoveAll(tmpDir)
 	}
 
@@ -130,8 +130,9 @@ func TestClaudeCLIDriver_Configure(t *testing.T) {
 			}
 
 			if !tt.wantErr && tt.config["model"] != nil {
-				if driver.model != tt.config["model"].(string) {
-					t.Errorf("Expected model to be %s, got %s", tt.config["model"], driver.model)
+				modelStr, ok := tt.config["model"].(string)
+				if ok && driver.model != modelStr {
+					t.Errorf("Expected model to be %s, got %s", modelStr, driver.model)
 				}
 			}
 		})
@@ -266,7 +267,7 @@ func TestClaudeCLIDriver_Enrich_EmptyResponse(t *testing.T) {
 func TestClaudeCLIDriver_CommandNotFound(t *testing.T) {
 	// Remove claude from PATH
 	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", "/nonexistent")
+	_ = os.Setenv("PATH", "/nonexistent")
 	defer os.Setenv("PATH", oldPath)
 
 	driver := &ClaudeCLIDriver{}

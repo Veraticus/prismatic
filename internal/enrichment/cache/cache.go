@@ -9,26 +9,17 @@ import (
 
 // Cache defines the interface for caching enrichments.
 type Cache interface {
-	// Get retrieves an enrichment from the cache
+	// Get retrieves a cached enrichment for a finding ID.
 	Get(ctx context.Context, findingID string) (*enrichment.FindingEnrichment, error)
-	
-	// Set stores an enrichment in the cache
-	Set(ctx context.Context, enrichment *enrichment.FindingEnrichment, ttl time.Duration) error
-	
-	// Delete removes an enrichment from the cache
-	Delete(ctx context.Context, findingID string) error
-	
-	// Clear removes all entries from the cache
-	Clear(ctx context.Context) error
-	
-	// Stats returns cache statistics
-	Stats(ctx context.Context) (*Stats, error)
-}
 
-// KeyGenerator generates cache keys for findings.
-type KeyGenerator interface {
-	// GenerateKey creates a cache key for a finding
-	GenerateKey(findingID string, context map[string]interface{}) string
+	// Set stores an enrichment in the cache.
+	Set(ctx context.Context, findingEnrichment *enrichment.FindingEnrichment, ttl time.Duration) error
+
+	// Delete removes an enrichment from the cache.
+	Delete(ctx context.Context, findingID string) error
+
+	// GetStats returns current cache statistics.
+	GetStats() *Stats
 }
 
 // Stats contains cache statistics.

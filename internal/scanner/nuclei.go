@@ -72,7 +72,8 @@ func (s *NucleiScanner) Scan(ctx context.Context) (*models.ScanResult, error) {
 	scanCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		scanCtx, cancel = context.WithTimeout(ctx, 10*time.Minute)
+		// Increase timeout to 30 minutes for Nuclei scans
+		scanCtx, cancel = context.WithTimeout(ctx, 30*time.Minute)
 		defer cancel()
 	}
 
@@ -183,9 +184,90 @@ func (s *NucleiScanner) runNuclei(ctx context.Context, endpoints []string) ([]mo
 		"args", args,
 		"full_command", strings.Join(fullCmd, " "))
 
-	// Use CombinedOutput to capture both stdout and stderr
+	// Use pipes to capture output while respecting context cancellation
 	startTime := time.Now()
-	output, err := cmd.CombinedOutput()
+
+	// Create pipes for stdout and stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start nuclei: %w", err)
+	}
+
+	// Read output in background
+	var output []byte
+	outputChan := make(chan []byte, 1)
+
+	go func() {
+		// Read both stdout and stderr
+		var buf []byte
+		// Read stdout
+		stdoutBytes := make([]byte, 0, 1024*1024) // Pre-allocate 1MB
+		for {
+			tmp := make([]byte, 8192)
+			n, err := stdout.Read(tmp)
+			if n > 0 {
+				stdoutBytes = append(stdoutBytes, tmp[:n]...)
+			}
+			if err != nil {
+				break
+			}
+		}
+
+		// Read stderr
+		stderrBytes := make([]byte, 0, 1024*1024) // Pre-allocate 1MB
+		for {
+			tmp := make([]byte, 8192)
+			n, err := stderr.Read(tmp)
+			if n > 0 {
+				stderrBytes = append(stderrBytes, tmp[:n]...)
+			}
+			if err != nil {
+				break
+			}
+		}
+
+		// Combine stdout and stderr
+		buf = append(buf, stdoutBytes...)
+		buf = append(buf, stderrBytes...)
+		outputChan <- buf
+	}()
+
+	// Wait for command completion or context cancellation
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Context canceled, kill the process
+		s.logger.Warn("Nuclei scan timeout, killing process")
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			s.logger.Error("Failed to kill nuclei process", "error", killErr)
+		}
+		return nil, fmt.Errorf("nuclei scan timeout after %v: %w", time.Since(startTime), ctx.Err())
+
+	case err = <-done:
+		// Command completed
+		select {
+		case output = <-outputChan:
+			// Got output
+		case <-time.After(5 * time.Second):
+			// Timeout waiting for output
+			s.logger.Warn("Timeout waiting for nuclei output after process completion")
+			output = []byte{}
+		}
+	}
+
 	duration := time.Since(startTime)
 
 	// Check if context was canceled

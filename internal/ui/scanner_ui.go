@@ -361,10 +361,10 @@ func (ui *ScannerUI) buildScannerTable(scanners []string) []string {
 	// Format is: dashes matching column width, then ┼ separator between columns
 	separator := fmt.Sprintf("%s%s┼%s┼%s┼%s%s",
 		colorGray,
-		strings.Repeat("─", scannerWidth),    // Exact column width
-		strings.Repeat("─", statusWidth+2),   // +2 for spaces around │
-		strings.Repeat("─", timeWidth+2),     // +2 for spaces around │
-		strings.Repeat("─", progressWidth+2), // +2 to match closing border
+		strings.Repeat("─", scannerWidth),    // 11 dashes
+		strings.Repeat("─", statusWidth+2),   // 12 dashes
+		strings.Repeat("─", timeWidth+2),     // 10 dashes
+		strings.Repeat("─", progressWidth+2), // Rest of the line
 		colorReset)
 
 	lines := []string{header, separator}

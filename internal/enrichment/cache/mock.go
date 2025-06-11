@@ -66,6 +66,15 @@ func (m *MockCache) Stats(ctx context.Context) (*Stats, error) {
 	return &Stats{}, nil
 }
 
+// GetStats implements Cache interface.
+func (m *MockCache) GetStats() *Stats {
+	if m.StatsFunc != nil {
+		stats, _ := m.StatsFunc(context.Background())
+		return stats
+	}
+	return &Stats{}
+}
+
 // NewMockCache creates a new mock cache for testing.
 func NewMockCache() *MockCache {
 	return &MockCache{}

@@ -71,7 +71,7 @@ The enrichment process is optional and can be skipped to save costs.`,
 	cmd.Flags().StringVar(&knowledgeBase, "knowledge-base", "data/knowledge", "Path to knowledge base")
 	cmd.Flags().IntVar(&maxConcurrency, "max-concurrency", 1, "Maximum concurrent LLM requests")
 
-	cmd.MarkFlagRequired("client")
+	_ = cmd.MarkFlagRequired("client")
 
 	return cmd
 }
@@ -272,13 +272,13 @@ func runEnrich(cmd *cobra.Command, args []string) error {
 	)
 
 	// Print summary
-	fmt.Println("\n✨ Enrichment Summary:")
-	fmt.Printf("  Total findings: %d\n", len(findings))
-	fmt.Printf("  Enriched findings: %d\n", len(enrichments))
-	fmt.Printf("  Strategy: %s\n", strategy)
-	fmt.Printf("  Driver: %s\n", driver)
-	fmt.Printf("\nEnrichments saved to: %s\n", filepath.Join(scanDir, "enrichments"))
-	fmt.Println("\nRun 'prismatic report' to generate an enriched report.")
+	log.Info("✨ Enrichment Summary")
+	log.Info("Total findings", "count", len(findings))
+	log.Info("Enriched findings", "count", len(enrichments))
+	log.Info("Strategy", "name", strategy)
+	log.Info("Driver", "name", driver)
+	log.Info("Enrichments saved", "path", filepath.Join(scanDir, "enrichments"))
+	log.Info("Run 'prismatic report' to generate an enriched report")
 
 	return nil
 }

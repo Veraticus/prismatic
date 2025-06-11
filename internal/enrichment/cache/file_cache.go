@@ -237,6 +237,17 @@ func (fc *FileCache) Stats(ctx context.Context) (*Stats, error) {
 	return fc.stats, nil
 }
 
+// GetStats returns cache statistics (implements Cache interface).
+func (fc *FileCache) GetStats() *Stats {
+	fc.mu.RLock()
+	defer fc.mu.RUnlock()
+
+	// Calculate current stats
+	fc.updateStats()
+
+	return fc.stats
+}
+
 // Helper methods
 
 func (fc *FileCache) getFilename(findingID string) string {

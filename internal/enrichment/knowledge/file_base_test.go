@@ -15,7 +15,7 @@ func TestNewFileBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	kb, err := NewFileBase(tmpDir)
 	if err != nil {
@@ -44,7 +44,7 @@ func TestFileBase_StoreAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	kb, err := NewFileBase(tmpDir)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestFileBase_Update(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	kb, err := NewFileBase(tmpDir)
 	if err != nil {
@@ -168,7 +168,7 @@ func TestFileBase_Delete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	kb, err := NewFileBase(tmpDir)
 	if err != nil {
@@ -221,7 +221,7 @@ func TestFileBase_Search(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	kb, err := NewFileBase(tmpDir)
 	if err != nil {
@@ -300,7 +300,7 @@ func TestFileBase_Index(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	kb, err := NewFileBase(tmpDir)
 	if err != nil {
@@ -369,7 +369,7 @@ func TestFileBase_ConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	kb, err := NewFileBase(tmpDir)
 	if err != nil {

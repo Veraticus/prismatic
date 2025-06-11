@@ -93,8 +93,8 @@ func (g *FixBundleGenerator) generateManifest(findings []models.Finding) (*remed
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	_ = tmpFile.Close()
 
 	// Create minimal metadata for the remediation generator
 	metadata := &models.ScanMetadata{
@@ -209,7 +209,7 @@ Run ` + "`./validation.sh`" + ` after applying the fix to ensure it worked corre
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	return t.Execute(file, rem)
 }
@@ -425,10 +425,10 @@ exit 0
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := tmpl.Execute(file, rem); err != nil {
-		file.Close()
+		_ = file.Close()
 		// Write a basic script as fallback
 		basicScript := `#!/bin/bash
 echo "Validation for: ` + rem.Title + `"
@@ -655,7 +655,7 @@ For questions or issues, please refer to the Prismatic documentation.
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	return t.Execute(file, manifest)
 }
