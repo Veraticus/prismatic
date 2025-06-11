@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/storage"
 )
 
 func TestHTMLReportWithEnrichedFindings(t *testing.T) {

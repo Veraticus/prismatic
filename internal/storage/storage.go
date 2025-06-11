@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/pkg/logger"
-	"github.com/Veraticus/prismatic/pkg/pathutil"
+	"github.com/joshsymonds/prismatic/internal/enrichment"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/pkg/pathutil"
 )
 
 // Storage handles saving and loading scan results.
@@ -384,5 +386,135 @@ func (s *Storage) saveScanLog(path string, metadata *models.ScanMetadata) (err e
 		}
 	}
 
+	return nil
+}
+
+// GetScanDirectory returns the base directory for the storage.
+func (s *Storage) GetScanDirectory() string {
+	return s.baseDir
+}
+
+// LoadResults loads results for a specific scanner from the current scan.
+func (s *Storage) LoadResults(scanner string) (*models.ScanResult, error) {
+	// Load metadata first
+	metadataPath := filepath.Join(s.baseDir, "metadata.json")
+	var metadata models.ScanMetadata
+	if err := s.loadJSON(metadataPath, &metadata); err != nil {
+		return nil, fmt.Errorf("loading metadata: %w", err)
+	}
+
+	// Check if scanner results exist
+	result, ok := metadata.Results[scanner]
+	if !ok {
+		return nil, fmt.Errorf("no results found for scanner: %s", scanner)
+	}
+
+	return result, nil
+}
+
+// LoadEnrichments loads AI enrichments from the scan directory.
+func (s *Storage) LoadEnrichments(scanDir string) ([]enrichment.FindingEnrichment, *enrichment.EnrichmentMetadata, error) {
+	// Validate scan directory path is safe (no directory traversal)
+	validScanDir, err := pathutil.ValidateDataPath(scanDir, "")
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid scan directory: %w", err)
+	}
+
+	enrichmentDir := filepath.Join(validScanDir, "enrichments")
+
+	// Check if enrichments directory exists
+	if _, err := os.Stat(enrichmentDir); os.IsNotExist(err) {
+		// No enrichments found is not an error - return empty
+		return []enrichment.FindingEnrichment{}, nil, nil
+	}
+
+	// Load metadata
+	metadataPath, err := pathutil.JoinAndValidate(enrichmentDir, "metadata.json")
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid metadata path: %w", err)
+	}
+
+	var metadata enrichment.EnrichmentMetadata
+	if err := s.loadJSON(metadataPath, &metadata); err != nil {
+		// If metadata doesn't exist, enrichments may be incomplete
+		s.logger.Warn("Failed to load enrichment metadata", "error", err)
+	}
+
+	// Load individual enrichment files
+	entries, err := os.ReadDir(enrichmentDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading enrichments directory: %w", err)
+	}
+
+	var enrichments []enrichment.FindingEnrichment
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || entry.Name() == "metadata.json" {
+			continue
+		}
+
+		enrichmentPath, err := pathutil.JoinAndValidate(enrichmentDir, entry.Name())
+		if err != nil {
+			s.logger.Debug("Invalid enrichment path", "file", entry.Name(), "error", err)
+			continue
+		}
+
+		var enrichment enrichment.FindingEnrichment
+		if err := s.loadJSON(enrichmentPath, &enrichment); err != nil {
+			s.logger.Warn("Failed to load enrichment", "file", entry.Name(), "error", err)
+			continue
+		}
+
+		enrichments = append(enrichments, enrichment)
+	}
+
+	s.logger.Debug("Loaded enrichments", "count", len(enrichments))
+	return enrichments, &metadata, nil
+}
+
+// SaveEnrichments saves AI enrichments to the scan directory.
+func (s *Storage) SaveEnrichments(scanDir string, enrichments []enrichment.FindingEnrichment, metadata *enrichment.EnrichmentMetadata) error {
+	// Validate scan directory path is safe (no directory traversal)
+	validScanDir, err := pathutil.ValidateDataPath(scanDir, "")
+	if err != nil {
+		return fmt.Errorf("invalid scan directory: %w", err)
+	}
+
+	enrichmentDir := filepath.Join(validScanDir, "enrichments")
+
+	// Create enrichments directory
+	if err := os.MkdirAll(enrichmentDir, 0750); err != nil {
+		return fmt.Errorf("creating enrichments directory: %w", err)
+	}
+
+	// Save individual enrichments
+	for _, enrichment := range enrichments {
+		filename := fmt.Sprintf("%s.json", enrichment.FindingID)
+		enrichmentPath, err := pathutil.JoinAndValidate(enrichmentDir, filename)
+		if err != nil {
+			s.logger.Warn("Invalid enrichment path", "finding_id", enrichment.FindingID, "error", err)
+			continue
+		}
+
+		if err := s.saveJSON(enrichmentPath, enrichment); err != nil {
+			s.logger.Warn("Failed to save enrichment", "finding_id", enrichment.FindingID, "error", err)
+			continue
+		}
+	}
+
+	// Save metadata if provided
+	if metadata != nil {
+		metadataPath, err := pathutil.JoinAndValidate(enrichmentDir, "metadata.json")
+		if err != nil {
+			return fmt.Errorf("invalid metadata path: %w", err)
+		}
+
+		if err := s.saveJSON(metadataPath, metadata); err != nil {
+			return fmt.Errorf("saving enrichment metadata: %w", err)
+		}
+
+		s.logger.Debug("Saved enrichment metadata", "path", metadataPath)
+	}
+
+	s.logger.Debug("Saved enrichments", "count", len(enrichments))
 	return nil
 }

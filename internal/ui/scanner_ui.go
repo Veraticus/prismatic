@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/models"
 )
 
 // ScannerUI manages the terminal UI for scanner operations.

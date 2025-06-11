@@ -19,11 +19,12 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/Veraticus/prismatic/internal/config"
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/internal/storage"
-	"github.com/Veraticus/prismatic/pkg/logger"
-	"github.com/Veraticus/prismatic/pkg/pathutil"
+	"github.com/joshsymonds/prismatic/internal/config"
+	"github.com/joshsymonds/prismatic/internal/enrichment"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/pkg/pathutil"
 )
 
 //go:embed templates/*
@@ -47,11 +48,13 @@ var scannerCategories = map[string]string{
 
 // HTMLGenerator generates HTML reports from scan results.
 type HTMLGenerator struct {
-	logger   logger.Logger
-	metadata *models.ScanMetadata
-	config   *config.Config
-	scanPath string
-	findings []models.Finding
+	logger      logger.Logger
+	metadata    *models.ScanMetadata
+	config      *config.Config
+	enrichments map[string]*enrichment.FindingEnrichment
+	enrichMeta  *enrichment.EnrichmentMetadata
+	scanPath    string
+	findings    []models.Finding
 }
 
 // NewHTMLGenerator creates a new HTML report generator.
@@ -91,12 +94,27 @@ func NewHTMLGeneratorWithLogger(scanPath string, cfg *config.Config, log logger.
 		findings = enrichFindings(findings, cfg, log)
 	}
 
+	// Load AI enrichments if available
+	aiEnrichments, enrichMeta, err := store.LoadEnrichments(scanPath)
+	if err != nil {
+		log.Warn("Failed to load AI enrichments", "error", err)
+		// Continue without AI enrichments
+	}
+
+	// Create enrichment map for quick lookup
+	enrichmentMap := make(map[string]*enrichment.FindingEnrichment)
+	for i := range aiEnrichments {
+		enrichmentMap[aiEnrichments[i].FindingID] = &aiEnrichments[i]
+	}
+
 	generator := &HTMLGenerator{
-		scanPath: scanPath,
-		metadata: metadata,
-		findings: findings,
-		logger:   log,
-		config:   cfg,
+		scanPath:    scanPath,
+		metadata:    metadata,
+		findings:    findings,
+		logger:      log,
+		config:      cfg,
+		enrichments: enrichmentMap,
+		enrichMeta:  enrichMeta,
 	}
 
 	return generator, nil
@@ -213,40 +231,58 @@ func (g *HTMLGenerator) templateFuncs() template.FuncMap {
 		"add": func(a, b int) int {
 			return a + b
 		},
+		"dict": func(values ...interface{}) (map[string]interface{}, error) {
+			if len(values)%2 != 0 {
+				return nil, fmt.Errorf("dict requires even number of arguments")
+			}
+			dict := make(map[string]interface{}, len(values)/2)
+			for i := 0; i < len(values); i += 2 {
+				key, ok := values[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict keys must be strings")
+				}
+				dict[key] = values[i+1]
+			}
+			return dict, nil
+		},
 	}
 }
 
 // TemplateData holds all data for the report template.
 type TemplateData struct {
-	GeneratedAt time.Time
-	Metadata    *models.ScanMetadata
-	// Map-based fields for cleaner code
+	GeneratedAt        time.Time
+	Metadata           *models.ScanMetadata
 	FindingsByCategory map[string][]models.Finding
 	SeverityCounts     map[string]int
-	// Legacy fields for backward compatibility with existing templates
-	AWSFindings        []models.Finding
-	TopRisks           []models.Finding
-	IaCFindings        []models.Finding
+	EnrichmentMeta     *enrichment.EnrichmentMetadata
+	Enrichments        map[string]*enrichment.FindingEnrichment
+	ContainerFindings  []models.Finding
 	SecretsFindings    []models.Finding
 	WebFindings        []models.Finding
 	KubernetesFindings []models.Finding
-	ContainerFindings  []models.Finding
-	TotalSuppressed    int
-	InfoCount          int
+	IaCFindings        []models.Finding
+	AWSFindings        []models.Finding
+	TopRisks           []models.Finding
 	LowCount           int
 	MediumCount        int
 	HighCount          int
 	CriticalCount      int
 	TotalActive        int
 	ScanDuration       time.Duration
+	InfoCount          int
+	TotalSuppressed    int
+	HasEnrichments     bool
 }
 
 // prepareTemplateData organizes data for the template.
 func (g *HTMLGenerator) prepareTemplateData() *TemplateData {
 	data := &TemplateData{
-		Metadata:     g.metadata,
-		GeneratedAt:  time.Now(),
-		ScanDuration: g.metadata.EndTime.Sub(g.metadata.StartTime),
+		Metadata:       g.metadata,
+		GeneratedAt:    time.Now(),
+		ScanDuration:   g.metadata.EndTime.Sub(g.metadata.StartTime),
+		Enrichments:    g.enrichments,
+		EnrichmentMeta: g.enrichMeta,
+		HasEnrichments: len(g.enrichments) > 0,
 	}
 
 	// Process findings - no need to differentiate between enriched and regular

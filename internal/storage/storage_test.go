@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/enrichment"
+	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -375,4 +376,222 @@ func TestLoadJSONWithInvalidPath(t *testing.T) {
 	var data struct{}
 	err := storage.loadJSON("/non/existent/file.json", &data)
 	assert.Error(t, err)
+}
+
+func TestSaveAndLoadEnrichments(t *testing.T) {
+	// Create temporary directory for tests
+	tempDir := t.TempDir()
+	storage := NewStorage(tempDir)
+	scanDir := filepath.Join(tempDir, "scan-001")
+	require.NoError(t, os.MkdirAll(scanDir, 0750))
+
+	// Create test enrichments
+	enrichments := []enrichment.FindingEnrichment{
+		{
+			FindingID:  "finding-1",
+			EnrichedAt: time.Now(),
+			LLMModel:   "claude-3-opus",
+			TokensUsed: 1500,
+			Analysis: enrichment.Analysis{
+				BusinessImpact:    "High risk to customer data security",
+				PriorityReasoning: "Publicly exposed S3 bucket contains sensitive data",
+				TechnicalDetails:  "Bucket has ACL set to public-read",
+				PriorityScore:     9.5,
+				RelatedFindings:   []string{"finding-2", "finding-3"},
+			},
+			Remediation: enrichment.Remediation{
+				EstimatedEffort:    "1 hour",
+				Immediate:          []string{"Set bucket ACL to private"},
+				ShortTerm:          []string{"Review all bucket policies"},
+				LongTerm:           []string{"Implement bucket policy automation"},
+				AutomationPossible: true,
+			},
+			Context: map[string]interface{}{
+				"service":     "s3",
+				"region":      "us-east-1",
+				"environment": "production",
+			},
+		},
+		{
+			FindingID:  "finding-2",
+			EnrichedAt: time.Now(),
+			LLMModel:   "claude-3-opus",
+			TokensUsed: 800,
+			Analysis: enrichment.Analysis{
+				BusinessImpact:    "Moderate performance impact",
+				PriorityReasoning: "Unencrypted RDS database",
+				TechnicalDetails:  "Database lacks encryption at rest",
+				PriorityScore:     7.0,
+			},
+			Remediation: enrichment.Remediation{
+				EstimatedEffort:    "4 hours",
+				Immediate:          []string{"Enable RDS encryption"},
+				ShortTerm:          []string{"Audit all databases"},
+				LongTerm:           []string{"Enforce encryption policy"},
+				AutomationPossible: false,
+			},
+		},
+	}
+
+	metadata := &enrichment.EnrichmentMetadata{
+		StartedAt:        time.Now().Add(-5 * time.Minute),
+		CompletedAt:      time.Now(),
+		RunID:            "enrich-001",
+		Strategy:         "smart_batch",
+		Driver:           "claude_cli",
+		LLMModel:         "claude-3-opus",
+		TotalFindings:    10,
+		EnrichedFindings: 2,
+		TotalTokensUsed:  2300,
+	}
+
+	// Test saving enrichments
+	err := storage.SaveEnrichments(scanDir, enrichments, metadata)
+	require.NoError(t, err)
+
+	// Verify files were created
+	enrichmentDir := filepath.Join(scanDir, "enrichments")
+	assert.DirExists(t, enrichmentDir)
+	assert.FileExists(t, filepath.Join(enrichmentDir, "finding-1.json"))
+	assert.FileExists(t, filepath.Join(enrichmentDir, "finding-2.json"))
+	assert.FileExists(t, filepath.Join(enrichmentDir, "metadata.json"))
+
+	// Test loading enrichments
+	loadedEnrichments, loadedMetadata, err := storage.LoadEnrichments(scanDir)
+	require.NoError(t, err)
+	require.NotNil(t, loadedMetadata)
+	assert.Len(t, loadedEnrichments, 2)
+
+	// Verify metadata
+	assert.Equal(t, metadata.RunID, loadedMetadata.RunID)
+	assert.Equal(t, metadata.Strategy, loadedMetadata.Strategy)
+	assert.Equal(t, metadata.TotalTokensUsed, loadedMetadata.TotalTokensUsed)
+
+	// Verify enrichments (order might differ)
+	enrichmentMap := make(map[string]enrichment.FindingEnrichment)
+	for _, e := range loadedEnrichments {
+		enrichmentMap[e.FindingID] = e
+	}
+
+	// Check finding-1
+	e1, ok := enrichmentMap["finding-1"]
+	assert.True(t, ok)
+	assert.Equal(t, "claude-3-opus", e1.LLMModel)
+	assert.Equal(t, 1500, e1.TokensUsed)
+	assert.Equal(t, 9.5, e1.Analysis.PriorityScore)
+	assert.Equal(t, "High risk to customer data security", e1.Analysis.BusinessImpact)
+	assert.Len(t, e1.Analysis.RelatedFindings, 2)
+	assert.Equal(t, "1 hour", e1.Remediation.EstimatedEffort)
+	assert.True(t, e1.Remediation.AutomationPossible)
+	assert.Equal(t, "s3", e1.Context["service"])
+
+	// Check finding-2
+	e2, ok := enrichmentMap["finding-2"]
+	assert.True(t, ok)
+	assert.Equal(t, 800, e2.TokensUsed)
+	assert.Equal(t, 7.0, e2.Analysis.PriorityScore)
+	assert.False(t, e2.Remediation.AutomationPossible)
+}
+
+func TestLoadEnrichmentsNoDirectory(t *testing.T) {
+	// Test loading enrichments when directory doesn't exist
+	tempDir := t.TempDir()
+	storage := NewStorage(tempDir)
+	scanDir := filepath.Join(tempDir, "scan-002")
+
+	// Create scan directory but no enrichments subdirectory
+	require.NoError(t, os.MkdirAll(scanDir, 0750))
+
+	// Should return empty results without error
+	enrichments, metadata, err := storage.LoadEnrichments(scanDir)
+	require.NoError(t, err)
+	assert.Empty(t, enrichments)
+	assert.Nil(t, metadata)
+}
+
+func TestLoadEnrichmentsInvalidFiles(t *testing.T) {
+	// Test handling of invalid enrichment files
+	tempDir := t.TempDir()
+	storage := NewStorage(tempDir)
+	scanDir := filepath.Join(tempDir, "scan-003")
+	enrichmentDir := filepath.Join(scanDir, "enrichments")
+
+	require.NoError(t, os.MkdirAll(enrichmentDir, 0750))
+
+	// Create valid metadata
+	metadata := &enrichment.EnrichmentMetadata{
+		RunID:            "test-run",
+		TotalFindings:    5,
+		EnrichedFindings: 2,
+	}
+	metadataPath := filepath.Join(enrichmentDir, "metadata.json")
+	data, _ := json.MarshalIndent(metadata, "", "  ")
+	require.NoError(t, os.WriteFile(metadataPath, data, 0600))
+
+	// Create one valid enrichment
+	validEnrichment := enrichment.FindingEnrichment{
+		FindingID:  "valid-finding",
+		TokensUsed: 100,
+	}
+	validData, _ := json.MarshalIndent(validEnrichment, "", "  ")
+	require.NoError(t, os.WriteFile(filepath.Join(enrichmentDir, "valid-finding.json"), validData, 0600))
+
+	// Create invalid JSON file
+	require.NoError(t, os.WriteFile(filepath.Join(enrichmentDir, "invalid.json"), []byte("invalid json"), 0600))
+
+	// Create non-JSON file (should be ignored)
+	require.NoError(t, os.WriteFile(filepath.Join(enrichmentDir, "readme.txt"), []byte("not json"), 0600))
+
+	// Load should succeed with only valid enrichment
+	enrichments, loadedMetadata, err := storage.LoadEnrichments(scanDir)
+	require.NoError(t, err)
+	assert.Len(t, enrichments, 1)
+	assert.Equal(t, "valid-finding", enrichments[0].FindingID)
+	assert.Equal(t, "test-run", loadedMetadata.RunID)
+}
+
+func TestSaveEnrichmentsWithInvalidPath(t *testing.T) {
+	storage := NewStorage("")
+
+	// Test with invalid scan directory path
+	err := storage.SaveEnrichments("/invalid\x00path", []enrichment.FindingEnrichment{}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid scan directory")
+}
+
+func TestLoadEnrichmentsWithInvalidPath(t *testing.T) {
+	storage := NewStorage("")
+
+	// Test with invalid scan directory path
+	_, _, err := storage.LoadEnrichments("/invalid\x00path")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid scan directory")
+}
+
+func TestSaveEnrichmentsPartialFailure(t *testing.T) {
+	// Test that saving continues even if some enrichments fail
+	tempDir := t.TempDir()
+	storage := NewStorage(tempDir)
+	scanDir := filepath.Join(tempDir, "scan-004")
+	require.NoError(t, os.MkdirAll(scanDir, 0750))
+
+	// Create enrichments with invalid finding ID
+	enrichments := []enrichment.FindingEnrichment{
+		{
+			FindingID:  "valid-finding",
+			TokensUsed: 100,
+		},
+		{
+			FindingID:  "invalid/finding", // Contains slash, might cause path issues
+			TokensUsed: 200,
+		},
+	}
+
+	// Should save without error (warnings logged)
+	err := storage.SaveEnrichments(scanDir, enrichments, nil)
+	require.NoError(t, err)
+
+	// At least the valid enrichment should exist
+	enrichmentDir := filepath.Join(scanDir, "enrichments")
+	assert.FileExists(t, filepath.Join(enrichmentDir, "valid-finding.json"))
 }

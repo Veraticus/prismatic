@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // ConvertHTMLToPDF converts an HTML file to PDF using available tools.

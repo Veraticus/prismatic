@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Veraticus/prismatic/pkg/pathutil"
+	"github.com/joshsymonds/prismatic/pkg/pathutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,6 +20,7 @@ type Config struct {
 	SeverityOverrides  map[string]string        `yaml:"severity_overrides,omitempty"`
 	MetadataEnrichment MetadataEnrichment       `yaml:"metadata_enrichment,omitempty"`
 	Scanners           map[string]ScannerConfig `yaml:"scanners,omitempty"`
+	Enrichment         *EnrichmentConfig        `yaml:"enrichment,omitempty"`
 	Client             ClientConfig             `yaml:"client"`
 	Suppressions       SuppressionConfig        `yaml:"suppressions,omitempty"`
 	Endpoints          []string                 `yaml:"endpoints,omitempty"`
@@ -85,6 +86,18 @@ type Repository struct {
 // ScannerConfig contains configuration for individual scanners.
 type ScannerConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// EnrichmentConfig contains configuration for AI-powered enrichment.
+type EnrichmentConfig struct {
+	DriverConfig         map[string]interface{} `yaml:"driver_config,omitempty"`
+	EnableCache          *bool                  `yaml:"enable_cache,omitempty"`
+	Strategy             string                 `yaml:"strategy,omitempty"`
+	DriverName           string                 `yaml:"driver,omitempty"`
+	CacheTTL             string                 `yaml:"cache_ttl,omitempty"`
+	ProductionAccounts   []string               `yaml:"production_accounts,omitempty"`
+	ProductionNamespaces []string               `yaml:"production_namespaces,omitempty"`
+	TokenBudget          int                    `yaml:"token_budget,omitempty"`
 }
 
 // LoadConfig reads and parses a YAML configuration file.

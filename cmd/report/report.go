@@ -2,15 +2,20 @@
 package report
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/Veraticus/prismatic/internal/config"
-	"github.com/Veraticus/prismatic/internal/report"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/config"
+	"github.com/joshsymonds/prismatic/internal/enrichment"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/report"
+	"github.com/joshsymonds/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // Options represents report command options.
@@ -35,7 +40,7 @@ func Run(args []string) error {
 
 	// Handle --format flag
 	var formatFlag string
-	fs.StringVar(&formatFlag, "format", "html", "Report format(s): html,pdf")
+	fs.StringVar(&formatFlag, "format", "html", "Report format(s): html,pdf,remediation,fix-bundle")
 
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, `Usage: prismatic report [options]
@@ -64,9 +69,6 @@ Examples:
 	opts.Formats = strings.Split(formatFlag, ",")
 	for i, f := range opts.Formats {
 		opts.Formats[i] = strings.TrimSpace(f)
-		if f != "html" && f != "pdf" {
-			return fmt.Errorf("unsupported format: %s", f)
-		}
 	}
 
 	// Resolve scan path
@@ -103,45 +105,100 @@ Examples:
 		logger.Info("Loaded config for enrichment", "file", opts.ConfigFile)
 	}
 
-	// Create HTML generator
-	generator, err := report.NewHTMLGenerator(scanPath, cfg)
+	// Load scan data for new format system
+	store := storage.NewStorageWithLogger("data", logger.GetGlobalLogger())
+
+	// Load metadata
+	metadata, err := store.LoadScanResults(scanPath)
 	if err != nil {
-		return fmt.Errorf("creating report generator: %w", err)
+		return fmt.Errorf("loading scan results: %w", err)
+	}
+
+	// Load findings
+	findingsPath := filepath.Join(scanPath, "findings.json")
+	var findings []models.Finding
+	if err := loadJSONFile(findingsPath, &findings); err != nil {
+		return fmt.Errorf("loading findings: %w", err)
+	}
+
+	// Load enrichments if available
+	enrichments, _, err := store.LoadEnrichments(scanPath)
+	if err != nil {
+		logger.Warn("Failed to load AI enrichments", "error", err)
+	}
+
+	// Create enrichment map
+	enrichmentMap := make(map[string]*enrichment.FindingEnrichment)
+	for i := range enrichments {
+		enrichmentMap[enrichments[i].FindingID] = &enrichments[i]
 	}
 
 	// Apply modifications if specified
 	if opts.ModificationsFile != "" {
-		if err := generator.ApplyModifications(opts.ModificationsFile); err != nil {
-			return fmt.Errorf("applying modifications: %w", err)
+		mods, err := report.LoadModifications(opts.ModificationsFile)
+		if err != nil {
+			return fmt.Errorf("loading modifications: %w", err)
 		}
+		findings = mods.ApplyModificationsWithLogger(findings, logger.GetGlobalLogger())
+		logger.Info("Applied modifications",
+			"file", opts.ModificationsFile,
+			"suppressions", len(mods.Suppressions),
+			"overrides", len(mods.Overrides))
 	}
 
 	// Generate reports in requested formats
 	for _, format := range opts.Formats {
 		outputFile := opts.OutputPath
 		if !strings.HasSuffix(outputFile, "."+format) {
-			outputFile = fmt.Sprintf("%s.%s", opts.OutputPath, format)
+			// remediation format outputs YAML
+			if format == "remediation" && !strings.HasSuffix(outputFile, ".yaml") {
+				outputFile = fmt.Sprintf("%s.yaml", opts.OutputPath)
+			} else {
+				outputFile = fmt.Sprintf("%s.%s", opts.OutputPath, format)
+			}
 		}
 
-		switch format {
-		case "html":
-			if err := generator.Generate(outputFile); err != nil {
-				return fmt.Errorf("generating HTML report: %w", err)
-			}
-		case "pdf":
-			// First generate HTML to a temporary file
-			htmlFile := strings.TrimSuffix(outputFile, ".pdf") + ".html"
-			if err := generator.Generate(htmlFile); err != nil {
-				return fmt.Errorf("generating HTML for PDF: %w", err)
+		// Handle legacy HTML/PDF formats specially for backward compatibility
+		if format == "html" || format == "pdf" {
+			// Create HTML generator
+			generator, err := report.NewHTMLGenerator(scanPath, cfg)
+			if err != nil {
+				return fmt.Errorf("creating HTML generator: %w", err)
 			}
 
-			// Convert HTML to PDF
-			if err := report.ConvertHTMLToPDF(htmlFile, outputFile); err != nil {
-				return fmt.Errorf("converting HTML to PDF: %w", err)
+			// Apply modifications if specified
+			if opts.ModificationsFile != "" {
+				if err := generator.ApplyModifications(opts.ModificationsFile); err != nil {
+					return fmt.Errorf("applying modifications: %w", err)
+				}
 			}
 
-			// Optionally remove the intermediate HTML file
-			// os.Remove(htmlFile)
+			if format == "html" {
+				if err := generator.Generate(outputFile); err != nil {
+					return fmt.Errorf("generating HTML report: %w", err)
+				}
+			} else { // pdf
+				// First generate HTML to a temporary file
+				htmlFile := strings.TrimSuffix(outputFile, ".pdf") + ".html"
+				if err := generator.Generate(htmlFile); err != nil {
+					return fmt.Errorf("generating HTML for PDF: %w", err)
+				}
+
+				// Convert HTML to PDF
+				if err := report.ConvertHTMLToPDF(htmlFile, outputFile); err != nil {
+					return fmt.Errorf("converting HTML to PDF: %w", err)
+				}
+			}
+		} else {
+			// Use new format registry
+			formatter, err := report.GetFormat(format, cfg, logger.GetGlobalLogger())
+			if err != nil {
+				return fmt.Errorf("getting format %s: %w", format, err)
+			}
+
+			if err := formatter.Generate(findings, enrichmentMap, metadata, outputFile); err != nil {
+				return fmt.Errorf("generating %s report: %w", format, err)
+			}
 		}
 
 		logger.Info("Generated report", "format", format, "file", outputFile)
@@ -173,4 +230,18 @@ func findLatestScan() string {
 	}
 
 	return ""
+}
+
+// loadJSONFile loads JSON data from a file.
+func loadJSONFile(path string, v any) error {
+	data, err := os.ReadFile(path) // #nosec G304 - path is validated by caller
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	buf.Write(data)
+
+	decoder := json.NewDecoder(&buf)
+	return decoder.Decode(v)
 }

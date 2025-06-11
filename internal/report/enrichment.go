@@ -1,9 +1,9 @@
 package report
 
 import (
-	"github.com/Veraticus/prismatic/internal/config"
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/config"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // enrichFindings adds business context to findings based on configured metadata.

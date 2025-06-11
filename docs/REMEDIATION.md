@@ -4,6 +4,22 @@
 
 The remediation report format transforms security findings into actionable, machine-readable outputs that can be executed by developers, automation tools, or LLMs. This document describes new report formats that generate remediation manifests and fix bundles from enriched security findings.
 
+## Implementation Status
+
+✅ **Completed Features:**
+- Remediation manifest generator (`--format remediation`)
+- Fix bundle generator (`--format fix-bundle`)
+- Finding grouper with intelligent fix strategies
+- Validation script generation
+- LLM prompt generation
+- Summary scripts for bulk operations
+
+🚧 **Not Yet Implemented:**
+- GitHub issues format (`--format github-issues`)
+- Interactive report generation
+- IDE integrations
+- Remediation tracking
+
 ## Motivation
 
 While PDF/HTML reports are excellent for human review and compliance, modern DevSecOps workflows require:
@@ -185,112 +201,160 @@ fix-bundle/
 
 ## Implementation
 
+### Current Architecture
+
+The remediation system is implemented across several packages:
+
+```
+internal/
+├── remediation/           # Core remediation logic
+│   ├── types.go          # Data structures (Manifest, Remediation, etc.)
+│   └── grouper.go        # Finding grouping and fix strategies
+└── report/               # Report generation
+    ├── remediation.go    # YAML manifest generator
+    └── fix_bundle.go     # Fix bundle directory generator
+```
+
 ### Integration with Report Package
 
 ```go
-// internal/report/formats.go
-package report
-
-// Register new report formats
+// internal/report/formats.go - Actual implementation
 func init() {
-    RegisterFormat("html", &HTMLReporter{})
-    RegisterFormat("pdf", &PDFReporter{})
-    RegisterFormat("remediation", &RemediationReporter{})
-    RegisterFormat("fix-bundle", &FixBundleReporter{})
-    RegisterFormat("github-issues", &GitHubIssueReporter{})
-}
-
-// internal/report/remediation.go
-package report
-
-type RemediationReporter struct {
-    templateEngine *TemplateEngine
-    grouper        *FindingGrouper
-}
-
-func (r *RemediationReporter) Generate(findings []models.Finding, enrichments map[string]Enrichment, output string) error {
-    // Group findings by remediation type
-    groups := r.grouper.GroupByRemediation(findings)
+    // HTML format registration
+    RegisterFormat("html", func(cfg *config.Config, log logger.Logger) (ReportFormat, error) {
+        return NewHTMLGenerator(cfg, log), nil
+    })
     
-    manifest := &RemediationManifest{
-        Version:      "1.0",
-        GeneratedAt:  time.Now(),
-        Remediations: []Remediation{},
+    // Remediation manifest format
+    RegisterFormat("remediation", func(cfg *config.Config, log logger.Logger) (ReportFormat, error) {
+        return NewRemediationReporter(cfg, log), nil
+    })
+    
+    // Fix bundle format
+    RegisterFormat("fix-bundle", func(cfg *config.Config, log logger.Logger) (ReportFormat, error) {
+        return &fixBundleFormat{
+            generator: NewFixBundleGenerator(cfg, log),
+        }, nil
+    })
+}
+
+// internal/report/remediation.go - Actual implementation
+type RemediationReporter struct {
+    config  *config.Config
+    logger  logger.Logger
+    grouper *remediation.FindingGrouper
+}
+
+func (r *RemediationReporter) Generate(findings []models.Finding, outputPath string) error {
+    // Filter suppressed findings
+    activeFindings := r.filterActiveFindings(findings)
+    
+    // Group findings by fix strategy
+    groups := r.grouper.GroupFindings(activeFindings)
+    
+    // Create manifest with metadata
+    manifest := &remediation.Manifest{
+        ManifestVersion: "1.0",
+        GeneratedAt:     time.Now().Format(time.RFC3339),
+        Metadata:        r.createMetadata(activeFindings, groups),
+        Remediations:    []remediation.Remediation{},
     }
     
+    // Generate remediations from groups
     for _, group := range groups {
-        rem := r.createRemediation(group, enrichments)
+        rem := r.createRemediation(group)
         manifest.Remediations = append(manifest.Remediations, rem)
     }
     
     // Sort by priority
-    r.prioritizeRemediations(manifest)
+    sort.Slice(manifest.Remediations, func(i, j int) bool {
+        return manifest.Remediations[i].Priority < manifest.Remediations[j].Priority
+    })
     
     // Write YAML output
-    return r.writeYAML(manifest, output)
+    return r.writeYAML(manifest, outputPath)
 }
 ```
 
-### Fix Strategies
+### Fix Strategies (Actual Implementation)
 
 ```go
-// internal/remediation/strategies/
-type FixStrategy interface {
-    CanHandle(finding models.Finding) bool
-    GenerateRemediation(findings []models.Finding, context Context) Remediation
-    EstimateEffort(findings []models.Finding) time.Duration
+// internal/remediation/grouper.go - Strategy determination
+func (g *FindingGrouper) determineStrategy(finding models.Finding) string {
+    switch finding.Scanner {
+    case "prowler":
+        return g.determineProwlerStrategy(finding)
+    case "trivy":
+        return g.determineTrivyStrategy(finding)
+    case "kubescape":
+        return g.determineKubescapeStrategy(finding)
+    // ... other scanners
+    }
+    return "generic"
 }
 
-// Terraform S3 strategy
-type TerraformS3Strategy struct{}
+// Example: Prowler S3 strategies
+func (g *FindingGrouper) determineProwlerStrategy(finding models.Finding) string {
+    findingType := strings.ToLower(finding.Type)
+    
+    // S3 related
+    if strings.Contains(findingType, "s3") {
+        if strings.Contains(findingType, "public") || strings.Contains(findingType, "acl") {
+            return "terraform-s3-public-access"
+        }
+        if strings.Contains(findingType, "encrypt") {
+            return "terraform-s3-encryption"
+        }
+    }
+    // ... other strategies
+}
 
-func (s *TerraformS3Strategy) GenerateRemediation(findings []models.Finding, ctx Context) Remediation {
-    return Remediation{
-        Title: "Fix S3 bucket public access",
-        Implementation: Implementation{
-            LLMInstructions: s.generateLLMPrompt(findings),
-            CodeChanges:     s.generateCodeChanges(findings),
-            Template:        s.loadTemplate("s3_public_access_block"),
-        },
-        Validation: s.generateValidation(findings),
+// Fix bundle generator applies strategies
+// internal/report/fix_bundle.go
+func (g *FixBundleGenerator) generateFixFiles(rem remediation.Remediation, dir string) error {
+    strategy := g.detectStrategy(rem)
+    
+    switch strategy {
+    case "terraform-s3-public-access":
+        return g.generateTerraformS3Fix(rem, dir)
+    case "kubernetes-security-context":
+        return g.generateKubernetesSecurityContextFix(rem, dir)
+    // ... other strategies
     }
 }
 ```
 
-### LLM Integration
+### LLM Integration (Actual Implementation)
 
 ```go
-// internal/remediation/llm_prompt.go
-type LLMPromptGenerator struct {
-    templates map[string]*template.Template
-}
+// internal/report/fix_bundle.go - LLM prompt generation
+func (g *FixBundleGenerator) generateLLMPrompt(rem remediation.Remediation, dir string) error {
+    promptContent := fmt.Sprintf(`# LLM Remediation Instructions for %s
 
-func (g *LLMPromptGenerator) GeneratePrompt(rem Remediation) string {
-    prompt := fmt.Sprintf(`
-You are helping fix security issues in a %s repository.
-
-CONTEXT:
+## Context
 %s
 
-TASK:
+## Task
 %s
 
-SPECIFIC INSTRUCTIONS:
+## Detailed Instructions
 %s
 
-SUCCESS CRITERIA:
-%s
+## Code Changes Required
+`, rem.Title, rem.Description, rem.Implementation.Approach, rem.Implementation.LLMInstructions)
 
-Please implement these changes and show the diff.
-`,
-        rem.Target.RepositoryType,
-        rem.Context.Description,
-        rem.Title,
-        rem.Implementation.LLMInstructions,
-        g.formatValidationSteps(rem.Validation),
-    )
+    // Add code templates if available
+    for _, change := range rem.Implementation.CodeChanges {
+        promptContent += fmt.Sprintf("\n### File Pattern: %s\n", change.FilePattern)
+        promptContent += fmt.Sprintf("Change Type: %s\n", change.ChangeType)
+        if change.Template != "" {
+            promptContent += fmt.Sprintf("```\n%s\n```\n", change.Template)
+        }
+    }
     
-    return prompt
+    // Save to file
+    promptPath := filepath.Join(dir, "llm-prompt.txt")
+    return os.WriteFile(promptPath, []byte(promptContent), 0644)
 }
 ```
 
@@ -316,6 +380,24 @@ claude -p "$(cat ~/prismatic/fixes.yaml | yq '.remediations[0].implementation.ll
 ```bash
 # Generate complete fix bundle
 prismatic report -s data/scans/latest --format fix-bundle -o ~/fix-bundle/
+
+# Review generated structure
+$ tree ~/fix-bundle/
+fix-bundle/
+├── manifest.yaml
+├── README.md
+├── remediations/
+│   ├── rem-001-s3-public-access/
+│   │   ├── README.md
+│   │   ├── fix.patch
+│   │   ├── terraform/
+│   │   │   └── s3_public_access_block.tf
+│   │   ├── validation.sh
+│   │   └── llm-prompt.txt
+│   └── rem-002-.../
+├── scripts/
+│   ├── apply-all-critical.sh
+│   └── validate-all.sh
 
 # Apply critical fixes
 cd ~/repos/infrastructure

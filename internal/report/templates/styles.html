@@ -590,6 +590,128 @@ footer p {
     margin-left: 8px;
 }
 
+/* AI Enrichment Styles */
+.ai-enrichment {
+    background: linear-gradient(135deg, rgba(129, 140, 248, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 20px;
+    position: relative;
+}
+
+.ai-enrichment::before {
+    content: '🤖';
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    font-size: 1.5rem;
+    opacity: 0.3;
+}
+
+.ai-enrichment h4 {
+    color: var(--accent);
+    font-size: 1.1rem;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ai-enrichment h5 {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    margin: 16px 0 12px 0;
+}
+
+.priority-score {
+    margin-bottom: 16px;
+}
+
+.priority-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 16px;
+    color: white;
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin-left: 8px;
+}
+
+.ai-section {
+    margin-bottom: 16px;
+}
+
+.ai-section strong {
+    color: var(--text-secondary);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ai-section p {
+    margin: 0;
+    line-height: 1.6;
+    color: var(--text-primary);
+}
+
+.ai-remediation {
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 6px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.remediation-phase {
+    margin-bottom: 16px;
+}
+
+.remediation-phase:last-child {
+    margin-bottom: 0;
+}
+
+.remediation-phase strong {
+    color: var(--accent);
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.875rem;
+}
+
+.remediation-phase ul {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.remediation-phase li {
+    margin-bottom: 4px;
+    color: var(--text-primary);
+}
+
+.related-findings {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-light);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+/* Remediation Details Styling */
+.remediation-details {
+    background: rgba(40, 167, 69, 0.05);
+    border: 1px solid rgba(40, 167, 69, 0.2);
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.remediation-details h4 {
+    color: #28a745;
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+}
+
 /* Print Styles */
 @media print {
     body {
@@ -608,6 +730,11 @@ footer p {
     .finding-card {
         border: 1px solid #ddd;
         margin-bottom: 12px;
+    }
+    
+    .ai-enrichment {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
     }
 }
 {{end}}

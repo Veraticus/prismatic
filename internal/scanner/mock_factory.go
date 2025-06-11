@@ -1,6 +1,6 @@
 package scanner
 
-import "github.com/Veraticus/prismatic/pkg/logger"
+import "github.com/joshsymonds/prismatic/pkg/logger"
 
 // MockFactory creates mock scanners for testing.
 type MockFactory struct {

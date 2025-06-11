@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

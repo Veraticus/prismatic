@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // CheckovScanner implements Infrastructure-as-Code security scanning.

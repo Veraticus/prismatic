@@ -29,7 +29,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/models"
 )
 
 // ScanFunc is a function that performs the actual scan for a specific target.

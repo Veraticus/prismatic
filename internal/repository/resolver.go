@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Veraticus/prismatic/internal/config"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/config"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // Resolver is a function that resolves a repository to a local path

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Veraticus/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/models"
 )
 
 func TestSaveAndLoadFindingsWithBusinessContext(t *testing.T) {

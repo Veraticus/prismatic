@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // KubescapeScanner implements Kubernetes security scanning using Kubescape.

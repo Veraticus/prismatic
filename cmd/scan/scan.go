@@ -13,12 +13,12 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/Veraticus/prismatic/internal/config"
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/internal/scanner"
-	"github.com/Veraticus/prismatic/internal/storage"
-	"github.com/Veraticus/prismatic/internal/ui"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/config"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/scanner"
+	"github.com/joshsymonds/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/internal/ui"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // Options represents scan command options.

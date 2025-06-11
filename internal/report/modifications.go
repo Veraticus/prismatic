@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/pkg/logger"
-	"github.com/Veraticus/prismatic/pkg/pathutil"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/pkg/pathutil"
 	"gopkg.in/yaml.v3"
 )
 

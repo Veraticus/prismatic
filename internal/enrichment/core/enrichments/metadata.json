@@ -1,0 +1,11 @@
+{
+  "started_at": "2025-06-10T18:22:19.37228999-07:00",
+  "completed_at": "2025-06-10T18:22:19.372296153-07:00",
+  "run_id": "db196584-3e9e-488d-a7db-b6eaa5196dba",
+  "strategy": "mock",
+  "driver": "",
+  "llm_model": "mock-model",
+  "total_findings": 4,
+  "enriched_findings": 0,
+  "total_tokens_used": 0
+}

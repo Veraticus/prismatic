@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/internal/enrichment"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -552,4 +554,246 @@ func TestGenerateWithInvalidOutputPath(t *testing.T) {
 	err = gen.Generate("/invalid\x00path/report.html")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "creating output")
+}
+
+func TestHTMLGeneratorWithAIEnrichments(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create data directory structure
+	dataDir := filepath.Join(tempDir, "data")
+	_ = os.MkdirAll(dataDir, 0750)
+
+	// Save current working directory and change to temp
+	oldWd, _ := os.Getwd()
+	_ = os.Chdir(tempDir)
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	// Create test scan data
+	store := storage.NewStorage("data")
+	scanDir := filepath.Join("data", "scans", "2024-01-01T10-00-00Z")
+
+	metadata := &models.ScanMetadata{
+		ClientName:  "test-client",
+		Environment: "production",
+		StartTime:   time.Now().Add(-10 * time.Minute),
+		EndTime:     time.Now(),
+		Summary: models.ScanSummary{
+			TotalFindings: 2,
+			BySeverity: map[string]int{
+				"critical": 1,
+				"high":     1,
+			},
+		},
+	}
+
+	findings := []models.Finding{
+		{
+			ID:          "finding-1",
+			Scanner:     "mock-prowler",
+			Type:        "s3-public",
+			Severity:    "critical",
+			Title:       "S3 Bucket Publicly Accessible",
+			Description: "S3 bucket allows public read access",
+			Resource:    "s3://sensitive-data-bucket",
+			Remediation: "Make bucket private",
+			Impact:      "Data exposure risk",
+		},
+		{
+			ID:          "finding-2",
+			Scanner:     "mock-trivy",
+			Type:        "CVE-2021-44228",
+			Severity:    "high",
+			Title:       "Log4Shell Vulnerability",
+			Description: "Critical RCE vulnerability in Log4j",
+			Resource:    "app:latest",
+			Remediation: "Update Log4j",
+			Impact:      "Remote code execution",
+		},
+	}
+
+	// Save test data
+	err := store.SaveScanResults(scanDir, metadata)
+	require.NoError(t, err)
+
+	err = saveJSONHelper(filepath.Join(scanDir, "findings.json"), findings)
+	require.NoError(t, err)
+
+	// Create AI enrichments
+	aiEnrichments := []enrichment.FindingEnrichment{
+		{
+			FindingID:  "finding-1",
+			EnrichedAt: time.Now(),
+			LLMModel:   "claude-3-opus",
+			TokensUsed: 1200,
+			Analysis: enrichment.Analysis{
+				BusinessImpact:    "Critical risk to customer PII data. This bucket contains sensitive customer information that could lead to GDPR violations if exposed.",
+				PriorityReasoning: "Public S3 buckets are actively scanned by threat actors. With sensitive data present, this represents an immediate risk.",
+				TechnicalDetails:  "The bucket ACL is set to allow public-read. Any internet user can list and download objects from this bucket.",
+				PriorityScore:     9.8,
+				RelatedFindings:   []string{"finding-3", "finding-4"},
+			},
+			Remediation: enrichment.Remediation{
+				EstimatedEffort:    "30 minutes",
+				Immediate:          []string{"Remove public access from bucket ACL", "Enable S3 Block Public Access"},
+				ShortTerm:          []string{"Review all S3 bucket policies", "Implement bucket policy alerts"},
+				LongTerm:           []string{"Deploy AWS Config rules for S3 security", "Implement preventive controls in AWS Organizations"},
+				AutomationPossible: true,
+			},
+			Context: map[string]interface{}{
+				"service": "s3",
+				"region":  "us-east-1",
+			},
+		},
+		{
+			FindingID:  "finding-2",
+			EnrichedAt: time.Now(),
+			LLMModel:   "claude-3-opus",
+			TokensUsed: 800,
+			Analysis: enrichment.Analysis{
+				BusinessImpact:    "Application containers are vulnerable to remote code execution. Attackers could gain full control of the container.",
+				PriorityReasoning: "Log4Shell is actively exploited in the wild with readily available exploit code.",
+				TechnicalDetails:  "Log4j versions 2.0-beta9 to 2.14.1 are affected. JNDI lookup feature allows arbitrary code execution.",
+				PriorityScore:     9.5,
+			},
+			Remediation: enrichment.Remediation{
+				EstimatedEffort: "2 hours",
+				Immediate:       []string{"Update Log4j to 2.17.0 or later", "Apply JVM flags as temporary mitigation"},
+				ShortTerm:       []string{"Scan all containers for Log4j", "Update base images"},
+				LongTerm:        []string{"Implement vulnerability scanning in CI/CD", "Create automated patching process"},
+			},
+		},
+	}
+
+	enrichMeta := &enrichment.EnrichmentMetadata{
+		StartedAt:        time.Now().Add(-5 * time.Minute),
+		CompletedAt:      time.Now(),
+		RunID:            "enrich-001",
+		Strategy:         "smart_batch",
+		Driver:           "claude_cli",
+		LLMModel:         "claude-3-opus",
+		TotalFindings:    2,
+		EnrichedFindings: 2,
+		TotalTokensUsed:  2000,
+	}
+
+	// Save enrichments
+	err = store.SaveEnrichments(scanDir, aiEnrichments, enrichMeta)
+	require.NoError(t, err)
+
+	// Create HTML generator and load everything
+	gen, err := NewHTMLGenerator(scanDir, nil)
+	require.NoError(t, err)
+
+	// Verify enrichments were loaded
+	assert.Len(t, gen.enrichments, 2)
+	assert.NotNil(t, gen.enrichMeta)
+	assert.Equal(t, 2, gen.enrichMeta.EnrichedFindings)
+
+	// Generate HTML report
+	outputPath := filepath.Join(tempDir, "test-report.html")
+	err = gen.Generate(outputPath)
+	require.NoError(t, err)
+
+	// Read generated HTML
+	content, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	html := string(content)
+
+	// Verify AI enrichment content is present
+	assert.Contains(t, html, "AI Analysis")
+	assert.Contains(t, html, "Priority Score")
+	assert.Contains(t, html, "9.8/10") // Priority score for finding-1
+	assert.Contains(t, html, "Critical risk to customer PII data")
+	assert.Contains(t, html, "AI Remediation Guidance")
+	assert.Contains(t, html, "Remove public access from bucket ACL")
+	// Check for either format of estimated effort
+	hasEffort := strings.Contains(html, "Estimated Effort:</strong> 30 minutes") ||
+		strings.Contains(html, "Estimated Effort: 30 minutes")
+	assert.True(t, hasEffort, "HTML should contain estimated effort")
+	assert.Contains(t, html, "🤖 AI Enriched: 2 findings")
+
+	// Verify template data
+	data := gen.prepareTemplateData()
+	assert.True(t, data.HasEnrichments)
+	assert.Len(t, data.Enrichments, 2)
+	assert.NotNil(t, data.EnrichmentMeta)
+}
+
+func TestHTMLGeneratorWithoutAIEnrichments(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create data directory structure
+	dataDir := filepath.Join(tempDir, "data")
+	_ = os.MkdirAll(dataDir, 0750)
+
+	// Save current working directory and change to temp
+	oldWd, _ := os.Getwd()
+	_ = os.Chdir(tempDir)
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	// Create test scan data without enrichments
+	store := storage.NewStorage("data")
+	scanDir := filepath.Join("data", "scans", "2024-01-01T10-00-00Z")
+
+	metadata := &models.ScanMetadata{
+		ClientName:  "test-client",
+		Environment: "staging",
+		StartTime:   time.Now().Add(-10 * time.Minute),
+		EndTime:     time.Now(),
+		Summary: models.ScanSummary{
+			TotalFindings: 1,
+			BySeverity: map[string]int{
+				"medium": 1,
+			},
+		},
+	}
+
+	findings := []models.Finding{
+		{
+			ID:          "finding-1",
+			Scanner:     "mock-checkov",
+			Type:        "terraform",
+			Severity:    "medium",
+			Title:       "Missing encryption",
+			Description: "Resource not encrypted",
+			Resource:    "aws_s3_bucket.main",
+		},
+	}
+
+	// Save test data
+	err := store.SaveScanResults(scanDir, metadata)
+	require.NoError(t, err)
+
+	err = saveJSONHelper(filepath.Join(scanDir, "findings.json"), findings)
+	require.NoError(t, err)
+
+	// Create HTML generator without enrichments
+	gen, err := NewHTMLGenerator(scanDir, nil)
+	require.NoError(t, err)
+
+	// Verify no enrichments were loaded
+	assert.Len(t, gen.enrichments, 0)
+	assert.Nil(t, gen.enrichMeta)
+
+	// Generate HTML report
+	outputPath := filepath.Join(tempDir, "test-report-no-enrichment.html")
+	err = gen.Generate(outputPath)
+	require.NoError(t, err)
+
+	// Read generated HTML
+	content, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	html := string(content)
+
+	// Verify AI enrichment content is NOT present
+	assert.NotContains(t, html, "AI Analysis")
+	assert.NotContains(t, html, "Priority Score")
+	assert.NotContains(t, html, "AI Remediation Guidance")
+	assert.NotContains(t, html, "🤖 AI Enriched")
+
+	// Verify template data
+	data := gen.prepareTemplateData()
+	assert.False(t, data.HasEnrichments)
+	assert.Len(t, data.Enrichments, 0)
+	assert.Nil(t, data.EnrichmentMeta)
 }

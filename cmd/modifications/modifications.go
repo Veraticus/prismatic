@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Veraticus/prismatic/internal/report"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/report"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // Run executes the modifications command.

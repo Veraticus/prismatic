@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/storage"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // Options represents list command options.

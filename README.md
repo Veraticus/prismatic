@@ -7,6 +7,13 @@
 
 🔍 **Prismatic** is a unified security scanning orchestrator that combines multiple open-source security tools into comprehensive, beautiful reports. It provides a single interface to run various security scanners across your cloud infrastructure, containers, and code repositories.
 
+### ✨ What's New
+
+- **🤖 AI-Powered Enrichment**: Enhance findings with business context using LLMs
+- **🔧 Automated Remediation**: Generate fix bundles with patches, validation scripts, and LLM prompts
+- **📊 Smart Batching**: Cost-effective AI enrichment strategies
+- **🎯 Actionable Outputs**: From scanning to fixing in one workflow
+
 ## 🌟 Features
 
 - **Multi-Scanner Integration**: Seamlessly orchestrates 6+ industry-standard security tools
@@ -19,6 +26,8 @@
 - **Business Context Enrichment**: Add ownership, data classification, and compliance metadata
 - **Deterministic Finding IDs**: Consistent IDs enable reliable suppression and tracking
 - **Parallel Execution**: Runs multiple scanners concurrently for faster results
+- **AI-Powered Enrichment**: Enhance findings with business context using LLMs
+- **Remediation Generation**: Create actionable fix bundles with code patches and validation scripts
 
 ## 🔧 Supported Scanners
 
@@ -95,7 +104,80 @@ go install github.com/Veraticus/prismatic/cmd/prismatic@latest
 
 ## 🎯 Quick Start
 
-### 1. Create a Configuration File
+### Complete Security Workflow with Claude
+
+```bash
+# 1. Run security scanners
+prismatic scan -c mycompany.yaml
+
+# 2. Enrich findings with Claude (uses Claude Code CLI)
+prismatic enrich -s data/scans/latest --strategy smart-batch
+
+# 3. Generate report with enriched context
+prismatic report -s data/scans/latest --format html -o security-report.html
+
+# 4. Generate actionable fix bundle
+prismatic report -s data/scans/latest --format fix-bundle -o fixes/
+```
+
+### Step-by-Step Guide
+
+#### 1. Run Security Scanners
+
+```bash
+# Configuration-driven scanning
+prismatic scan -c mycompany.yaml
+
+# Or use interactive scanner selection
+prismatic scan
+```
+
+#### 2. Enrich Findings with Claude
+
+Claude Code provides intelligent analysis of your findings:
+
+```bash
+# Smart enrichment (recommended) - groups similar findings
+prismatic enrich -s data/scans/latest
+
+# Cost-conscious option - only critical findings
+prismatic enrich -s data/scans/latest --strategy critical-only
+
+# Premium analysis with Claude Opus
+prismatic enrich -s data/scans/latest --model opus
+
+# Budget option with Claude Haiku
+prismatic enrich -s data/scans/latest --model haiku
+```
+
+#### 3. Generate Reports and Remediation
+
+```bash
+# HTML report with Claude's insights
+prismatic report -s data/scans/latest --format html -o report.html
+
+# Machine-readable remediation plan
+prismatic report -s data/scans/latest --format remediation -o fixes.yaml
+
+# Complete fix bundle with validation
+prismatic report -s data/scans/latest --format fix-bundle -o fix-bundle/
+```
+
+#### 4. Apply Fixes with Claude's Help
+
+```bash
+# Use Claude to implement the fixes
+cd fix-bundle/remediations/rem-001-s3-public-access/
+cat llm-prompt.txt | claude
+
+# Or apply patches directly
+git apply fix.patch
+
+# Validate the fix worked
+./validation.sh
+```
+
+### Configuration File Example
 
 Create a YAML configuration file for your environment:
 
@@ -160,36 +242,233 @@ output:
   directory: "./reports/mycompany"
 ```
 
-### 2. Run a Security Scan
 
+## 🤖 AI-Powered Enrichment
+
+Prismatic can enhance your security findings with business context using AI/LLM providers. This helps prioritize remediation efforts by understanding the real-world impact of each finding.
+
+### Enrichment Features
+
+- **Business Impact Analysis**: Understand how security issues affect your business
+- **Compliance Mapping**: Link findings to regulatory requirements (GDPR, PCI-DSS, HIPAA)
+- **Exploitation Context**: Get real-world exploitation likelihood and attack scenarios
+- **Remediation Guidance**: Detailed, context-aware fix recommendations
+
+### 🔥 Claude Code Integration
+
+Prismatic has **native integration with Claude Code**, making it the preferred choice for enrichment:
+
+#### Prerequisites
+
+Ensure you have Claude Code installed:
 ```bash
-# Run all configured scanners
-prismatic scan -c mycompany.yaml
+# Check if claude is available
+claude --version
 
-# Run specific scanners only
-prismatic scan -c mycompany.yaml --only prowler,trivy
-
-# Run with increased verbosity
-prismatic scan -c mycompany.yaml -v
-
-# Run with custom timeout (in seconds)
-prismatic scan -c mycompany.yaml --timeout 3600
+# If not installed, visit: https://claude.ai/code
 ```
 
-### 3. Generate Reports
+#### How It Works
+
+1. **Direct CLI Integration**: Prismatic uses the `claude` CLI command directly
+2. **Intelligent Batching**: Groups similar findings to minimize token usage
+3. **Structured Output**: Claude returns JSON-formatted enrichments
+4. **Model Selection**: Choose between Opus (best), Sonnet (balanced), or Haiku (fast)
+
+#### Running Enrichment with Claude
 
 ```bash
-# Generate HTML report from the latest scan
-prismatic report -c mycompany.yaml
+# Default: Uses Claude Sonnet for balanced cost/quality
+prismatic enrich -s data/scans/latest
 
-# Generate PDF report
-prismatic report -c mycompany.yaml --format pdf
+# Use Claude Opus for highest quality analysis
+prismatic enrich -s data/scans/latest --driver claude-cli --model opus
 
-# List available scans
-prismatic list -c mycompany.yaml
+# Use Claude Haiku for fastest, most cost-effective analysis
+prismatic enrich -s data/scans/latest --driver claude-cli --model haiku
 
-# Generate report from specific scan
-prismatic report -c mycompany.yaml --scan-id 2025-01-15-103045
+# Different strategies to control costs
+prismatic enrich -s data/scans/latest --strategy critical-only  # Only critical findings
+prismatic enrich -s data/scans/latest --strategy high-impact    # Critical + High
+prismatic enrich -s data/scans/latest --strategy smart-batch    # Groups similar findings
+```
+
+#### Example Claude Enrichment Output
+
+When you run enrichment, Claude analyzes each finding and provides:
+
+```json
+{
+  "finding_id": "prowler-s3-001",
+  "analysis": {
+    "business_impact": "Customer PII at risk - S3 bucket contains user uploads with personal data",
+    "priority_score": 9.5,
+    "priority_reasoning": "Public access + sensitive data + easy to exploit = critical priority",
+    "technical_details": "Bucket ACL allows s3:GetObject from principal '*', exposing all objects",
+    "contextual_notes": "This bucket processes 10K user uploads daily including ID documents"
+  },
+  "remediation": {
+    "immediate": [
+      "Block public access immediately: aws s3api put-public-access-block --bucket user-uploads",
+      "Enable access logging to check for unauthorized access"
+    ],
+    "short_term": [
+      "Implement bucket policies restricting access to specific IAM roles",
+      "Enable S3 Object Lock for compliance"
+    ],
+    "long_term": [
+      "Migrate to S3 Access Points for fine-grained access control",
+      "Implement automated compliance scanning"
+    ],
+    "estimated_effort": "2 hours immediate, 1 day short-term",
+    "automation_possible": true,
+    "validation_steps": [
+      "Run: aws s3api get-public-access-block --bucket user-uploads",
+      "Verify all four block settings are 'true'"
+    ]
+  }
+}
+```
+
+#### Cost Optimization
+
+Claude pricing (approximate):
+- **Opus**: ~$15 per 1M input tokens (highest quality)
+- **Sonnet**: ~$3 per 1M input tokens (recommended)
+- **Haiku**: ~$0.25 per 1M input tokens (fastest)
+
+Token usage examples:
+- 100 findings ≈ 50K tokens with smart batching
+- 1000 findings ≈ 200K tokens with critical-only strategy
+
+#### Configuration
+
+```yaml
+# configs/mycompany.yaml
+enrichment:
+  driver: "claude-cli"  # Use Claude Code
+  model: "sonnet"       # opus, sonnet, or haiku
+  temperature: 0.3      # Lower = more consistent
+  
+  # Cost controls
+  strategy: "smart-batch"
+  token_budget: 100000  # Maximum tokens per run
+  
+  # Caching
+  cache_ttl: "30d"      # Reuse enrichments for 30 days
+```
+
+### Enrichment Strategies
+
+| Strategy | Description | Use Case | Token Efficiency |
+|----------|-------------|----------|------------------|
+| `all` | Enrich every finding | Complete analysis | Low |
+| `critical-only` | Only critical severity | Cost-conscious | Very High |
+| `high-impact` | Critical and high severity | Balanced approach | High |
+| `smart-batch` | Group similar findings | Most efficient | Highest |
+
+### Knowledge Base Integration
+
+Enhance Claude's analysis with your organization's context:
+
+```yaml
+# knowledge/services.yaml
+services:
+  user-api:
+    description: "Main user authentication and profile API"
+    business_impact: "Critical - affects all user logins"
+    data_sensitivity: "PII, authentication tokens"
+    compliance_scope: ["GDPR", "CCPA"]
+    owner: "identity-team"
+    sla: "99.99% uptime required"
+
+# knowledge/infrastructure.yaml  
+infrastructure:
+  production-vpc:
+    description: "Primary production VPC in us-east-1"
+    criticality: "high"
+    data_classification: "sensitive"
+    connected_services: ["user-api", "payment-api", "analytics"]
+```
+
+Claude will use this context to provide more accurate business impact assessments.
+
+## 🔧 Remediation Generation
+
+Prismatic can generate actionable remediation plans and fix bundles from your security findings.
+
+### Remediation Formats
+
+#### 1. Remediation Manifest (YAML)
+
+Machine-readable action plan:
+
+```bash
+prismatic report -s data/scans/latest --format remediation -o fixes.yaml
+```
+
+Output includes:
+- Grouped findings by fix strategy
+- Prioritized remediation tasks
+- Effort estimates
+- Implementation instructions
+- Validation steps
+
+#### 2. Fix Bundle (Complete Package)
+
+Ready-to-apply fixes with validation:
+
+```bash
+prismatic report -s data/scans/latest --format fix-bundle -o fix-bundle/
+```
+
+Creates:
+```
+fix-bundle/
+├── manifest.yaml                    # Remediation plan
+├── README.md                        # Priority-ordered tasks
+├── remediations/
+│   ├── rem-001-s3-public-access/
+│   │   ├── README.md               # Fix instructions
+│   │   ├── fix.patch               # Git patch
+│   │   ├── terraform/              # IaC fixes
+│   │   │   └── s3_public_access_block.tf
+│   │   ├── validation.sh           # Verify fix worked
+│   │   └── llm-prompt.txt          # AI assistant prompt
+│   └── rem-002-cve-updates/
+│       └── ...
+└── scripts/
+    ├── apply-all-critical.sh       # Bulk apply critical fixes
+    └── validate-all.sh             # Verify all fixes
+```
+
+### Using Fix Bundles
+
+```bash
+# Review the fix bundle
+cd fix-bundle/
+cat README.md
+
+# Apply critical fixes
+./scripts/apply-all-critical.sh
+
+# Or apply individual fixes
+cd remediations/rem-001-s3-public-access/
+cat README.md
+# Review and apply the terraform changes
+cp terraform/* ~/infrastructure/
+
+# Validate the fix
+./validation.sh
+```
+
+### LLM-Assisted Remediation
+
+Each remediation includes an LLM prompt for AI-assisted fixing:
+
+```bash
+# Use with Claude, ChatGPT, or other AI coding assistants
+cat fix-bundle/remediations/rem-001-s3-public-access/llm-prompt.txt | claude
 ```
 
 ## 🔍 Repository Scanning
@@ -503,6 +782,88 @@ export PRISMATIC_TIMEOUT=3600
     path: reports/**/*.html
 ```
 
+## 🔍 Troubleshooting Claude Integration
+
+### Common Issues
+
+#### Claude CLI Not Found
+```bash
+# Error: claude CLI not found or not working
+# Solution: Ensure Claude Code is installed
+claude --version
+
+# If not installed, visit: https://claude.ai/code
+```
+
+#### Token Limit Exceeded
+```bash
+# Error: Token budget exceeded
+# Solution 1: Use a more efficient strategy
+prismatic enrich -s data/scans/latest --strategy critical-only
+
+# Solution 2: Increase token budget
+prismatic enrich -s data/scans/latest --token-budget 200000
+```
+
+#### Slow Enrichment
+```bash
+# Use Haiku model for faster processing
+prismatic enrich -s data/scans/latest --model haiku
+
+# Enable caching to skip already-enriched findings
+prismatic enrich -s data/scans/latest --use-cache
+```
+
+#### JSON Parsing Errors
+```bash
+# Error: Failed to parse claude response
+# Solution: Use lower temperature for more consistent output
+prismatic enrich -s data/scans/latest --temperature 0.1
+```
+
+### Best Practices
+
+1. **Start Small**: Test with critical findings first
+2. **Use Caching**: Enrichments are cached for 30 days by default
+3. **Monitor Costs**: Check token usage in enrichment metadata
+4. **Batch Wisely**: Smart-batch strategy reduces tokens by 60-80%
+
+## 📚 Command Reference
+
+### Core Commands
+
+```bash
+# Scanning
+prismatic scan                      # Interactive scanner selection
+prismatic scan -c config.yaml       # Run configured scanners
+prismatic scan --only prowler,trivy # Run specific scanners
+
+# Enrichment
+prismatic enrich -s data/scans/latest                    # Enrich all findings
+prismatic enrich -s data/scans/latest --strategy critical-only  # Cost-effective
+prismatic enrich -s data/scans/latest --use-cache       # Use cached results
+
+# Reporting
+prismatic report -s data/scans/latest --format html -o report.html
+prismatic report -s data/scans/latest --format pdf -o report.pdf
+prismatic report -s data/scans/latest --format remediation -o fixes.yaml
+prismatic report -s data/scans/latest --format fix-bundle -o fix-bundle/
+
+# Management
+prismatic list -c config.yaml                    # List all scans
+prismatic config validate -c config.yaml         # Validate configuration
+prismatic modifications list -c config.yaml      # List finding modifications
+```
+
+### Report Formats
+
+| Format | Output | Purpose |
+|--------|--------|---------|
+| `html` | Single HTML file | Human review, compliance |
+| `pdf` | PDF document | Archival, distribution |
+| `remediation` | YAML manifest | Machine-readable fixes |
+| `fix-bundle` | Directory structure | Complete fix package |
+
 ## 🛠️ Development
 
 ### Project Structure
@@ -513,17 +874,21 @@ prismatic/
 │   ├── prismatic/         # Main entry point
 │   ├── scan/              # Scan command
 │   ├── report/            # Report generation
+│   ├── enrich/            # AI enrichment
 │   ├── list/              # List scans
+│   ├── config/            # Config validation
 │   └── modifications/     # Manage findings
 ├── internal/
 │   ├── scanner/           # Scanner implementations
 │   ├── models/            # Core data models
 │   ├── report/            # Report generation
+│   ├── remediation/       # Fix generation
+│   ├── enrichment/        # AI enrichment
 │   ├── storage/           # Data persistence
 │   └── config/            # Configuration
 ├── configs/               # Example configurations
 ├── scripts/               # Utility scripts
-└── test/                  # Test fixtures
+└── testdata/              # Test fixtures
 ```
 
 ### Building and Testing

@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Veraticus/prismatic/internal/config"
-	"github.com/Veraticus/prismatic/internal/models"
-	"github.com/Veraticus/prismatic/internal/repository"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/internal/config"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/repository"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 // Orchestrator manages multiple scanners and coordinates their execution.

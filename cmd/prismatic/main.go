@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Veraticus/prismatic/cmd/config"
-	"github.com/Veraticus/prismatic/cmd/list"
-	"github.com/Veraticus/prismatic/cmd/modifications"
-	"github.com/Veraticus/prismatic/cmd/report"
-	"github.com/Veraticus/prismatic/cmd/scan"
-	"github.com/Veraticus/prismatic/pkg/logger"
+	"github.com/joshsymonds/prismatic/cmd/config"
+	"github.com/joshsymonds/prismatic/cmd/enrich"
+	"github.com/joshsymonds/prismatic/cmd/list"
+	"github.com/joshsymonds/prismatic/cmd/modifications"
+	"github.com/joshsymonds/prismatic/cmd/report"
+	"github.com/joshsymonds/prismatic/cmd/scan"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
 var (
@@ -77,6 +78,11 @@ func main() {
 			logger.Error("report generation failed", "error", err)
 			os.Exit(1)
 		}
+	case "enrich":
+		if err := runEnrich(commandArgs); err != nil {
+			logger.Error("enrichment failed", "error", err)
+			os.Exit(1)
+		}
 	case "list":
 		if err := runList(commandArgs); err != nil {
 			logger.Error("list failed", "error", err)
@@ -110,6 +116,7 @@ Usage:
 
 Commands:
   scan           Run security scans
+  enrich         Enrich findings with AI-powered analysis
   report         Generate report from scan data
   list           List previous scans
   config         Validate configuration
@@ -136,6 +143,10 @@ func runScan(args []string) error {
 
 func runReport(args []string) error {
 	return report.Run(args)
+}
+
+func runEnrich(args []string) error {
+	return enrich.Run(args)
 }
 
 func runList(args []string) error {
