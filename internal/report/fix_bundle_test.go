@@ -329,7 +329,7 @@ func TestFixBundleGenerator_generateValidationScript(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			testDir := filepath.Join(tmpDir, tt.name)
-			require.NoError(t, os.MkdirAll(testDir, 0755))
+			require.NoError(t, os.MkdirAll(testDir, 0750))
 
 			err := gen.generateValidationScript(tt.rem, testDir)
 			require.NoError(t, err)

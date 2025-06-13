@@ -18,7 +18,7 @@ func TestNewFileCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -41,7 +41,7 @@ func TestFileCache_SetAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestFileCache_TTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestFileCache_Delete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -195,7 +195,7 @@ func TestFileCache_Clear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -252,7 +252,7 @@ func TestFileCache_Stats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -335,7 +335,7 @@ func TestFileCache_ConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -436,7 +436,7 @@ func TestFileCache_CleanupExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {

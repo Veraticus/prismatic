@@ -27,7 +27,7 @@ func createTestStorage(t *testing.T) (*storage.Storage, func()) {
 	testStorage := storage.NewStorageWithLogger(tmpDir, logger.NewMockLogger())
 
 	cleanup := func() {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 
 	return testStorage, cleanup

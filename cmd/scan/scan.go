@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joshsymonds/prismatic/internal/config"
@@ -15,6 +17,7 @@ import (
 	"github.com/joshsymonds/prismatic/internal/scanner"
 	"github.com/joshsymonds/prismatic/internal/storage"
 	"github.com/joshsymonds/prismatic/internal/ui"
+	"github.com/joshsymonds/prismatic/internal/ui/bubbletea"
 	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
@@ -91,9 +94,9 @@ Examples:
 	}
 
 	// Create and start UI
-	ui := createScannerUI(cfg, opts)
-	ui.Start()
-	defer ui.Stop()
+	scannerUI := createScannerUI(cfg, opts)
+	scannerUI.Start()
+	defer scannerUI.Stop()
 
 	// Create log file for debugging
 	logFile, err := createLogFile(opts.OutputDir)
@@ -111,8 +114,29 @@ Examples:
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opts.Timeout)*time.Second)
 	defer cancel()
 
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	// Create a context that will be cancelled on interrupt
+	ctx, stopScan := context.WithCancel(ctx)
+	defer stopScan()
+	
+	// Handle signals in a goroutine
+	go func() {
+		select {
+		case <-sigChan:
+			logger.Info("Received interrupt signal, stopping scan...")
+			scannerUI.AddError("system", "Scan interrupted by user")
+			stopScan() // Cancel the context
+			// Don't stop UI here - let it finish gracefully
+		case <-ctx.Done():
+			// Context finished normally
+		}
+	}()
+
 	// Initialize orchestrator with UI-aware logger that also logs to file
-	scanLogger := &uiLogger{ui: ui, logFile: logFile}
+	scanLogger := &uiLogger{ui: scannerUI, logFile: logFile}
 	orchestrator := scanner.NewOrchestratorWithLogger(cfg, opts.OutputDir, opts.Mock, scanLogger)
 
 	// Set the timeout from command line flag
@@ -122,13 +146,13 @@ Examples:
 	if len(cfg.Repositories) > 0 {
 		// Initialize repository status in UI
 		for _, repo := range cfg.Repositories {
-			ui.UpdateRepository(repo.Name, "pending", "", nil)
+			scannerUI.UpdateRepository(repo.Name, "pending", "", nil)
 		}
 
 		// Hook into repository preparation
-		prepErr := prepareRepositoriesWithUI(ctx, orchestrator, ui, cfg.Repositories)
+		prepErr := prepareRepositoriesWithUI(ctx, orchestrator, scannerUI, cfg.Repositories)
 		if prepErr != nil {
-			ui.AddError("repository", prepErr.Error())
+			scannerUI.AddError("repository", prepErr.Error())
 			time.Sleep(2 * time.Second) // Let user see the error
 			return fmt.Errorf("preparing repositories: %w", prepErr)
 		}
@@ -137,7 +161,7 @@ Examples:
 
 	// Initialize scanners
 	if initErr := orchestrator.InitializeScanners(opts.OnlyScanners); initErr != nil {
-		ui.AddError("init", initErr.Error())
+		scannerUI.AddError("init", initErr.Error())
 		time.Sleep(2 * time.Second) // Let user see the error
 		return fmt.Errorf("initializing scanners: %w", initErr)
 	}
@@ -151,11 +175,11 @@ Examples:
 	go func() {
 		defer func() { statusDone <- true }()
 		for status := range statusChan {
-			ui.UpdateScanner(status)
+			scannerUI.UpdateScanner(status)
 
 			// Capture error messages
 			if status.Status == models.StatusFailed && status.Message != "" {
-				ui.AddError(status.Scanner, status.Message)
+				scannerUI.AddError(status.Scanner, status.Message)
 			}
 		}
 	}()
@@ -168,7 +192,7 @@ Examples:
 	<-statusDone
 
 	if err != nil {
-		ui.AddError("scan", err.Error())
+		scannerUI.AddError("scan", err.Error())
 		time.Sleep(2 * time.Second) // Let user see the error
 		return fmt.Errorf("running scans: %w", err)
 	}
@@ -180,7 +204,7 @@ Examples:
 	// Save results
 	store := storage.NewStorage("data")
 	if err := store.SaveScanResults(opts.OutputDir, metadata); err != nil {
-		ui.AddError("save", err.Error())
+		scannerUI.AddError("save", err.Error())
 		time.Sleep(2 * time.Second) // Let user see the error
 		return fmt.Errorf("saving results: %w", err)
 	}
@@ -192,17 +216,18 @@ Examples:
 	summaryLines := buildScanSummaryLines(metadata, opts)
 
 	// Render final state with summary
-	ui.RenderFinalState(summaryLines)
+	scannerUI.RenderFinalState(summaryLines)
 
 	// Stop the UI (this just stops the rendering loop)
-	ui.Stop()
+	scannerUI.Stop()
 
 	return nil
 }
 
 // createScannerUI creates and configures the scanner UI.
-func createScannerUI(cfg *config.Config, opts *Options) *ui.ScannerUI {
-	return ui.NewScannerUI(ui.Config{
+func createScannerUI(cfg *config.Config, opts *Options) ui.UI {
+	// Create the bubbletea UI implementation
+	return bubbletea.NewScannerUIAdapter(ui.Config{
 		OutputDir:   opts.OutputDir,
 		ClientName:  cfg.Client.Name,
 		Environment: cfg.Client.Environment,
@@ -212,7 +237,7 @@ func createScannerUI(cfg *config.Config, opts *Options) *ui.ScannerUI {
 
 // uiLogger implements the logger interface and redirects to the UI and log file.
 type uiLogger struct {
-	ui      *ui.ScannerUI
+	ui      ui.UI
 	logFile *os.File
 }
 
@@ -293,7 +318,7 @@ func (l *uiLogger) extractField(fields []any, key string) string {
 }
 
 // prepareRepositoriesWithUI prepares repositories with UI updates.
-func prepareRepositoriesWithUI(ctx context.Context, orchestrator *scanner.Orchestrator, _ *ui.ScannerUI, _ []config.Repository) error {
+func prepareRepositoriesWithUI(ctx context.Context, orchestrator *scanner.Orchestrator, _ ui.UI, _ []config.Repository) error {
 	// The UI updates are handled through the logger callbacks
 	return orchestrator.PrepareRepositories(ctx)
 }

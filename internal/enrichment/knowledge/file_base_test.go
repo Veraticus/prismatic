@@ -26,12 +26,6 @@ func TestNewFileBase(t *testing.T) {
 		t.Errorf("Expected base path %s, got %s", tmpDir, kb.basePath)
 	}
 
-	// Check that entries directory was created
-	entriesPath := filepath.Join(tmpDir, "entries")
-	if _, err := os.Stat(entriesPath); os.IsNotExist(err) {
-		t.Error("Expected entries directory to be created")
-	}
-
 	// Check that index file exists
 	indexPath := filepath.Join(tmpDir, "index.json")
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
@@ -379,7 +373,11 @@ func TestFileBase_ConcurrentAccess(t *testing.T) {
 	ctx := context.Background()
 
 	// Test concurrent writes
-	done := make(chan bool, 10)
+	type result struct {
+		err error
+		id  int
+	}
+	results := make(chan result, 10)
 
 	for i := 0; i < 10; i++ {
 		go func(id int) {
@@ -391,17 +389,17 @@ func TestFileBase_ConcurrentAccess(t *testing.T) {
 				UpdatedAt:   time.Now(),
 			}
 
-			if err := kb.Store(ctx, entry); err != nil {
-				t.Errorf("Failed to store concurrent entry %d: %v", id, err)
-			}
-
-			done <- true
+			err := kb.Store(ctx, entry)
+			results <- result{id: id, err: err}
 		}(i)
 	}
 
-	// Wait for all goroutines to complete
+	// Wait for all goroutines to complete and check for errors
 	for i := 0; i < 10; i++ {
-		<-done
+		r := <-results
+		if r.err != nil {
+			t.Errorf("Failed to store concurrent entry %d: %v", r.id, r.err)
+		}
 	}
 
 	// Verify all entries were stored

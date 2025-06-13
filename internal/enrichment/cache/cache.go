@@ -9,16 +9,25 @@ import (
 
 // Cache defines the interface for caching enrichments.
 type Cache interface {
-	// Get retrieves a cached enrichment for a finding ID.
+	// Get retrieves an enrichment from cache
 	Get(ctx context.Context, findingID string) (*enrichment.FindingEnrichment, error)
 
-	// Set stores an enrichment in the cache.
+	// Set stores an enrichment in cache
 	Set(ctx context.Context, findingEnrichment *enrichment.FindingEnrichment, ttl time.Duration) error
 
-	// Delete removes an enrichment from the cache.
+	// Delete removes an enrichment from cache
 	Delete(ctx context.Context, findingID string) error
 
-	// GetStats returns current cache statistics.
+	// Has checks if a finding exists in cache
+	Has(ctx context.Context, findingID string) bool
+
+	// Clear removes all entries from cache
+	Clear(ctx context.Context) error
+
+	// Stats returns cache statistics
+	Stats(ctx context.Context) (*Stats, error)
+
+	// GetStats returns cache statistics without context
 	GetStats() *Stats
 }
 

@@ -24,7 +24,7 @@ type FileBase struct {
 // NewFileBase creates a new file-based knowledge base.
 func NewFileBase(basePath string) (*FileBase, error) {
 	// Create base directory if it doesn't exist
-	if err := os.MkdirAll(basePath, 0755); err != nil {
+	if err := os.MkdirAll(basePath, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create knowledge base directory: %w", err)
 	}
 
@@ -52,7 +52,7 @@ func (fb *FileBase) Get(ctx context.Context, id string) (*Entry, error) {
 
 	// Load entry from file
 	filename := fb.getFilename(id)
-	data, err := os.ReadFile(filename)
+	data, err := os.ReadFile(filepath.Clean(filename))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read entry file: %w", err)
 	}
@@ -72,32 +72,38 @@ func (fb *FileBase) Get(ctx context.Context, id string) (*Entry, error) {
 
 // Search searches for relevant knowledge entries.
 func (fb *FileBase) Search(ctx context.Context, query string, limit int) ([]*Entry, error) {
-	fb.mu.RLock()
-	defer fb.mu.RUnlock()
+	// First, collect matching IDs while holding the lock
+	var matchingIDs []string
+	{
+		fb.mu.RLock()
+		query = strings.ToLower(query)
 
-	query = strings.ToLower(query)
-	var matches []*Entry
+		// Simple search implementation - can be enhanced with better search algorithms
+		for id, indexEntry := range fb.index.Entries {
+			// Check if query matches ID, type, tags, or summary
+			if strings.Contains(strings.ToLower(id), query) ||
+				strings.Contains(strings.ToLower(indexEntry.Type), query) ||
+				strings.Contains(strings.ToLower(indexEntry.Summary), query) ||
+				fb.matchesTags(indexEntry.Tags, query) {
 
-	// Simple search implementation - can be enhanced with better search algorithms
-	for id, indexEntry := range fb.index.Entries {
-		// Check if query matches ID, type, tags, or summary
-		if strings.Contains(strings.ToLower(id), query) ||
-			strings.Contains(strings.ToLower(indexEntry.Type), query) ||
-			strings.Contains(strings.ToLower(indexEntry.Summary), query) ||
-			fb.matchesTags(indexEntry.Tags, query) {
+				matchingIDs = append(matchingIDs, id)
 
-			// Load the full entry
-			entry, err := fb.Get(ctx, id)
-			if err != nil {
-				continue // Skip entries that can't be loaded
-			}
-
-			matches = append(matches, entry)
-
-			if len(matches) >= limit {
-				break
+				if len(matchingIDs) >= limit {
+					break
+				}
 			}
 		}
+		fb.mu.RUnlock()
+	}
+
+	// Now load the entries without holding the lock
+	var matches []*Entry
+	for _, id := range matchingIDs {
+		entry, err := fb.Get(ctx, id)
+		if err != nil {
+			continue // Skip entries that can't be loaded
+		}
+		matches = append(matches, entry)
 	}
 
 	return matches, nil
@@ -114,7 +120,7 @@ func (fb *FileBase) Store(ctx context.Context, entry *Entry) error {
 	entry.UpdatedAt = now
 
 	// Save entry to file
-	filename := fb.getFilename(entry.ID)
+	filename := fb.getFilenameForType(entry.ID, entry.Type)
 	data, err := yaml.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("failed to marshal entry: %w", err)
@@ -122,11 +128,11 @@ func (fb *FileBase) Store(ctx context.Context, entry *Entry) error {
 
 	// Create directory if needed
 	dir := filepath.Dir(filename)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	if err := os.WriteFile(filename, data, 0600); err != nil {
 		return fmt.Errorf("failed to write entry file: %w", err)
 	}
 
@@ -159,19 +165,22 @@ func (fb *FileBase) Store(ctx context.Context, entry *Entry) error {
 
 // Update updates an existing entry.
 func (fb *FileBase) Update(ctx context.Context, id string, entry *Entry) error {
+	// First get the existing entry without holding the lock
+	existing, err := fb.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
-	// Check if entry exists
+	// Double-check entry still exists
 	if _, exists := fb.index.Entries[id]; !exists {
 		return &EntryNotFoundError{ID: id}
 	}
 
 	// Preserve created timestamp
-	existing, err := fb.Get(ctx, id)
-	if err == nil {
-		entry.CreatedAt = existing.CreatedAt
-	}
+	entry.CreatedAt = existing.CreatedAt
 
 	entry.ID = id
 	entry.UpdatedAt = time.Now()
@@ -183,7 +192,7 @@ func (fb *FileBase) Update(ctx context.Context, id string, entry *Entry) error {
 		return fmt.Errorf("failed to marshal entry: %w", err)
 	}
 
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	if err := os.WriteFile(filename, data, 0600); err != nil {
 		return fmt.Errorf("failed to write entry file: %w", err)
 	}
 
@@ -260,7 +269,7 @@ func (fb *FileBase) Index(ctx context.Context) error {
 		}
 
 		// Load entry
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(filepath.Clean(path))
 		if err != nil {
 			return fmt.Errorf("failed to read %s: %w", path, err)
 		}
@@ -303,10 +312,21 @@ func (fb *FileBase) Index(ctx context.Context) error {
 // Helper methods
 
 func (fb *FileBase) getFilename(id string) string {
-	// Organize by type if available
+	return fb.getFilenameForType(id, "")
+}
+
+func (fb *FileBase) getFilenameForType(id, entryType string) string {
+	// If type is provided, use it
+	if entryType != "" {
+		return filepath.Join(fb.basePath, entryType, id+".yaml")
+	}
+
+	// Otherwise check if entry exists in index
 	if indexEntry, exists := fb.index.Entries[id]; exists && indexEntry.Type != "" {
 		return filepath.Join(fb.basePath, indexEntry.Type, id+".yaml")
 	}
+
+	// Default to root directory
 	return filepath.Join(fb.basePath, id+".yaml")
 }
 
@@ -314,7 +334,7 @@ func (fb *FileBase) loadIndex() error {
 	indexFile := filepath.Join(fb.basePath, "index.json")
 
 	// Check if index exists
-	data, err := os.ReadFile(indexFile)
+	data, err := os.ReadFile(filepath.Clean(indexFile))
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Create new index
@@ -347,7 +367,7 @@ func (fb *FileBase) saveIndex() error {
 	}
 
 	indexFile := filepath.Join(fb.basePath, "index.json")
-	if err := os.WriteFile(indexFile, data, 0644); err != nil {
+	if err := os.WriteFile(indexFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write index: %w", err)
 	}
 

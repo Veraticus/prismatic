@@ -227,7 +227,7 @@ func contains(s, substr string) bool {
 }
 
 func containsIgnoreCase(s, substr string) bool {
-	if len(substr) == 0 {
+	if substr == "" {
 		return true
 	}
 	if len(s) < len(substr) {

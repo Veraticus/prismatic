@@ -30,7 +30,7 @@ exit %d
 `, response, exitCode)
 
 	if err := os.WriteFile(claudePath, []byte(script), 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create fake claude: %v", err)
 	}
 
@@ -40,7 +40,7 @@ exit %d
 
 	cleanup := func() {
 		_ = os.Setenv("PATH", oldPath)
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 
 	return claudePath, cleanup
@@ -268,7 +268,7 @@ func TestClaudeCLIDriver_CommandNotFound(t *testing.T) {
 	// Remove claude from PATH
 	oldPath := os.Getenv("PATH")
 	_ = os.Setenv("PATH", "/nonexistent")
-	defer os.Setenv("PATH", oldPath)
+	defer func() { _ = os.Setenv("PATH", oldPath) }()
 
 	driver := &ClaudeCLIDriver{}
 	ctx := context.Background()
