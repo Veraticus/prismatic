@@ -109,6 +109,26 @@ func TestBatchCreation(t *testing.T) {
 	if batch.Priority != 1 {
 		t.Errorf("Expected priority 1, got %d", batch.Priority)
 	}
+
+	if batch.Strategy != "test" {
+		t.Errorf("Expected strategy 'test', got %s", batch.Strategy)
+	}
+
+	if batch.GroupKey != "high-severity" {
+		t.Errorf("Expected group key 'high-severity', got %s", batch.GroupKey)
+	}
+
+	if batch.SummaryReason != "Grouped by severity" {
+		t.Errorf("Expected summary reason 'Grouped by severity', got %s", batch.SummaryReason)
+	}
+
+	if batch.EstimatedTokens != 500 {
+		t.Errorf("Expected estimated tokens 500, got %d", batch.EstimatedTokens)
+	}
+
+	if batch.ShouldSummarize != false {
+		t.Errorf("Expected should summarize false, got %v", batch.ShouldSummarize)
+	}
 }
 
 func TestConfigValidation(t *testing.T) {
@@ -120,7 +140,7 @@ func TestConfigValidation(t *testing.T) {
 		{
 			name: "Valid config",
 			config: Config{
-				ClientContext:       map[string]interface{}{"env": "prod"},
+				ClientContext:       map[string]any{"env": "prod"},
 				GroupBy:             []string{"severity", "service"},
 				MaxTokensPerBatch:   4096,
 				MaxFindingsPerBatch: 50,
@@ -217,7 +237,6 @@ func TestBatchTokenEstimation(t *testing.T) {
 	}
 
 	batch := Batch{
-		Findings:        findings,
 		EstimatedTokens: len(findings) * 50, // Rough estimate: 50 tokens per finding
 	}
 

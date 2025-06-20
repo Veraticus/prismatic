@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
@@ -69,32 +68,32 @@ func TestGenerateRepoDir(t *testing.T) {
 
 	tests := []struct {
 		name string
-		repo config.Repository
+		repo Repository
 	}{
 		{
 			name: "simple name",
-			repo: config.Repository{
+			repo: Repository{
 				Name: "myrepo",
 				Path: "https://github.com/user/myrepo",
 			},
 		},
 		{
 			name: "name with slashes",
-			repo: config.Repository{
+			repo: Repository{
 				Name: "org/repo",
 				Path: "https://github.com/org/repo",
 			},
 		},
 		{
 			name: "name with spaces",
-			repo: config.Repository{
+			repo: Repository{
 				Name: "my repo",
 				Path: "https://github.com/user/my-repo",
 			},
 		},
 		{
 			name: "same name different URLs",
-			repo: config.Repository{
+			repo: Repository{
 				Name: "repo",
 				Path: "https://github.com/user1/repo",
 			},
@@ -138,7 +137,7 @@ func TestNewGitResolver(t *testing.T) {
 			WithLogger(logger.NewMockLogger()),
 		)
 
-		repo := config.Repository{
+		repo := Repository{
 			Name:   "test-repo",
 			Path:   tmpDir,
 			Branch: "main",
@@ -162,7 +161,7 @@ func TestNewGitResolver(t *testing.T) {
 			WithLogger(logger.NewMockLogger()),
 		)
 
-		repo := config.Repository{
+		repo := Repository{
 			Name:   "test-repo",
 			Path:   "/non/existent/path",
 			Branch: "main",
@@ -180,7 +179,7 @@ func TestNewGitResolver(t *testing.T) {
 			WithLogger(logger.NewMockLogger()),
 		)
 
-		repo := config.Repository{
+		repo := Repository{
 			Name:   "test-repo",
 			Path:   "https://github.com/user/repo",
 			Branch: "main",
@@ -203,7 +202,7 @@ func TestNewLocalResolver(t *testing.T) {
 			WithLogger(logger.NewMockLogger()),
 		)
 
-		repo := config.Repository{
+		repo := Repository{
 			Name: "test-repo",
 			Path: tmpDir,
 		}
@@ -226,7 +225,7 @@ func TestNewLocalResolver(t *testing.T) {
 			WithLogger(logger.NewMockLogger()),
 		)
 
-		repo := config.Repository{
+		repo := Repository{
 			Name: "test-repo",
 			Path: "/non/existent/path",
 		}
@@ -249,7 +248,7 @@ func TestNewMockResolver(t *testing.T) {
 
 		resolver := NewMockResolver(mockPaths)
 
-		repo := config.Repository{
+		repo := Repository{
 			Name: "repo1",
 			Path: "https://github.com/user/repo1",
 		}
@@ -268,7 +267,7 @@ func TestNewMockResolver(t *testing.T) {
 	t.Run("unknown repository creates temp dir", func(t *testing.T) {
 		resolver := NewMockResolver(map[string]string{})
 
-		repo := config.Repository{
+		repo := Repository{
 			Name: "unknown-repo",
 			Path: "https://github.com/user/unknown",
 		}

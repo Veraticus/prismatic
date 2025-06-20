@@ -14,8 +14,8 @@ func TestConfigValidation(t *testing.T) {
 		{
 			name: "Valid config",
 			config: Config{
-				ClientConfig:      map[string]interface{}{"client": "test"},
-				DriverConfig:      map[string]interface{}{"key": "value"},
+				ClientConfig:      map[string]any{"client": "test"},
+				DriverConfig:      map[string]any{"key": "value"},
 				Strategy:          "smart-batch",
 				DriverName:        "claude-cli",
 				KnowledgeBasePath: "/data/knowledge",
@@ -42,10 +42,12 @@ func TestConfigValidation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(_ *testing.T) {
 			// Test config validation if we add validation methods
 			if tt.config.Strategy == "" && !tt.wantErr {
 				// Default strategy should be applied
+				// TODO: Implement validation when strategy defaults are added
+				_ = tt.config // Placeholder to avoid empty block warning
 			}
 		})
 	}

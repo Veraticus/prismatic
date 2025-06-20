@@ -12,7 +12,12 @@ import (
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 )
 
-// Cache defines the interface for caching enrichments.
+
+// Compile-time checks to ensure interfaces are satisfied.
+var (
+	_ Cache = (*FileCache)(nil)
+	_ Cache = (*MockCache)(nil)
+)
 
 // FileCache implements Cache interface using file storage.
 type FileCache struct {
@@ -50,7 +55,7 @@ func NewFileCache(basePath string) (*FileCache, error) {
 }
 
 // Get retrieves a cached enrichment.
-func (fc *FileCache) Get(ctx context.Context, findingID string) (*enrichment.FindingEnrichment, error) {
+func (fc *FileCache) Get(_ context.Context, findingID string) (*enrichment.FindingEnrichment, error) {
 	fc.mu.RLock()
 	defer fc.mu.RUnlock()
 
@@ -67,6 +72,7 @@ func (fc *FileCache) Get(ctx context.Context, findingID string) (*enrichment.Fin
 	}
 
 	// Read file
+	// #nosec G304 -- filename is derived from validated findingID through getFilename()
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, &Error{Op: "get", Key: findingID, Err: err}
@@ -98,7 +104,7 @@ func (fc *FileCache) Get(ctx context.Context, findingID string) (*enrichment.Fin
 }
 
 // Set stores an enrichment in the cache.
-func (fc *FileCache) Set(ctx context.Context, findingEnrichment *enrichment.FindingEnrichment, ttl time.Duration) error {
+func (fc *FileCache) Set(_ context.Context, findingEnrichment *enrichment.FindingEnrichment, ttl time.Duration) error {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 
@@ -117,7 +123,7 @@ func (fc *FileCache) Set(ctx context.Context, findingEnrichment *enrichment.Find
 
 	// Write to file
 	filename := fc.getFilename(findingEnrichment.FindingID)
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	if err := os.WriteFile(filename, data, 0600); err != nil {
 		return &Error{Op: "write", Key: findingEnrichment.FindingID, Err: err}
 	}
 
@@ -131,7 +137,7 @@ func (fc *FileCache) Set(ctx context.Context, findingEnrichment *enrichment.Find
 }
 
 // Delete removes an enrichment from the cache.
-func (fc *FileCache) Delete(ctx context.Context, findingID string) error {
+func (fc *FileCache) Delete(_ context.Context, findingID string) error {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 
@@ -161,7 +167,7 @@ func (fc *FileCache) Delete(ctx context.Context, findingID string) error {
 }
 
 // Has checks if a key exists in the cache.
-func (fc *FileCache) Has(ctx context.Context, findingID string) bool {
+func (fc *FileCache) Has(_ context.Context, findingID string) bool {
 	fc.mu.RLock()
 	defer fc.mu.RUnlock()
 
@@ -184,7 +190,7 @@ func (fc *FileCache) Has(ctx context.Context, findingID string) bool {
 }
 
 // Clear removes all cached enrichments.
-func (fc *FileCache) Clear(ctx context.Context) error {
+func (fc *FileCache) Clear(_ context.Context) error {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 
@@ -227,7 +233,7 @@ func (fc *FileCache) Clear(ctx context.Context) error {
 }
 
 // Stats returns cache statistics.
-func (fc *FileCache) Stats(ctx context.Context) (*Stats, error) {
+func (fc *FileCache) Stats(_ context.Context) (*Stats, error) {
 	fc.mu.RLock()
 	defer fc.mu.RUnlock()
 
@@ -304,6 +310,7 @@ func (fc *FileCache) updateStats() {
 func (fc *FileCache) loadStats() error {
 	statsFile := filepath.Join(fc.basePath, "stats.json")
 
+	// #nosec G304 -- statsFile is a fixed path constructed from basePath
 	data, err := os.ReadFile(statsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -323,7 +330,7 @@ func (fc *FileCache) saveStats() error {
 		return err
 	}
 
-	return os.WriteFile(statsFile, data, 0644)
+	return os.WriteFile(statsFile, data, 0600)
 }
 
 // cacheEntry represents a cached enrichment with metadata.

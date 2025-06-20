@@ -34,6 +34,9 @@ Thumbs.db
 /build/
 /dist/
 
+# External libraries
+/vendor/
+
 # Screenshot tool binary
 /cmd/screenshot/screenshot
 

@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,26 +10,22 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/remediation"
 	"github.com/joshsymonds/prismatic/pkg/logger"
-	"gopkg.in/yaml.v3"
 )
 
 // FixBundleGenerator generates a directory structure with remediation files.
 type FixBundleGenerator struct {
 	remediationGen *RemediationReporter
-	config         *config.Config
 	logger         logger.Logger
 }
 
 // NewFixBundleGenerator creates a new fix bundle generator.
-func NewFixBundleGenerator(cfg *config.Config, log logger.Logger) *FixBundleGenerator {
+func NewFixBundleGenerator(log logger.Logger) *FixBundleGenerator {
 	return &FixBundleGenerator{
-		remediationGen: NewRemediationReporter(cfg, log),
-		config:         cfg,
+		remediationGen: NewRemediationReporter(log),
 		logger:         log,
 	}
 }
@@ -48,8 +45,8 @@ func (g *FixBundleGenerator) Generate(findings []models.Finding, outputPath stri
 		return fmt.Errorf("failed to generate manifest: %w", err)
 	}
 
-	// Write manifest.yaml
-	manifestPath := filepath.Join(outputPath, "manifest.yaml")
+	// Write manifest.json
+	manifestPath := filepath.Join(outputPath, "manifest.json")
 	if err := g.writeManifest(manifest, manifestPath); err != nil {
 		return fmt.Errorf("failed to write manifest: %w", err)
 	}
@@ -89,7 +86,7 @@ func (g *FixBundleGenerator) Generate(findings []models.Finding, outputPath stri
 // generateManifest uses the existing RemediationReporter to create a manifest.
 func (g *FixBundleGenerator) generateManifest(findings []models.Finding) (*remediation.Manifest, error) {
 	// Create a temporary file for the manifest
-	tmpFile, err := os.CreateTemp("", "manifest-*.yaml")
+	tmpFile, err := os.CreateTemp("", "manifest-*.json")
 	if err != nil {
 		return nil, err
 	}
@@ -104,8 +101,8 @@ func (g *FixBundleGenerator) generateManifest(findings []models.Finding) (*remed
 	}
 
 	// Generate manifest using existing reporter
-	if err := g.remediationGen.Generate(findings, nil, metadata, tmpFile.Name()); err != nil {
-		return nil, err
+	if genErr := g.remediationGen.Generate(findings, nil, metadata, tmpFile.Name()); genErr != nil {
+		return nil, genErr
 	}
 
 	// Read back the manifest
@@ -115,7 +112,7 @@ func (g *FixBundleGenerator) generateManifest(findings []models.Finding) (*remed
 	}
 
 	var manifest remediation.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, err
 	}
 
@@ -124,7 +121,7 @@ func (g *FixBundleGenerator) generateManifest(findings []models.Finding) (*remed
 
 // writeManifest writes the manifest to a file.
 func (g *FixBundleGenerator) writeManifest(manifest *remediation.Manifest, path string) error {
-	data, err := yaml.Marshal(manifest)
+	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -154,11 +151,7 @@ func (g *FixBundleGenerator) generateRemediationDir(rem remediation.Remediation,
 	}
 
 	// Generate LLM prompt
-	if err := g.generateLLMPrompt(rem, remDir); err != nil {
-		return err
-	}
-
-	return nil
+	return g.generateLLMPrompt(rem, remDir)
 }
 
 // generateRemediationReadme creates a README for a specific remediation.
@@ -206,6 +199,7 @@ Run ` + "`./validation.sh`" + ` after applying the fix to ensure it worked corre
 
 	readmePath := filepath.Join(dir, "README.md")
 	readmePath = filepath.Clean(readmePath)
+	// #nosec G304 -- readmePath is constructed from controlled directory paths
 	file, err := os.Create(readmePath)
 	if err != nil {
 		return err
@@ -281,7 +275,7 @@ func (g *FixBundleGenerator) detectStrategy(rem remediation.Remediation) string 
 }
 
 // generateTerraformS3Fix generates Terraform files for S3 public access fixes.
-func (g *FixBundleGenerator) generateTerraformS3Fix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateTerraformS3Fix(_ remediation.Remediation, dir string) error {
 	// Create terraform directory
 	tfDir := filepath.Join(dir, "terraform")
 	if err := os.MkdirAll(tfDir, 0750); err != nil {
@@ -418,11 +412,13 @@ echo "Check the remediation manifest for validation steps"
 exit 0
 `
 		scriptPath := filepath.Join(dir, "validation.sh")
-		return os.WriteFile(scriptPath, []byte(scriptContent), 0700)
+		// #nosec G306 -- script needs to be executable
+		return os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	}
 
 	scriptPath := filepath.Join(dir, "validation.sh")
 	scriptPath = filepath.Clean(scriptPath)
+	// #nosec G304 -- scriptPath is constructed from controlled directory paths
 	file, err := os.Create(scriptPath)
 	if err != nil {
 		return err
@@ -437,15 +433,17 @@ echo "Validation for: ` + rem.Title + `"
 echo "Please verify the fix was applied correctly"
 exit 0
 `
-		return os.WriteFile(scriptPath, []byte(basicScript), 0700)
+		// #nosec G306 -- script needs to be executable
+		return os.WriteFile(scriptPath, []byte(basicScript), 0755)
 	}
 
 	// Make the script executable
-	return os.Chmod(scriptPath, 0700)
+	// #nosec G302 -- script needs to be executable
+	return os.Chmod(scriptPath, 0755)
 }
 
 // generateS3ValidationScript creates a specific validation script for S3 fixes.
-func (g *FixBundleGenerator) generateS3ValidationScript(rem remediation.Remediation) string {
+func (g *FixBundleGenerator) generateS3ValidationScript(_ remediation.Remediation) string {
 	return `#!/bin/bash
 # S3 Public Access Block Validation Script
 # Generated by Prismatic
@@ -491,7 +489,7 @@ fi
 }
 
 // generateK8sValidationScript creates a validation script for Kubernetes fixes.
-func (g *FixBundleGenerator) generateK8sValidationScript(rem remediation.Remediation) string {
+func (g *FixBundleGenerator) generateK8sValidationScript(_ remediation.Remediation) string {
 	return `#!/bin/bash
 # Kubernetes Security Context Validation Script
 # Generated by Prismatic
@@ -637,7 +635,7 @@ Estimated Effort: {{.Metadata.EstimatedTotalEffort}}
 
 ## Directory Structure
 
-- ` + "`manifest.yaml`" + ` - Complete remediation manifest
+- ` + "`manifest.json`" + ` - Complete remediation manifest
 - ` + "`remediations/`" + ` - Individual remediation directories
   - Each contains README, fix files, validation script, and LLM prompt
 - ` + "`scripts/`" + ` - Automation scripts for bulk operations
@@ -653,7 +651,11 @@ For questions or issues, please refer to the Prismatic documentation.
 	}
 
 	readmePath := filepath.Join(outputPath, "README.md")
+<<<<<<< HEAD
 	readmePath = filepath.Clean(readmePath)
+=======
+	// #nosec G304 -- readmePath is constructed from controlled directory paths
+>>>>>>> f32011c (Lots of TUI work)
 	file, err := os.Create(readmePath)
 	if err != nil {
 		return err
@@ -678,11 +680,7 @@ func (g *FixBundleGenerator) generateScripts(manifest *remediation.Manifest, out
 	}
 
 	// Generate validate-all.sh
-	if err := g.generateValidateAllScript(manifest, scriptsDir); err != nil {
-		return err
-	}
-
-	return nil
+	return g.generateValidateAllScript(manifest, scriptsDir)
 }
 
 // generateApplyCriticalScript creates a script to apply all critical fixes.
@@ -738,7 +736,8 @@ echo "Please run validate-all.sh to verify the fixes"
 `
 
 	scriptPath := filepath.Join(scriptsDir, "apply-all-critical.sh")
-	return os.WriteFile(scriptPath, []byte(scriptContent), 0700)
+	// #nosec G306 -- script needs to be executable
+	return os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 }
 
 // generateValidateAllScript creates a script to validate all fixes.
@@ -805,12 +804,13 @@ fi
 `
 
 	scriptPath := filepath.Join(scriptsDir, "validate-all.sh")
-	return os.WriteFile(scriptPath, []byte(scriptContent), 0700)
+	// #nosec G306 -- script needs to be executable
+	return os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 }
 
 // Additional fix generation methods for other strategies...
 
-func (g *FixBundleGenerator) generateTerraformS3EncryptionFix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateTerraformS3EncryptionFix(_ remediation.Remediation, dir string) error {
 	tfDir := filepath.Join(dir, "terraform")
 	if err := os.MkdirAll(tfDir, 0750); err != nil {
 		return err
@@ -838,7 +838,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "example" {
 	return os.WriteFile(tfPath, []byte(tfContent), 0600)
 }
 
-func (g *FixBundleGenerator) generateTerraformRDSEncryptionFix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateTerraformRDSEncryptionFix(_ remediation.Remediation, dir string) error {
 	tfDir := filepath.Join(dir, "terraform")
 	if err := os.MkdirAll(tfDir, 0750); err != nil {
 		return err
@@ -867,7 +867,7 @@ resource "aws_db_instance" "example" {
 	return os.WriteFile(tfPath, []byte(tfContent), 0600)
 }
 
-func (g *FixBundleGenerator) generateTerraformIAMFix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateTerraformIAMFix(_ remediation.Remediation, dir string) error {
 	tfDir := filepath.Join(dir, "terraform")
 	if err := os.MkdirAll(tfDir, 0750); err != nil {
 		return err
@@ -908,7 +908,7 @@ data "aws_iam_policy_document" "restricted" {
 	return os.WriteFile(tfPath, []byte(tfContent), 0600)
 }
 
-func (g *FixBundleGenerator) generateContainerFix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateContainerFix(_ remediation.Remediation, dir string) error {
 	// Create a Dockerfile patch
 	patchContent := `# Container Security Fixes
 
@@ -940,7 +940,7 @@ RUN npm audit fix
 	return os.WriteFile(readmePath, []byte(patchContent), 0600)
 }
 
-func (g *FixBundleGenerator) generateKubernetesSecurityContextFix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateKubernetesSecurityContextFix(_ remediation.Remediation, dir string) error {
 	k8sDir := filepath.Join(dir, "kubernetes")
 	if err := os.MkdirAll(k8sDir, 0750); err != nil {
 		return err
@@ -977,7 +977,7 @@ spec:
 	return os.WriteFile(yamlPath, []byte(yamlContent), 0600)
 }
 
-func (g *FixBundleGenerator) generateKubernetesNetworkPolicyFix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateKubernetesNetworkPolicyFix(_ remediation.Remediation, dir string) error {
 	k8sDir := filepath.Join(dir, "kubernetes")
 	if err := os.MkdirAll(k8sDir, 0750); err != nil {
 		return err
@@ -1029,7 +1029,7 @@ spec:
 	return os.WriteFile(yamlPath, []byte(yamlContent), 0600)
 }
 
-func (g *FixBundleGenerator) generateKubernetesRBACFix(rem remediation.Remediation, dir string) error {
+func (g *FixBundleGenerator) generateKubernetesRBACFix(_ remediation.Remediation, dir string) error {
 	k8sDir := filepath.Join(dir, "kubernetes")
 	if err := os.MkdirAll(k8sDir, 0750); err != nil {
 		return err
@@ -1102,7 +1102,7 @@ type fixBundleFormat struct {
 }
 
 // Generate implements the ReportFormat interface.
-func (f *fixBundleFormat) Generate(findings []models.Finding, enrichments map[string]*enrichment.FindingEnrichment, metadata *models.ScanMetadata, outputPath string) error {
+func (f *fixBundleFormat) Generate(findings []models.Finding, _ map[string]*enrichment.FindingEnrichment, _ *models.ScanMetadata, outputPath string) error {
 	// The FixBundleGenerator doesn't use enrichments or metadata directly
 	return f.generator.Generate(findings, outputPath)
 }

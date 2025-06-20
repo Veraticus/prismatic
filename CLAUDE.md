@@ -30,7 +30,7 @@ make vet            # Run go vet
 ### Development Workflow
 ```bash
 make check          # Run fmt, vet, and test
-make run ARGS=...   # Build and run the application with arguments
+make run            # Build and run the TUI application
 make cover          # Generate coverage report with HTML output
 ```
 
@@ -38,33 +38,34 @@ make cover          # Generate coverage report with HTML output
 
 Prismatic is a security scanning orchestrator designed to combine multiple open-source security tools into unified reports. Key architectural elements:
 
-### Two-Phase Operation
-1. **Scanning Phase** (`prismatic scan`): Runs security scanners and stores normalized results
-2. **Report Phase** (`prismatic report`): Generates beautiful HTML/PDF reports from scan data
+### Unified TUI Operation
+1. **Launch** (`prismatic`): Opens the terminal UI
+2. **Scan**: Configure and run security scanners through the TUI
+3. **View Results**: Browse findings and scan history
+4. **Generate Reports**: Create HTML/PDF reports with a single keypress
 
 ### Scanner Integration Pattern
 - Each scanner implements a common `Scanner` interface
 - Scanners produce normalized `Finding` objects with stable IDs
-- Findings can be suppressed via YAML configuration
+- Findings can be suppressed via TUI configuration
 - Raw scanner output is preserved for debugging
 
 ### Key Components
-- **cmd/** - CLI commands (scan and report)
+- **cmd/prismatic/** - Main entry point that launches the TUI
+- **internal/ui/** - Terminal UI implementation (all user interaction)
 - **internal/scanner/** - Scanner integrations (Prowler, Trivy, Kubescape, Nuclei, Gitleaks, Checkov)
 - **internal/models/** - Core data structures
-- **internal/config/** - YAML configuration handling
 - **internal/report/** - HTML/PDF report generation
-- **configs/** - Client-specific YAML configurations
-- **data/scans/** - Scan results storage
+- **internal/database/** - SQLite database for all storage
+- **internal/enrichment/** - AI-powered finding enrichment
 
 ### Client Configuration
-Prismatic uses YAML files to configure scanning per client/environment, including:
-- AWS regions and profiles
-- Docker registries and containers
-- Kubernetes contexts and namespaces
-- Web endpoints to scan
+Prismatic uses an interactive Terminal UI (TUI) to configure scanning, including:
+- Scanner selection and configuration
+- Target selection (AWS, Docker, Kubernetes, web endpoints)
+- Scanner-specific settings
 - Finding suppressions and severity overrides
-- Business context metadata
+- All configuration is done through the TUI - no YAML files required
 
 ### Report Design
 Reports are optimized for AI readability with:

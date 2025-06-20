@@ -1,31 +1,73 @@
 package storage
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
+	"context"
+	"database/sql"
 	"testing"
 	"time"
 
+	"github.com/joshsymonds/prismatic/internal/database"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// convertSeverityToDatabase converts model severity to database severity format.
+func convertSeverityToDatabase(severity string) database.Severity {
+	switch severity {
+	case "critical":
+		return database.SeverityCritical
+	case "high":
+		return database.SeverityHigh
+	case "medium":
+		return database.SeverityMedium
+	case "low":
+		return database.SeverityLow
+	case "info":
+		return database.SeverityInfo
+	default:
+		return database.SeverityInfo
+	}
+}
+
 func TestNewStorage(t *testing.T) {
-	storage := NewStorage("/tmp/test")
+	db, err := database.New(":memory:")
+	require.NoError(t, err)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
+	}()
+
+	storage := NewStorage(db)
 	assert.NotNil(t, storage)
-	assert.Equal(t, "/tmp/test", storage.baseDir)
+	assert.NotNil(t, storage.db)
 }
 
 func TestSaveAndLoadScanResults(t *testing.T) {
-	// Create temporary directory for tests
-	tempDir := t.TempDir()
-	storage := NewStorage(tempDir)
+	// Create in-memory database for tests
+	db, err := database.New(":memory:")
+	require.NoError(t, err)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
+	}()
+
+	storage := NewStorage(db)
+
+	// Create scan record first
+	ctx := context.Background()
+	scanID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: time.Now(),
+	})
+	require.NoError(t, err)
 
 	// Create test data
 	metadata := &models.ScanMetadata{
+		ID:          "test-scan",
 		ClientName:  "test-client",
 		Environment: "test-env",
 		StartTime:   time.Now().Add(-10 * time.Minute),
@@ -55,7 +97,7 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 				Scanner:   "test-scanner",
 				StartTime: time.Now().Add(-5 * time.Minute),
 				EndTime:   time.Now(),
-				Error:     "simulated error",
+				Error:     "scanner failed",
 			},
 		},
 		Summary: models.ScanSummary{
@@ -68,408 +110,203 @@ func TestSaveAndLoadScanResults(t *testing.T) {
 		},
 	}
 
-	// Test saving
-	outputDir := filepath.Join(tempDir, "scan-output")
-	err := storage.SaveScanResults(outputDir, metadata)
+	// Save scan results and findings through scanner interface
+	// First save findings directly
+	var dbFindings []*database.Finding
+	for _, result := range metadata.Results {
+		for _, finding := range result.Findings {
+			dbFindings = append(dbFindings, &database.Finding{
+				ScanID:      scanID,
+				Scanner:     finding.Scanner,
+				Severity:    convertSeverityToDatabase(finding.Severity),
+				Title:       finding.Title,
+				Description: finding.Description,
+				Resource:    finding.Resource,
+			})
+		}
+	}
+	err = db.BatchInsertFindings(ctx, scanID, dbFindings)
 	require.NoError(t, err)
 
-	// Verify files were created
-	assert.FileExists(t, filepath.Join(outputDir, "metadata.json"))
-	assert.FileExists(t, filepath.Join(outputDir, "findings.json"))
-	assert.FileExists(t, filepath.Join(outputDir, "scan.log"))
-	assert.FileExists(t, filepath.Join(outputDir, "raw", "mock.json"))
-	assert.NoFileExists(t, filepath.Join(outputDir, "raw", "test-scanner.json")) // No raw output for failed scanner
+	// Test saving metadata
+	err = storage.SaveScanResults(scanID, metadata)
+	require.NoError(t, err)
 
 	// Test loading
-	loaded, err := storage.LoadScanResults(outputDir)
+	loaded, err := storage.LoadScanResults(scanID)
 	require.NoError(t, err)
 	assert.Equal(t, metadata.ClientName, loaded.ClientName)
 	assert.Equal(t, metadata.Environment, loaded.Environment)
 	assert.Equal(t, metadata.Scanners, loaded.Scanners)
 	assert.Equal(t, metadata.Summary.TotalFindings, loaded.Summary.TotalFindings)
-
-	// Verify findings.json content
-	var findings []models.Finding
-	// Path is safe - constructed from test temp directory
-	findingsData, err := os.ReadFile(filepath.Join(outputDir, "findings.json")) // #nosec G304
-	require.NoError(t, err)
-	err = json.Unmarshal(findingsData, &findings)
-	require.NoError(t, err)
-	assert.Len(t, findings, 1)
-	assert.Equal(t, "finding-1", findings[0].ID)
-
-	// Verify scan.log content
-	// Path is safe - constructed from test temp directory
-	logContent, err := os.ReadFile(filepath.Join(outputDir, "scan.log")) // #nosec G304
-	require.NoError(t, err)
-	assert.Contains(t, string(logContent), "Client: test-client")
-	assert.Contains(t, string(logContent), "Environment: test-env")
-	assert.Contains(t, string(logContent), "✓ mock")
-	assert.Contains(t, string(logContent), "✗ test-scanner")
-	assert.Contains(t, string(logContent), "Total Findings: 1")
-	assert.Contains(t, string(logContent), "high: 1")
-	assert.Contains(t, string(logContent), "Failed Scanners:")
-	assert.Contains(t, string(logContent), "Error: simulated error")
-}
-
-func TestSaveAndLoadJSON(t *testing.T) {
-	tempDir := t.TempDir()
-	storage := NewStorage(tempDir)
-
-	testData := struct {
-		Name  string
-		Items []string
-		Value int
-	}{
-		Name:  "test",
-		Value: 42,
-		Items: []string{"one", "two", "three"},
-	}
-
-	// Save JSON
-	jsonPath := filepath.Join(tempDir, "test.json")
-	err := storage.saveJSON(jsonPath, testData)
-	require.NoError(t, err)
-
-	// Load JSON
-	var loaded struct {
-		Name  string
-		Items []string
-		Value int
-	}
-	err = storage.loadJSON(jsonPath, &loaded)
-	require.NoError(t, err)
-
-	assert.Equal(t, testData.Name, loaded.Name)
-	assert.Equal(t, testData.Value, loaded.Value)
-	assert.Equal(t, testData.Items, loaded.Items)
-}
-
-func TestFindLatestScan(t *testing.T) {
-	tempDir := t.TempDir()
-	storage := NewStorage(tempDir)
-
-	// Test with no scans directory
-	_, err := storage.FindLatestScan()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no scans found")
-
-	// Create scans directory with some scan directories
-	scansDir := filepath.Join(tempDir, "scans")
-	require.NoError(t, os.MkdirAll(scansDir, 0750))
-
-	// Create scan directories with different timestamps
-	scanDirs := []string{
-		"2024-01-01T10-00-00Z",
-		"2024-01-02T10-00-00Z",
-		"2024-01-03T10-00-00Z",
-		"2024-01-02T15-00-00Z",
-	}
-
-	for _, dir := range scanDirs {
-		require.NoError(t, os.MkdirAll(filepath.Join(scansDir, dir), 0750))
-	}
-
-	// Also create a file (should be ignored)
-	require.NoError(t, os.WriteFile(filepath.Join(scansDir, "not-a-directory.txt"), []byte("test"), 0600))
-
-	// Find latest scan
-	latest, err := storage.FindLatestScan()
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(scansDir, "2024-01-03T10-00-00Z"), latest)
-
-	// Test with empty scans directory
-	require.NoError(t, os.RemoveAll(scansDir))
-	require.NoError(t, os.MkdirAll(scansDir, 0750))
-	_, err = storage.FindLatestScan()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no scan directories found")
 }
 
 func TestListScans(t *testing.T) {
-	tempDir := t.TempDir()
-	storage := NewStorage(tempDir)
+	// Create in-memory database for tests
+	db, err := database.New(":memory:")
+	require.NoError(t, err)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
+	}()
 
-	// Create scans directory
-	scansDir := filepath.Join(tempDir, "scans")
-	require.NoError(t, os.MkdirAll(scansDir, 0750))
+	storage := NewStorage(db)
+	ctx := context.Background()
 
-	// Create test scans
-	testScans := []struct {
-		dir      string
-		metadata models.ScanMetadata
-	}{
-		{
-			dir: "2024-01-01T10-00-00Z",
-			metadata: models.ScanMetadata{
-				ClientName:  "client-a",
-				Environment: "prod",
-				StartTime:   time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC),
-				EndTime:     time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC),
-				Summary: models.ScanSummary{
-					TotalFindings: 10,
-				},
+	// Create multiple scans
+	scan1ID, err := db.CreateScan(ctx, &database.Scan{
+		Status:     database.ScanStatusCompleted,
+		StartedAt:  time.Now().Add(-2 * time.Hour),
+		AWSProfile: sql.NullString{String: "client1", Valid: true},
+	})
+	require.NoError(t, err)
+
+	scan2ID, err := db.CreateScan(ctx, &database.Scan{
+		Status:     database.ScanStatusCompleted,
+		StartedAt:  time.Now().Add(-1 * time.Hour),
+		AWSProfile: sql.NullString{String: "client2", Valid: true},
+	})
+	require.NoError(t, err)
+
+	// Save metadata for each scan
+	for i, scanID := range []int64{scan1ID, scan2ID} {
+		metadata := &models.ScanMetadata{
+			ClientName:  "client" + string(rune('1'+i)),
+			Environment: "production",
+			Summary: models.ScanSummary{
+				TotalFindings: 10 * (i + 1),
 			},
-		},
-		{
-			dir: "2024-01-02T10-00-00Z",
-			metadata: models.ScanMetadata{
-				ClientName:  "client-b",
-				Environment: "dev",
-				StartTime:   time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC),
-				EndTime:     time.Date(2024, 1, 2, 10, 30, 0, 0, time.UTC),
-				Summary: models.ScanSummary{
-					TotalFindings: 5,
-				},
-			},
-		},
-		{
-			dir: "2024-01-03T10-00-00Z",
-			metadata: models.ScanMetadata{
-				ClientName:  "client-a",
-				Environment: "staging",
-				StartTime:   time.Date(2024, 1, 3, 10, 0, 0, 0, time.UTC),
-				EndTime:     time.Date(2024, 1, 3, 10, 30, 0, 0, time.UTC),
-				Summary: models.ScanSummary{
-					TotalFindings: 15,
-				},
-			},
-		},
+		}
+		err = storage.SaveScanResults(scanID, metadata)
+		require.NoError(t, err)
 	}
-
-	// Create scan directories with metadata
-	for _, scan := range testScans {
-		scanDir := filepath.Join(scansDir, scan.dir)
-		require.NoError(t, os.MkdirAll(scanDir, 0750))
-		require.NoError(t, storage.saveJSON(filepath.Join(scanDir, "metadata.json"), scan.metadata))
-	}
-
-	// Also create an invalid directory (should be skipped)
-	invalidDir := filepath.Join(scansDir, "invalid-scan")
-	require.NoError(t, os.MkdirAll(invalidDir, 0750))
-	require.NoError(t, os.WriteFile(filepath.Join(invalidDir, "metadata.json"), []byte("invalid json"), 0600))
 
 	// Test listing all scans
-	scans, err := storage.ListScans("", 0)
+	scans, err := storage.ListScans("", 10)
 	require.NoError(t, err)
-	assert.Len(t, scans, 3)
-
-	// Should be in reverse chronological order
-	assert.Equal(t, "2024-01-03T10-00-00Z", scans[0].ID)
-	assert.Equal(t, "client-a", scans[0].ClientName)
-	assert.Equal(t, "staging", scans[0].Environment)
-	assert.Equal(t, 15, scans[0].Summary.TotalFindings)
-
-	assert.Equal(t, "2024-01-02T10-00-00Z", scans[1].ID)
-	assert.Equal(t, "client-b", scans[1].ClientName)
-
-	assert.Equal(t, "2024-01-01T10-00-00Z", scans[2].ID)
+	assert.Len(t, scans, 2)
 
 	// Test filtering by client
-	scans, err = storage.ListScans("client-a", 0)
+	scans, err = storage.ListScans("client1", 10)
 	require.NoError(t, err)
-	assert.Len(t, scans, 2)
-	assert.Equal(t, "client-a", scans[0].ClientName)
-	assert.Equal(t, "client-a", scans[1].ClientName)
-
-	// Test limit
-	scans, err = storage.ListScans("", 2)
-	require.NoError(t, err)
-	assert.Len(t, scans, 2)
-	assert.Equal(t, "2024-01-03T10-00-00Z", scans[0].ID)
-	assert.Equal(t, "2024-01-02T10-00-00Z", scans[1].ID)
-
-	// Test with non-existent directory
-	storage2 := NewStorage("/non/existent/path")
-	_, err = storage2.ListScans("", 0)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "reading scans directory")
+	assert.Len(t, scans, 1)
+	assert.Equal(t, "client1", scans[0].ClientName)
 }
 
-func TestConsolidateFindings(t *testing.T) {
-	storage := NewStorage("")
+func TestFindLatestScan(t *testing.T) {
+	// Create in-memory database for tests
+	db, err := database.New(":memory:")
+	require.NoError(t, err)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
+	}()
 
-	metadata := &models.ScanMetadata{
-		Results: map[string]*models.ScanResult{
-			"scanner1": {
-				Findings: []models.Finding{
-					{ID: "finding-1", Scanner: "scanner1"},
-					{ID: "finding-2", Scanner: "scanner1"},
-				},
-			},
-			"scanner2": {
-				Findings: []models.Finding{
-					{ID: "finding-3", Scanner: "scanner2"},
-				},
-			},
-			"scanner3": {
-				// No findings
-			},
-		},
+	storage := NewStorage(db)
+	ctx := context.Background()
+
+	// Test when no scans exist
+	_, err = storage.FindLatestScan()
+	assert.Error(t, err)
+
+	// Create some scans with distinct times
+	// Use time.Date to ensure distinct timestamps
+	firstTime := time.Date(2023, 1, 1, 10, 0, 0, 0, time.UTC)
+	_, err = db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: firstTime,
+	})
+	require.NoError(t, err)
+
+	// Second scan with later time
+	latestTime := time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)
+	latestID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: latestTime,
+	})
+	require.NoError(t, err)
+
+	// Test finding latest
+	foundID, err := storage.FindLatestScan()
+	require.NoError(t, err)
+
+	// Debug: list all scans to see the order
+	allScans, err := db.ListScans(ctx, database.ScanFilter{})
+	require.NoError(t, err)
+	t.Logf("All scans: %+v", allScans)
+	for _, s := range allScans {
+		t.Logf("Scan %d started at %v", s.ID, s.StartedAt)
 	}
 
-	findings := storage.consolidateFindings(metadata)
-	assert.Len(t, findings, 3)
-
-	// Verify all findings are present
-	foundIDs := make(map[string]bool)
-	for _, f := range findings {
-		foundIDs[f.ID] = true
-	}
-	assert.True(t, foundIDs["finding-1"])
-	assert.True(t, foundIDs["finding-2"])
-	assert.True(t, foundIDs["finding-3"])
-}
-
-func TestSaveLoadErrorHandling(t *testing.T) {
-	storage := NewStorage("")
-
-	// Test saving to invalid path
-	err := storage.SaveScanResults("/invalid\x00path", &models.ScanMetadata{})
-	assert.Error(t, err)
-
-	// Test loading from non-existent directory
-	_, err = storage.LoadScanResults("/non/existent/path")
-	assert.Error(t, err)
-
-	// Test loading invalid JSON
-	tempDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "metadata.json"), []byte("invalid json"), 0600))
-	_, err = storage.LoadScanResults(tempDir)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "loading metadata")
-}
-
-func TestLoadScanResultsWithMissingFindings(t *testing.T) {
-	tempDir := t.TempDir()
-	storage := NewStorage(tempDir)
-
-	// Create metadata without findings file
-	metadata := &models.ScanMetadata{
-		ClientName:  "test-client",
-		Environment: "test",
-		StartTime:   time.Now(),
-		EndTime:     time.Now(),
-	}
-
-	metadataPath := filepath.Join(tempDir, "metadata.json")
-	require.NoError(t, storage.saveJSON(metadataPath, metadata))
-
-	// Load should succeed even without findings file
-	loaded, err := storage.LoadScanResults(tempDir)
-	require.NoError(t, err)
-	assert.Equal(t, metadata.ClientName, loaded.ClientName)
-	assert.NotNil(t, loaded.Results) // Should initialize empty map
-}
-
-func TestSaveJSONWithInvalidPath(t *testing.T) {
-	storage := NewStorage("")
-
-	// Test with invalid path
-	err := storage.saveJSON("/invalid\x00path/file.json", struct{}{})
-	assert.Error(t, err)
-}
-
-func TestLoadJSONWithInvalidPath(t *testing.T) {
-	storage := NewStorage("")
-
-	var data struct{}
-	err := storage.loadJSON("/non/existent/file.json", &data)
-	assert.Error(t, err)
+	assert.Equal(t, latestID, foundID)
 }
 
 func TestSaveAndLoadEnrichments(t *testing.T) {
-	// Create temporary directory for tests
-	tempDir := t.TempDir()
-	storage := NewStorage(tempDir)
-	scanDir := filepath.Join(tempDir, "scan-001")
-	require.NoError(t, os.MkdirAll(scanDir, 0750))
+	// Create in-memory database for tests
+	db, err := database.New(":memory:")
+	require.NoError(t, err)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
+	}()
+
+	storage := NewStorage(db)
+	ctx := context.Background()
+
+	// Create scan
+	scanID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: time.Now(),
+	})
+	require.NoError(t, err)
 
 	// Create test enrichments
 	enrichments := []enrichment.FindingEnrichment{
 		{
 			FindingID:  "finding-1",
 			EnrichedAt: time.Now(),
-			LLMModel:   "claude-3-opus",
-			TokensUsed: 1500,
 			Analysis: enrichment.Analysis{
-				BusinessImpact:    "High risk to customer data security",
-				PriorityReasoning: "Publicly exposed S3 bucket contains sensitive data",
-				TechnicalDetails:  "Bucket has ACL set to public-read",
-				PriorityScore:     9.5,
-				RelatedFindings:   []string{"finding-2", "finding-3"},
+				BusinessImpact:    "High impact on customer data",
+				PriorityScore:     0.8,
+				PriorityReasoning: "Critical security issue",
 			},
 			Remediation: enrichment.Remediation{
-				EstimatedEffort:    "1 hour",
-				Immediate:          []string{"Set bucket ACL to private"},
-				ShortTerm:          []string{"Review all bucket policies"},
-				LongTerm:           []string{"Implement bucket policy automation"},
-				AutomationPossible: true,
-			},
-			Context: map[string]interface{}{
-				"service":     "s3",
-				"region":      "us-east-1",
-				"environment": "production",
-			},
-		},
-		{
-			FindingID:  "finding-2",
-			EnrichedAt: time.Now(),
-			LLMModel:   "claude-3-opus",
-			TokensUsed: 800,
-			Analysis: enrichment.Analysis{
-				BusinessImpact:    "Moderate performance impact",
-				PriorityReasoning: "Unencrypted RDS database",
-				TechnicalDetails:  "Database lacks encryption at rest",
-				PriorityScore:     7.0,
-			},
-			Remediation: enrichment.Remediation{
-				EstimatedEffort:    "4 hours",
-				Immediate:          []string{"Enable RDS encryption"},
-				ShortTerm:          []string{"Audit all databases"},
-				LongTerm:           []string{"Enforce encryption policy"},
-				AutomationPossible: false,
+				EstimatedEffort: "2 hours",
+				Immediate:       []string{"Apply security patch"},
 			},
 		},
 	}
 
-	metadata := &enrichment.EnrichmentMetadata{
+	metadata := &enrichment.Metadata{
 		StartedAt:        time.Now().Add(-5 * time.Minute),
 		CompletedAt:      time.Now(),
-		RunID:            "enrich-001",
-		Strategy:         "smart_batch",
-		Driver:           "claude_cli",
-		LLMModel:         "claude-3-opus",
-		TotalFindings:    10,
-		EnrichedFindings: 2,
-		TotalTokensUsed:  2300,
+		TotalFindings:    1,
+		EnrichedFindings: 1,
+		Strategy:         "smart-batch",
+		Driver:           "claude-cli",
 	}
 
-	// Test saving enrichments
-	err := storage.SaveEnrichments(scanDir, enrichments, metadata)
+	// Test saving
+	err = storage.SaveEnrichments(scanID, enrichments, metadata)
 	require.NoError(t, err)
 
-	// Verify files were created
-	enrichmentDir := filepath.Join(scanDir, "enrichments")
-	assert.DirExists(t, enrichmentDir)
-	assert.FileExists(t, filepath.Join(enrichmentDir, "finding-1.json"))
-	assert.FileExists(t, filepath.Join(enrichmentDir, "finding-2.json"))
-	assert.FileExists(t, filepath.Join(enrichmentDir, "metadata.json"))
-
-	// Test loading enrichments
-	loadedEnrichments, loadedMetadata, err := storage.LoadEnrichments(scanDir)
+	// Test loading
+	loaded, loadedMeta, err := storage.LoadEnrichments(scanID)
 	require.NoError(t, err)
-	require.NotNil(t, loadedMetadata)
-	assert.Len(t, loadedEnrichments, 2)
+	require.NotNil(t, loadedMeta)
+	assert.Len(t, loaded, 2)
 
 	// Verify metadata
-	assert.Equal(t, metadata.RunID, loadedMetadata.RunID)
-	assert.Equal(t, metadata.Strategy, loadedMetadata.Strategy)
-	assert.Equal(t, metadata.TotalTokensUsed, loadedMetadata.TotalTokensUsed)
+	assert.Equal(t, metadata.RunID, loadedMeta.RunID)
+	assert.Equal(t, metadata.Strategy, loadedMeta.Strategy)
+	assert.Equal(t, metadata.TotalTokensUsed, loadedMeta.TotalTokensUsed)
 
 	// Verify enrichments (order might differ)
 	enrichmentMap := make(map[string]enrichment.FindingEnrichment)
-	for _, e := range loadedEnrichments {
+	for _, e := range loaded {
 		enrichmentMap[e.FindingID] = e
 	}
 
@@ -543,11 +380,11 @@ func TestLoadEnrichmentsInvalidFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(enrichmentDir, "readme.txt"), []byte("not json"), 0600))
 
 	// Load should succeed with only valid enrichment
-	enrichments, loadedMetadata, err := storage.LoadEnrichments(scanDir)
+	enrichments, loadedMeta, err := storage.LoadEnrichments(scanDir)
 	require.NoError(t, err)
 	assert.Len(t, enrichments, 1)
 	assert.Equal(t, "valid-finding", enrichments[0].FindingID)
-	assert.Equal(t, "test-run", loadedMetadata.RunID)
+	assert.Equal(t, "test-run", loadedMeta.RunID)
 }
 
 func TestSaveEnrichmentsWithInvalidPath(t *testing.T) {

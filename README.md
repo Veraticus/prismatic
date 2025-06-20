@@ -5,7 +5,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/Veraticus/prismatic)](https://goreportcard.com/report/github.com/Veraticus/prismatic)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-🔍 **Prismatic** is a unified security scanning orchestrator that combines multiple open-source security tools into comprehensive, beautiful reports. It provides a single interface to run various security scanners across your cloud infrastructure, containers, and code repositories.
+🔍 **Prismatic** is a unified security scanning orchestrator that combines multiple open-source security tools into comprehensive, beautiful reports. It provides an intuitive terminal UI (TUI) to run various security scanners across your cloud infrastructure, containers, and code repositories.
 
 ### ✨ What's New
 
@@ -83,7 +83,7 @@ If you prefer to install specific tools manually:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Veraticus/prismatic.git
+git clone https://github.com/joshsymonds/prismatic.git
 cd prismatic
 
 # Build the binary
@@ -99,147 +99,61 @@ sudo cp prismatic /usr/local/bin/
 ### Using Go Install
 
 ```bash
-go install github.com/Veraticus/prismatic/cmd/prismatic@latest
+go install github.com/joshsymonds/prismatic/cmd/prismatic@latest
 ```
 
 ## 🎯 Quick Start
 
-### Complete Security Workflow with Claude
+### Launch Prismatic
 
 ```bash
-# 1. Run security scanners
-prismatic scan -c mycompany.yaml
+# Start the interactive TUI
+prismatic
 
-# 2. Enrich findings with Claude (uses Claude Code CLI)
-prismatic enrich -s data/scans/latest --strategy smart-batch
-
-# 3. Generate report with enriched context
-prismatic report -s data/scans/latest --format html -o security-report.html
-
-# 4. Generate actionable fix bundle
-prismatic report -s data/scans/latest --format fix-bundle -o fixes/
+# Or with debug logging
+prismatic --debug
 ```
 
-### Step-by-Step Guide
+### Using the TUI
 
-#### 1. Run Security Scanners
+Prismatic provides an intuitive terminal interface for all operations:
 
-```bash
-# Configuration-driven scanning
-prismatic scan -c mycompany.yaml
+1. **Main Menu**
+   - `New Scan` - Configure and run security scans
+   - `Scan History` - View previous scans and generate reports
+   - `Results Browser` - Browse and analyze findings
+   - `Reports` - Access generated reports
+   - `Settings` - Configure preferences
 
-# Or use interactive scanner selection
-prismatic scan
-```
+2. **Keyboard Navigation**
+   - `↑/↓` or `j/k` - Navigate menus
+   - `Enter` - Select item
+   - `Esc` - Go back
+   - `q` - Quit (from main menu)
 
-#### 2. Enrich Findings with Claude
+3. **Scan Configuration**
+   - Select scanners to run
+   - Configure scanner-specific settings
+   - Set targets (AWS accounts, containers, etc.)
+   - Start scan with real-time progress
 
-Claude Code provides intelligent analysis of your findings:
-
-```bash
-# Smart enrichment (recommended) - groups similar findings
-prismatic enrich -s data/scans/latest
-
-# Cost-conscious option - only critical findings
-prismatic enrich -s data/scans/latest --strategy critical-only
-
-# Premium analysis with Claude Opus
-prismatic enrich -s data/scans/latest --model opus
-
-# Budget option with Claude Haiku
+4. **Report Generation**
+   - From Scan History, press `r` to generate HTML report
+   - Press `e` to enrich findings with AI analysis
+   - Reports are saved in the `reports/` directory
 prismatic enrich -s data/scans/latest --model haiku
 ```
 
 #### 3. Generate Reports and Remediation
 
 ```bash
-# HTML report with Claude's insights
-prismatic report -s data/scans/latest --format html -o report.html
-
-# Machine-readable remediation plan
-prismatic report -s data/scans/latest --format remediation -o fixes.yaml
-
-# Complete fix bundle with validation
-prismatic report -s data/scans/latest --format fix-bundle -o fix-bundle/
-```
-
-#### 4. Apply Fixes with Claude's Help
-
-```bash
-# Use Claude to implement the fixes
-cd fix-bundle/remediations/rem-001-s3-public-access/
-cat llm-prompt.txt | claude
-
-# Or apply patches directly
-git apply fix.patch
-
-# Validate the fix worked
-./validation.sh
-```
-
-### Configuration File Example
-
-Create a YAML configuration file for your environment:
-
-```yaml
-# mycompany.yaml
-client:
-  name: MyCompany
-  environment: production
-  description: "Production security scan"
-
-# AWS Configuration
-aws:
-  profiles:
-    - production-profile
-  regions:
-    - us-east-1
-    - us-west-2
-
-# Container Configuration
-containers:
-  registries:
-    - type: ecr
-      region: us-east-1
-      registry: "123456789012.dkr.ecr.us-east-1.amazonaws.com"
-  images:
-    - name: web-app
-      image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/web-app:v1.2.3"
-    - name: api-service
-      image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/api:latest"
-
-# Kubernetes Configuration
-kubernetes:
-  kubeconfig: "~/.kube/production-config"  # Optional: path to kubeconfig
-  contexts:
-    - production-eks-cluster
-  namespaces: []  # Empty = scan all namespaces
-
-# Web Endpoints
-web_endpoints:
-  - name: main-website
-    url: "https://www.example.com"
-  - name: api-endpoint
-    url: "https://api.example.com"
-  - name: admin-panel
-    url: "https://admin.example.com"
-
-# Git Repositories
-repositories:
-  - name: backend
-    path: "https://github.com/mycompany/backend"
-    branch: main
-  - name: frontend
-    path: "https://github.com/mycompany/frontend"
-    branch: main
-  - name: infrastructure
-    path: "https://github.com/mycompany/infrastructure"
-    branch: main
-
-# Output Configuration
-output:
-  format: html  # or pdf
-  directory: "./reports/mycompany"
+5. **Features**
+   - All scanner configuration through the TUI
+   - Real-time scan progress monitoring
+   - SQLite database for all data storage
+   - No YAML configuration files needed
+   - Integrated report generation
+   - AI enrichment support (coming soon)
 ```
 
 

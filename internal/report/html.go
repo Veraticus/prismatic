@@ -1,25 +1,23 @@
 // Package report provides functionality for generating HTML security reports from scan results.
-// It includes support for applying manual modifications (suppressions, severity overrides, and
-// comments) to findings, organizing findings by category and severity, and rendering
+// It includes support for organizing findings by category and severity, and rendering
 // professional HTML reports with a "prismatic" theme optimized for AI readability.
 package report
 
 import (
-	"bytes"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/joshsymonds/prismatic/internal/config"
+	"github.com/joshsymonds/prismatic/internal/database"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/storage"
@@ -50,52 +48,70 @@ var scannerCategories = map[string]string{
 type HTMLGenerator struct {
 	logger      logger.Logger
 	metadata    *models.ScanMetadata
-	config      *config.Config
 	enrichments map[string]*enrichment.FindingEnrichment
-	enrichMeta  *enrichment.EnrichmentMetadata
-	scanPath    string
+	enrichMeta  *enrichment.Metadata
 	findings    []models.Finding
+	scanID      int64
 }
 
 // NewHTMLGenerator creates a new HTML report generator.
-func NewHTMLGenerator(scanPath string, cfg *config.Config) (*HTMLGenerator, error) {
-	return NewHTMLGeneratorWithLogger(scanPath, cfg, logger.GetGlobalLogger())
+func NewHTMLGenerator(scanPath string) (*HTMLGenerator, error) {
+	return NewHTMLGeneratorWithLogger(scanPath, logger.GetGlobalLogger())
 }
 
 // NewHTMLGeneratorWithLogger creates a new HTML report generator with a custom logger.
-func NewHTMLGeneratorWithLogger(scanPath string, cfg *config.Config, log logger.Logger) (*HTMLGenerator, error) {
-	// Load scan results
-	store := storage.NewStorageWithLogger("data", log)
+func NewHTMLGeneratorWithLogger(scanPath string, log logger.Logger) (*HTMLGenerator, error) {
+	// Create database connection
+	db, err := database.New(":memory:")
+	if err != nil {
+		return nil, fmt.Errorf("creating database: %w", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Warn("failed to close database", "error", err)
+		}
+	}()
 
-	// Resolve scan path
+	return NewHTMLGeneratorWithDatabase(scanPath, db, log)
+}
+
+// NewHTMLGeneratorWithDatabase creates a new HTML report generator with an existing database.
+func NewHTMLGeneratorWithDatabase(scanPath string, db *database.DB, log logger.Logger) (*HTMLGenerator, error) {
+	// Create storage instance
+	store := storage.NewStorageWithLogger(db, log)
+
+	// Resolve scan ID
+	var scanID int64
+	var err error
 	if scanPath == "latest" {
-		latest, err := store.FindLatestScan()
+		scanID, err = store.FindLatestScan()
 		if err != nil {
 			return nil, fmt.Errorf("finding latest scan: %w", err)
 		}
-		scanPath = latest
+	} else {
+		// Parse scan ID from string
+		scanID, err = strconv.ParseInt(scanPath, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid scan ID: %w", err)
+		}
 	}
 
 	// Load metadata
-	metadata, err := store.LoadScanResults(scanPath)
+	metadata, err := store.LoadScanResults(scanID)
 	if err != nil {
 		return nil, fmt.Errorf("loading scan results: %w", err)
 	}
 
-	// Load findings
-	findingsPath := filepath.Join(scanPath, "findings.json")
+	// Collect all findings from metadata
 	var findings []models.Finding
-	if err := loadJSON(findingsPath, &findings); err != nil {
-		return nil, fmt.Errorf("loading findings: %w", err)
+	for _, result := range metadata.Results {
+		findings = append(findings, result.Findings...)
 	}
 
-	// Enrich findings with business context if config is provided
-	if cfg != nil {
-		findings = enrichFindings(findings, cfg, log)
-	}
+	// Note: Business context enrichment removed as config is no longer passed
 
 	// Load AI enrichments if available
-	aiEnrichments, enrichMeta, err := store.LoadEnrichments(scanPath)
+	aiEnrichments, enrichMeta, err := store.LoadEnrichments(scanID)
 	if err != nil {
 		log.Warn("Failed to load AI enrichments", "error", err)
 		// Continue without AI enrichments
@@ -108,11 +124,10 @@ func NewHTMLGeneratorWithLogger(scanPath string, cfg *config.Config, log logger.
 	}
 
 	generator := &HTMLGenerator{
-		scanPath:    scanPath,
+		scanID:      scanID,
 		metadata:    metadata,
 		findings:    findings,
 		logger:      log,
-		config:      cfg,
 		enrichments: enrichmentMap,
 		enrichMeta:  enrichMeta,
 	}
@@ -122,7 +137,7 @@ func NewHTMLGeneratorWithLogger(scanPath string, cfg *config.Config, log logger.
 
 // GetScanPath returns the scan path.
 func (g *HTMLGenerator) GetScanPath() string {
-	return g.scanPath
+	return fmt.Sprintf("%d", g.scanID)
 }
 
 // GetMetadata returns the scan metadata.
@@ -135,23 +150,7 @@ func (g *HTMLGenerator) GetTotalFindings() int {
 	return len(g.findings)
 }
 
-// ApplyModifications applies manual modifications to the findings.
-func (g *HTMLGenerator) ApplyModifications(modsPath string) error {
-	mods, err := LoadModifications(modsPath)
-	if err != nil {
-		return fmt.Errorf("loading modifications: %w", err)
-	}
-
-	// Apply modifications
-	g.findings = mods.ApplyModificationsWithLogger(g.findings, g.logger)
-
-	g.logger.Info("Applied modifications",
-		"file", modsPath,
-		"suppressions", len(mods.Suppressions),
-		"overrides", len(mods.Overrides))
-
-	return nil
-}
+// ApplyModifications has been removed - modifications functionality is no longer supported
 
 // Generate creates the HTML report.
 func (g *HTMLGenerator) Generate(outputPath string) error {
@@ -231,11 +230,11 @@ func (g *HTMLGenerator) templateFuncs() template.FuncMap {
 		"add": func(a, b int) int {
 			return a + b
 		},
-		"dict": func(values ...interface{}) (map[string]interface{}, error) {
+		"dict": func(values ...any) (map[string]any, error) {
 			if len(values)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of arguments")
 			}
-			dict := make(map[string]interface{}, len(values)/2)
+			dict := make(map[string]any, len(values)/2)
 			for i := 0; i < len(values); i += 2 {
 				key, ok := values[i].(string)
 				if !ok {
@@ -254,7 +253,7 @@ type TemplateData struct {
 	Metadata           *models.ScanMetadata
 	FindingsByCategory map[string][]models.Finding
 	SeverityCounts     map[string]int
-	EnrichmentMeta     *enrichment.EnrichmentMetadata
+	EnrichmentMeta     *enrichment.Metadata
 	Enrichments        map[string]*enrichment.FindingEnrichment
 	ContainerFindings  []models.Finding
 	SecretsFindings    []models.Finding
@@ -301,6 +300,10 @@ func (g *HTMLGenerator) prepareData(data *TemplateData) {
 	for _, finding := range g.findings {
 		if finding.Suppressed {
 			data.TotalSuppressed++
+			// Include suppressed findings in categories so they can be shown
+			if category, exists := scannerCategories[finding.Scanner]; exists {
+				data.FindingsByCategory[category] = append(data.FindingsByCategory[category], finding)
+			}
 			continue
 		}
 
@@ -381,19 +384,4 @@ func sortFindings(findings []models.Finding) {
 		}
 		return severityOrder(findings[i].Severity) < severityOrder(findings[j].Severity)
 	})
-}
-
-// loadJSON is a helper to load JSON files.
-// The path should already be validated by the caller.
-func loadJSON(path string, v any) error {
-	data, err := os.ReadFile(path) // #nosec G304 - path is validated by caller
-	if err != nil {
-		return err
-	}
-
-	var buf bytes.Buffer
-	buf.Write(data)
-
-	decoder := json.NewDecoder(&buf)
-	return decoder.Decode(v)
 }

@@ -28,7 +28,7 @@ func (s *HighImpactStrategy) Description() string {
 }
 
 // Batch implements BatchingStrategy interface.
-func (s *HighImpactStrategy) Batch(ctx context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
+func (s *HighImpactStrategy) Batch(_ context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
 	// Filter for high-impact findings
 	var highImpactFindings []models.Finding
 
@@ -103,7 +103,7 @@ func (s *HighImpactStrategy) Batch(ctx context.Context, findings []models.Findin
 }
 
 // isProductionResource checks if a finding is from a production resource.
-func (s *HighImpactStrategy) isProductionResource(finding models.Finding, clientContext map[string]interface{}) bool {
+func (s *HighImpactStrategy) isProductionResource(finding models.Finding, clientContext map[string]any) bool {
 	resource := strings.ToLower(finding.Resource)
 
 	// Check resource name
@@ -117,7 +117,7 @@ func (s *HighImpactStrategy) isProductionResource(finding models.Finding, client
 	// Check client context for production identifiers
 	if clientContext != nil {
 		// Check for production AWS accounts
-		if prodAccounts, ok := clientContext["production_accounts"].([]interface{}); ok {
+		if prodAccounts, ok := clientContext["production_accounts"].([]any); ok {
 			for _, account := range prodAccounts {
 				if strings.Contains(resource, fmt.Sprintf("%v", account)) {
 					return true
@@ -126,7 +126,7 @@ func (s *HighImpactStrategy) isProductionResource(finding models.Finding, client
 		}
 
 		// Check for production namespaces
-		if prodNamespaces, ok := clientContext["production_namespaces"].([]interface{}); ok {
+		if prodNamespaces, ok := clientContext["production_namespaces"].([]any); ok {
 			for _, ns := range prodNamespaces {
 				if strings.Contains(resource, fmt.Sprintf("%v", ns)) {
 					return true

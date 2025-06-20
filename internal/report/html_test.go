@@ -1,35 +1,42 @@
 package report
 
 import (
-	"encoding/json"
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/joshsymonds/prismatic/internal/database"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/pkg/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewHTMLGenerator(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create data directory structure
-	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0750)
-
-	// Save current working directory and change to temp
-	oldWd, _ := os.Getwd()
-	_ = os.Chdir(tempDir)
-	defer func() { _ = os.Chdir(oldWd) }()
+	// Create in-memory database
+	db, err := database.New(":memory:")
+	require.NoError(t, err)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
+	}()
 
 	// Create test scan data
-	store := storage.NewStorage("data")
-	scanDir := filepath.Join("data", "scans", "2024-01-01T10-00-00Z")
+	ctx := context.Background()
+	scanID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: time.Now().Add(-10 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	store := storage.NewStorage(db)
 
 	metadata := &models.ScanMetadata{
 		ClientName:  "test-client",
@@ -44,756 +51,204 @@ func TestNewHTMLGenerator(t *testing.T) {
 				"medium":   2,
 			},
 		},
-	}
-
-	findings := []models.Finding{
-		{
-			ID:       "finding-1",
-			Scanner:  "mock-prowler",
-			Type:     "security-group",
-			Severity: "critical",
-			Title:    "Open Security Group",
-			Resource: "sg-12345",
-		},
-		{
-			ID:         "finding-2",
-			Scanner:    "mock-trivy",
-			Type:       "CVE-2021-12345",
-			Severity:   "high",
-			Title:      "Critical Vulnerability",
-			Resource:   "nginx:latest",
-			Suppressed: true,
-		},
-	}
-
-	// Save test data
-	err := store.SaveScanResults(scanDir, metadata)
-	require.NoError(t, err)
-
-	// Create a custom findings.json since SaveScanResults will create a different one
-	findingsPath := filepath.Join(scanDir, "findings.json")
-	err = saveJSONHelper(findingsPath, findings)
-	require.NoError(t, err)
-
-	// Test loading scan by path
-	gen, err := NewHTMLGenerator(scanDir, nil)
-	require.NoError(t, err)
-	assert.Equal(t, scanDir, gen.scanPath)
-	assert.Equal(t, metadata.ClientName, gen.metadata.ClientName)
-	assert.Len(t, gen.findings, 2)
-
-	// Test loading latest scan
-	gen2, err := NewHTMLGenerator("latest", nil)
-	require.NoError(t, err)
-	assert.Equal(t, scanDir, gen2.scanPath)
-
-	// Test with non-existent scan
-	_, err = NewHTMLGenerator("/non/existent/path", nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "loading scan results")
-}
-
-func TestGenerate(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create data directory structure
-	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0750)
-
-	// Save current working directory and change to temp
-	oldWd, _ := os.Getwd()
-	_ = os.Chdir(tempDir)
-	defer func() { _ = os.Chdir(oldWd) }()
-
-	// Create test scan data
-	store := storage.NewStorage("data")
-	scanDir := filepath.Join("data", "scans", "2024-01-01T10-00-00Z")
-
-	metadata := &models.ScanMetadata{
-		ClientName:  "test-client",
-		Environment: "production",
-		StartTime:   time.Now().Add(-30 * time.Minute),
-		EndTime:     time.Now(),
-		Scanners:    []string{"mock-prowler", "mock-trivy", "mock-nuclei"},
 		Results: map[string]*models.ScanResult{
 			"mock-prowler": {
-				Scanner:   "mock-prowler",
-				StartTime: time.Now().Add(-30 * time.Minute),
-				EndTime:   time.Now().Add(-20 * time.Minute),
-			},
-			"mock-trivy": {
-				Scanner:   "mock-trivy",
-				StartTime: time.Now().Add(-20 * time.Minute),
-				EndTime:   time.Now().Add(-10 * time.Minute),
-			},
-			"mock-nuclei": {
-				Scanner:   "mock-nuclei",
-				StartTime: time.Now().Add(-10 * time.Minute),
-				EndTime:   time.Now(),
-			},
-		},
-		Summary: models.ScanSummary{
-			TotalFindings:   11,
-			SuppressedCount: 3,
-			BySeverity: map[string]int{
-				"critical": 2,
-				"high":     4,
-				"medium":   3,
-				"low":      1,
-				"info":     1,
-			},
-			ByScanner: map[string]int{
-				"mock-prowler":   2,
-				"mock-trivy":     2,
-				"mock-nuclei":    1,
-				"mock-kubescape": 1,
-				"mock-gitleaks":  1,
-				"mock-checkov":   3,
+				Scanner: "mock-prowler",
+				Findings: []models.Finding{
+					{
+						ID:       "finding-1",
+						Scanner:  "mock-prowler",
+						Type:     "security-group",
+						Severity: "critical",
+						Title:    "Open Security Group",
+						Resource: "sg-12345",
+					},
+					{
+						ID:       "finding-2",
+						Scanner:  "mock-prowler",
+						Type:     "iam",
+						Severity: "high",
+						Title:    "Overly Permissive IAM Policy",
+						Resource: "arn:aws:iam::123456789012:policy/OverlyPermissive",
+					},
+				},
 			},
 		},
 	}
 
-	findings := []models.Finding{
-		// AWS findings
-		{
-			ID:          "aws-1",
-			Scanner:     "mock-prowler",
-			Type:        "security-group",
-			Severity:    "critical",
-			Title:       "Open Security Group",
-			Description: "Security group allows unrestricted access",
-			Resource:    "sg-12345",
-			Remediation: "Restrict security group rules",
-			Impact:      "High risk of unauthorized access",
-		},
-		{
-			ID:          "aws-2",
-			Scanner:     "mock-prowler",
-			Type:        "iam-policy",
-			Severity:    "high",
-			Title:       "Overly Permissive IAM Policy",
-			Description: "IAM policy grants excessive permissions",
-			Resource:    "arn:aws:iam::123456789012:policy/AdminPolicy",
-			Remediation: "Apply principle of least privilege",
-			Impact:      "Risk of privilege escalation",
-		},
-		// Container findings
-		{
-			ID:          "container-1",
-			Scanner:     "mock-trivy",
-			Type:        "CVE-2021-44228",
-			Severity:    "critical",
-			Title:       "Log4Shell Vulnerability",
-			Description: "Critical RCE vulnerability in Log4j",
-			Resource:    "app:latest",
-			Remediation: "Update Log4j to version 2.17.0 or later",
-			Impact:      "Remote code execution possible",
-		},
-		{
-			ID:                "container-2",
-			Scanner:           "mock-trivy",
-			Type:              "CVE-2021-12345",
-			Severity:          "high",
-			Title:             "OpenSSL Vulnerability",
-			Description:       "Buffer overflow in OpenSSL",
-			Resource:          "nginx:1.19",
-			Remediation:       "Update to nginx:1.21 or later",
-			Impact:            "Potential denial of service",
-			Suppressed:        true,
-			SuppressionReason: "Accepted risk until next release",
-		},
-		// Web findings
-		{
-			ID:          "web-1",
-			Scanner:     "mock-nuclei",
-			Type:        "exposed-api",
-			Severity:    "high",
-			Title:       "Exposed API Endpoint",
-			Description: "API endpoint accessible without authentication",
-			Resource:    "https://example.com/api/admin",
-			Remediation: "Implement authentication",
-			Impact:      "Unauthorized access to sensitive data",
-		},
-		// K8s findings
-		{
-			ID:          "k8s-1",
-			Scanner:     "mock-kubescape",
-			Type:        "privileged-container",
-			Severity:    "medium",
-			Title:       "Privileged Container",
-			Description: "Container running with privileged access",
-			Resource:    "deployment/app-deployment",
-			Remediation: "Remove privileged flag",
-			Impact:      "Container escape possible",
-		},
-		// Secrets findings
-		{
-			ID:          "secret-1",
-			Scanner:     "mock-gitleaks",
-			Type:        "github-token",
-			Severity:    "high",
-			Title:       "GitHub Token Exposed",
-			Description: "GitHub personal access token found in source code",
-			Resource:    "src/auth.js:15",
-			Location:    "line 15",
-			Remediation: "Rotate token and use environment variables",
-			Impact:      "Repository access compromise",
-		},
-		{
-			ID:                "secret-2",
-			Scanner:           "mock-gitleaks",
-			Type:              "aws-key",
-			Severity:          "critical",
-			Title:             "AWS Access Key Exposed",
-			Description:       "AWS access key found in source code",
-			Resource:          "src/config.js:42",
-			Location:          "line 42",
-			Remediation:       "Rotate key and use environment variables",
-			Impact:            "AWS account compromise",
-			Suppressed:        true,
-			SuppressionReason: "False positive - example key",
-		},
-		// IaC findings
-		{
-			ID:          "iac-1",
-			Scanner:     "mock-checkov",
-			Type:        "CKV_AWS_23",
-			Severity:    "medium",
-			Title:       "S3 Bucket Logging Disabled",
-			Description: "S3 bucket does not have access logging enabled",
-			Resource:    "terraform/s3.tf",
-			Remediation: "Enable S3 bucket logging",
-			Impact:      "Reduced audit trail",
-		},
-		{
-			ID:          "iac-2",
-			Scanner:     "mock-checkov",
-			Type:        "CKV_AWS_18",
-			Severity:    "low",
-			Title:       "S3 Bucket Without Versioning",
-			Description: "S3 bucket does not have versioning enabled",
-			Resource:    "terraform/s3.tf",
-			Remediation: "Enable versioning",
-			Impact:      "Cannot recover from accidental deletion",
-		},
-		{
-			ID:          "iac-3",
-			Scanner:     "mock-checkov",
-			Type:        "CKV_AWS_145",
-			Severity:    "info",
-			Title:       "S3 Bucket Without Lifecycle Policy",
-			Description: "S3 bucket does not have lifecycle rules",
-			Resource:    "terraform/s3.tf",
-			Remediation: "Add lifecycle rules",
-			Impact:      "Potential cost optimization missed",
-		},
-	}
-
-	// Save test data
-	err := store.SaveScanResults(scanDir, metadata)
+	// Save scan data to database
+	err = store.SaveScanResults(scanID, metadata)
 	require.NoError(t, err)
 
-	// Save findings
-	findingsPath := filepath.Join(scanDir, "findings.json")
-	err = saveJSONHelper(findingsPath, findings)
+	// Save findings to database
+	saveFindingsToDatabase(t, db, scanID, metadata)
+
+	// Test creating generator with scan ID
+	scanIDStr := fmt.Sprintf("%d", scanID)
+	gen, err := NewHTMLGeneratorWithDatabase(scanIDStr, db, logger.GetGlobalLogger())
 	require.NoError(t, err)
+	assert.NotNil(t, gen)
+	assert.Equal(t, scanID, gen.scanID)
+	assert.Equal(t, "test-client", gen.metadata.ClientName)
 
-	// Generate report
-	gen, err := NewHTMLGenerator(scanDir, nil)
+	// Test creating generator with "latest"
+	gen2, err := NewHTMLGeneratorWithDatabase("latest", db, logger.GetGlobalLogger())
 	require.NoError(t, err)
-
-	outputPath := filepath.Join(tempDir, "report.html")
-	err = gen.Generate(outputPath)
-	require.NoError(t, err)
-
-	// Verify report was created
-	assert.FileExists(t, outputPath)
-
-	// Read and verify content
-	// Path is safe - constructed from test temp directory
-	content, err := os.ReadFile(outputPath) // #nosec G304
-	require.NoError(t, err)
-
-	html := string(content)
-
-	// Check basic structure
-	assert.Contains(t, html, "<html")
-	assert.Contains(t, html, "</html>")
-	assert.Contains(t, html, "Prismatic Security Report")
-
-	// Check metadata
-	assert.Contains(t, html, "test-client")
-	assert.Contains(t, html, "production")
-
-	// Check summary stats
-	assert.Contains(t, html, "8") // Total active findings (11 - 3 suppressed)
-	assert.Contains(t, html, "2") // Critical count
-	assert.Contains(t, html, "4") // High count
-
-	// Check that findings from different categories are present
-	// (The actual section headers/icons depend on the template implementation)
-
-	// Check specific findings
-	assert.Contains(t, html, "Open Security Group")
-	assert.Contains(t, html, "Log4Shell Vulnerability")
-	assert.Contains(t, html, "Exposed API Endpoint")
-
-	// Ensure suppressed findings are not in active sections
-	assert.NotContains(t, html, "Accepted risk until next release")
-	assert.NotContains(t, html, "False positive - example key")
-
-	// Note: The template doesn't currently display failed scanner information
-	// This could be added as an enhancement
+	assert.NotNil(t, gen2)
+	assert.Equal(t, scanID, gen2.scanID)
 }
 
-func TestTemplateFuncs(t *testing.T) {
-	gen := &HTMLGenerator{}
-	funcs := gen.templateFuncs()
-
-	// Test severityClass
-	severityClass, ok := funcs["severityClass"].(func(string) string)
-	require.True(t, ok, "severityClass function should exist")
-	assert.Equal(t, "severity-critical", severityClass("critical"))
-	assert.Equal(t, "severity-high", severityClass("high"))
-
-	// Test severityIcon
-	severityIcon, ok := funcs["severityIcon"].(func(string) string)
-	require.True(t, ok, "severityIcon function should exist")
-	assert.Equal(t, "🔴", severityIcon("critical"))
-	assert.Equal(t, "🟠", severityIcon("high"))
-	assert.Equal(t, "🟡", severityIcon("medium"))
-	assert.Equal(t, "🔵", severityIcon("low"))
-	assert.Equal(t, "⚪", severityIcon("info"))
-	assert.Equal(t, "⚪", severityIcon("unknown"))
-
-	// Test formatTime
-	formatTime, ok := funcs["formatTime"].(func(time.Time) string)
-	require.True(t, ok, "formatTime function should exist")
-	testTime := time.Date(2024, 1, 1, 10, 30, 45, 0, time.UTC)
-	assert.Equal(t, "2024-01-01 10:30:45", formatTime(testTime))
-
-	// Test formatDuration
-	formatDuration, ok := funcs["formatDuration"].(func(time.Duration) string)
-	require.True(t, ok, "formatDuration function should exist")
-	assert.Equal(t, "5m30s", formatDuration(5*time.Minute+30*time.Second))
-	assert.Equal(t, "1h0m0s", formatDuration(1*time.Hour))
-
-	// Test truncate
-	truncate, ok := funcs["truncate"].(func(string, int) string)
-	require.True(t, ok, "truncate function should exist")
-	assert.Equal(t, "hello", truncate("hello", 10))
-	assert.Equal(t, "hello worl...", truncate("hello world test", 10))
-}
-
-func TestPrepareTemplateData(t *testing.T) {
-	gen := &HTMLGenerator{
-		metadata: &models.ScanMetadata{
-			ClientName:  "test-client",
-			Environment: "test",
-			StartTime:   time.Now().Add(-30 * time.Minute),
-			EndTime:     time.Now(),
-			Summary: models.ScanSummary{
-				TotalFindings:   10,
-				SuppressedCount: 2,
-			},
-		},
-		findings: []models.Finding{
-			// Critical findings
-			{Scanner: "mock-prowler", Severity: "critical", Title: "Critical AWS Issue", Suppressed: false},
-			{Scanner: "mock-trivy", Severity: "critical", Title: "Critical Container Issue", Suppressed: false},
-			// High findings
-			{Scanner: "mock-prowler", Severity: "high", Title: "High AWS Issue 1", Suppressed: false},
-			{Scanner: "mock-prowler", Severity: "high", Title: "High AWS Issue 2", Suppressed: false},
-			{Scanner: "mock-nuclei", Severity: "high", Title: "High Web Issue", Suppressed: false},
-			// Medium findings
-			{Scanner: "mock-kubescape", Severity: "medium", Title: "Medium K8s Issue", Suppressed: false},
-			{Scanner: "mock-checkov", Severity: "medium", Title: "Medium IaC Issue", Suppressed: false},
-			// Low findings
-			{Scanner: "mock-gitleaks", Severity: "low", Title: "Low Secret Issue", Suppressed: false},
-			// Suppressed findings
-			{Scanner: "mock-trivy", Severity: "high", Title: "Suppressed Issue 1", Suppressed: true},
-			{Scanner: "mock-prowler", Severity: "critical", Title: "Suppressed Issue 2", Suppressed: true},
-		},
-	}
-
-	data := gen.prepareTemplateData()
-
-	// Check counts
-	assert.Equal(t, 8, data.TotalActive)
-	assert.Equal(t, 2, data.TotalSuppressed)
-	assert.Equal(t, 2, data.CriticalCount)
-	assert.Equal(t, 3, data.HighCount)
-	assert.Equal(t, 2, data.MediumCount)
-	assert.Equal(t, 1, data.LowCount)
-	assert.Equal(t, 0, data.InfoCount)
-
-	// Check categorization
-	assert.Len(t, data.AWSFindings, 3) // 3 active AWS findings
-	assert.Len(t, data.ContainerFindings, 1)
-	assert.Len(t, data.KubernetesFindings, 1)
-	assert.Len(t, data.WebFindings, 1)
-	assert.Len(t, data.SecretsFindings, 1)
-	assert.Len(t, data.IaCFindings, 1)
-
-	// Check top risks (should include all critical and high)
-	assert.Len(t, data.TopRisks, 5)
-	assert.Equal(t, "critical", data.TopRisks[0].Severity)
-	assert.Equal(t, "critical", data.TopRisks[1].Severity)
-	assert.Equal(t, "high", data.TopRisks[2].Severity)
-
-	// Check sorting within categories
-	assert.Equal(t, "critical", data.AWSFindings[0].Severity)
-	assert.Equal(t, "high", data.AWSFindings[1].Severity)
-}
-
-func TestSeverityOrder(t *testing.T) {
-	assert.Equal(t, 0, severityOrder("critical"))
-	assert.Equal(t, 1, severityOrder("high"))
-	assert.Equal(t, 2, severityOrder("medium"))
-	assert.Equal(t, 3, severityOrder("low"))
-	assert.Equal(t, 4, severityOrder("info"))
-	assert.Equal(t, 5, severityOrder("unknown"))
-}
-
-func TestSortFindings(t *testing.T) {
-	findings := []models.Finding{
-		{Severity: "low", Title: "C Low Issue"},
-		{Severity: "high", Title: "B High Issue"},
-		{Severity: "critical", Title: "Z Critical Issue"},
-		{Severity: "high", Title: "A High Issue"},
-		{Severity: "critical", Title: "A Critical Issue"},
-		{Severity: "medium", Title: "Medium Issue"},
-	}
-
-	sortFindings(findings)
-
-	// Check order
-	assert.Equal(t, "critical", findings[0].Severity)
-	assert.Equal(t, "A Critical Issue", findings[0].Title)
-	assert.Equal(t, "critical", findings[1].Severity)
-	assert.Equal(t, "Z Critical Issue", findings[1].Title)
-	assert.Equal(t, "high", findings[2].Severity)
-	assert.Equal(t, "A High Issue", findings[2].Title)
-	assert.Equal(t, "high", findings[3].Severity)
-	assert.Equal(t, "B High Issue", findings[3].Title)
-	assert.Equal(t, "medium", findings[4].Severity)
-	assert.Equal(t, "low", findings[5].Severity)
-}
-
-// saveJSONHelper is a test helper to save JSON data.
-func saveJSONHelper(path string, data any) error {
-	// Path is safe - only used in tests with temp directories
-	file, err := os.Create(path) // #nosec G304
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(data)
-}
-
-func TestLoadJSON(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Test successful load
-	testData := map[string]string{
-		"key1": "value1",
-		"key2": "value2",
-	}
-
-	jsonPath := filepath.Join(tempDir, "test.json")
-	err := saveJSONHelper(jsonPath, testData)
+func TestHTMLGeneratorGenerate(t *testing.T) {
+	// Create in-memory database
+	db, err := database.New(":memory:")
 	require.NoError(t, err)
-
-	var loaded map[string]string
-	err = loadJSON(jsonPath, &loaded)
-	require.NoError(t, err)
-	assert.Equal(t, testData, loaded)
-
-	// Test non-existent file
-	var notFound map[string]string
-	err = loadJSON("/non/existent/file.json", &notFound)
-	assert.Error(t, err)
-}
-
-func TestGenerateWithInvalidOutputPath(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create data directory structure
-	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0750)
-
-	// Save current working directory and change to temp
-	oldWd, _ := os.Getwd()
-	_ = os.Chdir(tempDir)
-	defer func() { _ = os.Chdir(oldWd) }()
-
-	// Create minimal test data
-	store := storage.NewStorage("data")
-	scanDir := filepath.Join("data", "scans", "2024-01-01T10-00-00Z")
-
-	metadata := &models.ScanMetadata{
-		ClientName:  "test",
-		Environment: "test",
-		StartTime:   time.Now(),
-		EndTime:     time.Now(),
-	}
-
-	err := store.SaveScanResults(scanDir, metadata)
-	require.NoError(t, err)
-
-	err = saveJSONHelper(filepath.Join(scanDir, "findings.json"), []models.Finding{})
-	require.NoError(t, err)
-
-	gen, err := NewHTMLGenerator(scanDir, nil)
-	require.NoError(t, err)
-
-	// Test with invalid output path
-	err = gen.Generate("/invalid\x00path/report.html")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "creating output")
-}
-
-func TestHTMLGeneratorWithAIEnrichments(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create data directory structure
-	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0750)
-
-	// Save current working directory and change to temp
-	oldWd, _ := os.Getwd()
-	_ = os.Chdir(tempDir)
-	defer func() { _ = os.Chdir(oldWd) }()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
+	}()
 
 	// Create test scan data
-	store := storage.NewStorage("data")
-	scanDir := filepath.Join("data", "scans", "2024-01-01T10-00-00Z")
+	ctx := context.Background()
+	scanID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: time.Now().Add(-10 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	store := storage.NewStorage(db)
 
 	metadata := &models.ScanMetadata{
 		ClientName:  "test-client",
 		Environment: "production",
 		StartTime:   time.Now().Add(-10 * time.Minute),
 		EndTime:     time.Now(),
+		Scanners:    []string{"mock-prowler", "mock-trivy"},
 		Summary: models.ScanSummary{
-			TotalFindings: 2,
+			TotalFindings: 3,
 			BySeverity: map[string]int{
 				"critical": 1,
 				"high":     1,
+				"medium":   1,
+			},
+		},
+		Results: map[string]*models.ScanResult{
+			"mock-prowler": {
+				Scanner: "mock-prowler",
+				Findings: []models.Finding{
+					{
+						ID:          "finding-1",
+						Scanner:     "mock-prowler",
+						Type:        "security-group",
+						Severity:    "critical",
+						Title:       "Open Security Group",
+						Description: "Security group allows unrestricted access",
+						Resource:    "sg-12345",
+						Remediation: "Restrict security group rules",
+						Metadata: map[string]string{
+							"port":     "0-65535",
+							"protocol": "all",
+							"source":   "0.0.0.0/0",
+						},
+					},
+					{
+						ID:          "finding-2",
+						Scanner:     "mock-prowler",
+						Type:        "iam",
+						Severity:    "high",
+						Title:       "Overly Permissive IAM Policy",
+						Description: "IAM policy grants excessive permissions",
+						Resource:    "arn:aws:iam::123456789012:policy/OverlyPermissive",
+						Remediation: "Apply least privilege principle",
+					},
+				},
+			},
+			"mock-trivy": {
+				Scanner: "mock-trivy",
+				Findings: []models.Finding{
+					{
+						ID:          "finding-3",
+						Scanner:     "mock-trivy",
+						Type:        "vulnerability",
+						Severity:    "medium",
+						Title:       "Outdated Package",
+						Description: "Package has known vulnerabilities",
+						Resource:    "nginx:1.14",
+						Remediation: "Update to latest version",
+					},
+				},
 			},
 		},
 	}
 
-	findings := []models.Finding{
-		{
-			ID:          "finding-1",
-			Scanner:     "mock-prowler",
-			Type:        "s3-public",
-			Severity:    "critical",
-			Title:       "S3 Bucket Publicly Accessible",
-			Description: "S3 bucket allows public read access",
-			Resource:    "s3://sensitive-data-bucket",
-			Remediation: "Make bucket private",
-			Impact:      "Data exposure risk",
-		},
-		{
-			ID:          "finding-2",
-			Scanner:     "mock-trivy",
-			Type:        "CVE-2021-44228",
-			Severity:    "high",
-			Title:       "Log4Shell Vulnerability",
-			Description: "Critical RCE vulnerability in Log4j",
-			Resource:    "app:latest",
-			Remediation: "Update Log4j",
-			Impact:      "Remote code execution",
-		},
-	}
-
-	// Save test data
-	err := store.SaveScanResults(scanDir, metadata)
+	// Save scan data to database
+	err = store.SaveScanResults(scanID, metadata)
 	require.NoError(t, err)
 
-	err = saveJSONHelper(filepath.Join(scanDir, "findings.json"), findings)
-	require.NoError(t, err)
+	// Save findings to database
+	saveFindingsToDatabase(t, db, scanID, metadata)
 
-	// Create AI enrichments
-	aiEnrichments := []enrichment.FindingEnrichment{
+	// Create enrichments
+	enrichments := []enrichment.FindingEnrichment{
 		{
 			FindingID:  "finding-1",
 			EnrichedAt: time.Now(),
-			LLMModel:   "claude-3-opus",
-			TokensUsed: 1200,
 			Analysis: enrichment.Analysis{
-				BusinessImpact:    "Critical risk to customer PII data. This bucket contains sensitive customer information that could lead to GDPR violations if exposed.",
-				PriorityReasoning: "Public S3 buckets are actively scanned by threat actors. With sensitive data present, this represents an immediate risk.",
-				TechnicalDetails:  "The bucket ACL is set to allow public-read. Any internet user can list and download objects from this bucket.",
-				PriorityScore:     9.8,
-				RelatedFindings:   []string{"finding-3", "finding-4"},
+				BusinessImpact:    "Could lead to data breach",
+				PriorityScore:     0.95,
+				PriorityReasoning: "Internet-facing resource with no restrictions",
 			},
 			Remediation: enrichment.Remediation{
-				EstimatedEffort:    "30 minutes",
-				Immediate:          []string{"Remove public access from bucket ACL", "Enable S3 Block Public Access"},
-				ShortTerm:          []string{"Review all S3 bucket policies", "Implement bucket policy alerts"},
-				LongTerm:           []string{"Deploy AWS Config rules for S3 security", "Implement preventive controls in AWS Organizations"},
-				AutomationPossible: true,
-			},
-			Context: map[string]interface{}{
-				"service": "s3",
-				"region":  "us-east-1",
-			},
-		},
-		{
-			FindingID:  "finding-2",
-			EnrichedAt: time.Now(),
-			LLMModel:   "claude-3-opus",
-			TokensUsed: 800,
-			Analysis: enrichment.Analysis{
-				BusinessImpact:    "Application containers are vulnerable to remote code execution. Attackers could gain full control of the container.",
-				PriorityReasoning: "Log4Shell is actively exploited in the wild with readily available exploit code.",
-				TechnicalDetails:  "Log4j versions 2.0-beta9 to 2.14.1 are affected. JNDI lookup feature allows arbitrary code execution.",
-				PriorityScore:     9.5,
-			},
-			Remediation: enrichment.Remediation{
-				EstimatedEffort: "2 hours",
-				Immediate:       []string{"Update Log4j to 2.17.0 or later", "Apply JVM flags as temporary mitigation"},
-				ShortTerm:       []string{"Scan all containers for Log4j", "Update base images"},
-				LongTerm:        []string{"Implement vulnerability scanning in CI/CD", "Create automated patching process"},
+				EstimatedEffort: "30 minutes",
+				Immediate:       []string{"Close security group to specific IPs"},
 			},
 		},
 	}
 
-	enrichMeta := &enrichment.EnrichmentMetadata{
+	err = store.SaveEnrichments(scanID, enrichments, &enrichment.Metadata{
 		StartedAt:        time.Now().Add(-5 * time.Minute),
 		CompletedAt:      time.Now(),
-		RunID:            "enrich-001",
-		Strategy:         "smart_batch",
-		Driver:           "claude_cli",
-		LLMModel:         "claude-3-opus",
-		TotalFindings:    2,
-		EnrichedFindings: 2,
-		TotalTokensUsed:  2000,
-	}
-
-	// Save enrichments
-	err = store.SaveEnrichments(scanDir, aiEnrichments, enrichMeta)
+		TotalFindings:    3,
+		EnrichedFindings: 1,
+	})
 	require.NoError(t, err)
 
-	// Create HTML generator and load everything
-	gen, err := NewHTMLGenerator(scanDir, nil)
+	// Create generator
+	scanIDStr := fmt.Sprintf("%d", scanID)
+	gen, err := NewHTMLGeneratorWithDatabase(scanIDStr, db, logger.GetGlobalLogger())
 	require.NoError(t, err)
 
-	// Verify enrichments were loaded
-	assert.Len(t, gen.enrichments, 2)
-	assert.NotNil(t, gen.enrichMeta)
-	assert.Equal(t, 2, gen.enrichMeta.EnrichedFindings)
-
-	// Generate HTML report
-	outputPath := filepath.Join(tempDir, "test-report.html")
+	// Generate HTML
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "report.html")
 	err = gen.Generate(outputPath)
 	require.NoError(t, err)
 
-	// Read generated HTML
-	content, err := os.ReadFile(outputPath)
+	// Read the generated HTML
+	content, err := os.ReadFile(outputPath) // #nosec G304 - test file path
 	require.NoError(t, err)
 	html := string(content)
 
-	// Verify AI enrichment content is present
-	assert.Contains(t, html, "AI Analysis")
-	assert.Contains(t, html, "Priority Score")
-	assert.Contains(t, html, "9.8/10") // Priority score for finding-1
-	assert.Contains(t, html, "Critical risk to customer PII data")
-	assert.Contains(t, html, "AI Remediation Guidance")
-	assert.Contains(t, html, "Remove public access from bucket ACL")
-	// Check for either format of estimated effort
-	hasEffort := strings.Contains(html, "Estimated Effort:</strong> 30 minutes") ||
-		strings.Contains(html, "Estimated Effort: 30 minutes")
-	assert.True(t, hasEffort, "HTML should contain estimated effort")
-	assert.Contains(t, html, "🤖 AI Enriched: 2 findings")
+	// Verify HTML content
+	assert.Contains(t, html, "test-client")
+	assert.Contains(t, html, "production")
+	assert.Contains(t, html, "Open Security Group")
+	assert.Contains(t, html, "Overly Permissive IAM Policy")
+	assert.Contains(t, html, "Outdated Package")
 
-	// Verify template data
-	data := gen.prepareTemplateData()
-	assert.True(t, data.HasEnrichments)
-	assert.Len(t, data.Enrichments, 2)
-	assert.NotNil(t, data.EnrichmentMeta)
-}
+	// Debug: Check if enrichments are being loaded
+	t.Logf("Generated HTML length: %d", len(html))
+	if !strings.Contains(html, "Could lead to data breach") {
+		// Save HTML for debugging
+		debugPath := filepath.Join(tmpDir, "debug.html")
+		_ = os.WriteFile(debugPath, []byte(html), 0600) // #nosec G306 - test debug file
+		t.Logf("Debug HTML saved to: %s", debugPath)
 
-func TestHTMLGeneratorWithoutAIEnrichments(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create data directory structure
-	dataDir := filepath.Join(tempDir, "data")
-	_ = os.MkdirAll(dataDir, 0750)
-
-	// Save current working directory and change to temp
-	oldWd, _ := os.Getwd()
-	_ = os.Chdir(tempDir)
-	defer func() { _ = os.Chdir(oldWd) }()
-
-	// Create test scan data without enrichments
-	store := storage.NewStorage("data")
-	scanDir := filepath.Join("data", "scans", "2024-01-01T10-00-00Z")
-
-	metadata := &models.ScanMetadata{
-		ClientName:  "test-client",
-		Environment: "staging",
-		StartTime:   time.Now().Add(-10 * time.Minute),
-		EndTime:     time.Now(),
-		Summary: models.ScanSummary{
-			TotalFindings: 1,
-			BySeverity: map[string]int{
-				"medium": 1,
-			},
-		},
+		// Check enrichments in generator
+		t.Logf("Generator enrichments: %+v", gen.enrichments)
 	}
 
-	findings := []models.Finding{
-		{
-			ID:          "finding-1",
-			Scanner:     "mock-checkov",
-			Type:        "terraform",
-			Severity:    "medium",
-			Title:       "Missing encryption",
-			Description: "Resource not encrypted",
-			Resource:    "aws_s3_bucket.main",
-		},
-	}
-
-	// Save test data
-	err := store.SaveScanResults(scanDir, metadata)
-	require.NoError(t, err)
-
-	err = saveJSONHelper(filepath.Join(scanDir, "findings.json"), findings)
-	require.NoError(t, err)
-
-	// Create HTML generator without enrichments
-	gen, err := NewHTMLGenerator(scanDir, nil)
-	require.NoError(t, err)
-
-	// Verify no enrichments were loaded
-	assert.Len(t, gen.enrichments, 0)
-	assert.Nil(t, gen.enrichMeta)
-
-	// Generate HTML report
-	outputPath := filepath.Join(tempDir, "test-report-no-enrichment.html")
-	err = gen.Generate(outputPath)
-	require.NoError(t, err)
-
-	// Read generated HTML
-	content, err := os.ReadFile(outputPath)
-	require.NoError(t, err)
-	html := string(content)
-
-	// Verify AI enrichment content is NOT present
-	assert.NotContains(t, html, "AI Analysis")
-	assert.NotContains(t, html, "Priority Score")
-	assert.NotContains(t, html, "AI Remediation Guidance")
-	assert.NotContains(t, html, "🤖 AI Enriched")
-
-	// Verify template data
-	data := gen.prepareTemplateData()
-	assert.False(t, data.HasEnrichments)
-	assert.Len(t, data.Enrichments, 0)
-	assert.Nil(t, data.EnrichmentMeta)
+	assert.Contains(t, html, "Could lead to data breach") // Enrichment content
 }
+
+// TestHTMLGeneratorWithModifications has been removed as modifications functionality is no longer supported

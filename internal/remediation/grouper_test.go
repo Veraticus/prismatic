@@ -78,7 +78,7 @@ func TestFindingGrouper_GroupByRemediation(t *testing.T) {
 	}
 
 	// Find and verify S3 group
-	var s3Group *RemediationGroup
+	var s3Group *Group
 	for i, group := range groups {
 		if group.Strategy == "terraform-s3-public-access" {
 			s3Group = &groups[i]

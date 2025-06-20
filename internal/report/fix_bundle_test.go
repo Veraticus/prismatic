@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/remediation"
 	"github.com/joshsymonds/prismatic/pkg/logger"
@@ -16,14 +15,12 @@ import (
 )
 
 func TestNewFixBundleGenerator(t *testing.T) {
-	cfg := &config.Config{}
 	log := logger.NewMockLogger()
 
-	gen := NewFixBundleGenerator(cfg, log)
+	gen := NewFixBundleGenerator(log)
 
 	assert.NotNil(t, gen)
 	assert.NotNil(t, gen.remediationGen)
-	assert.Equal(t, cfg, gen.config)
 	assert.Equal(t, log, gen.logger)
 }
 
@@ -31,7 +28,11 @@ func TestFixBundleGenerator_Generate(t *testing.T) {
 	// Create a temporary directory for output
 	tmpDir, err := os.MkdirTemp("", "fix-bundle-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	// Create test findings
 	findings := []models.Finding{
@@ -55,9 +56,8 @@ func TestFixBundleGenerator_Generate(t *testing.T) {
 		},
 	}
 
-	cfg := &config.Config{}
 	log := logger.NewMockLogger()
-	gen := NewFixBundleGenerator(cfg, log)
+	gen := NewFixBundleGenerator(log)
 
 	// Generate the fix bundle
 	err = gen.Generate(findings, tmpDir)
@@ -68,7 +68,7 @@ func TestFixBundleGenerator_Generate(t *testing.T) {
 	assert.DirExists(t, filepath.Join(tmpDir, "scripts"))
 
 	// Verify files exist
-	assert.FileExists(t, filepath.Join(tmpDir, "manifest.yaml"))
+	assert.FileExists(t, filepath.Join(tmpDir, "manifest.json"))
 	assert.FileExists(t, filepath.Join(tmpDir, "README.md"))
 	assert.FileExists(t, filepath.Join(tmpDir, "scripts", "apply-all-critical.sh"))
 	assert.FileExists(t, filepath.Join(tmpDir, "scripts", "validate-all.sh"))
@@ -176,7 +176,11 @@ func TestFixBundleGenerator_detectStrategy(t *testing.T) {
 func TestFixBundleGenerator_generateRemediationDir(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "remediation-dir-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	gen := &FixBundleGenerator{
 		logger: logger.NewMockLogger(),
@@ -189,7 +193,7 @@ func TestFixBundleGenerator_generateRemediationDir(t *testing.T) {
 		Severity:    models.SeverityCritical,
 		Priority:    1,
 		FindingRefs: []string{"finding-1", "finding-2"},
-		Target: remediation.RemediationTarget{
+		Target: remediation.Target{
 			RepositoryType: remediation.RepoTypeTerraform,
 		},
 		Implementation: remediation.Implementation{
@@ -234,6 +238,7 @@ func TestFixBundleGenerator_generateRemediationDir(t *testing.T) {
 	assert.Equal(t, os.FileMode(0755), info.Mode().Perm())
 
 	// Verify README content
+	// #nosec G304 -- remDir is constructed safely from test inputs
 	readmeContent, err := os.ReadFile(filepath.Join(remDir, "README.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(readmeContent), "Fix S3 Public Access")
@@ -245,7 +250,11 @@ func TestFixBundleGenerator_generateRemediationDir(t *testing.T) {
 func TestFixBundleGenerator_generateTerraformS3Fix(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "terraform-s3-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	gen := &FixBundleGenerator{
 		logger: logger.NewMockLogger(),
@@ -266,6 +275,7 @@ func TestFixBundleGenerator_generateTerraformS3Fix(t *testing.T) {
 	assert.FileExists(t, filepath.Join(tmpDir, "fix.patch"))
 
 	// Check terraform file content
+	// #nosec G304 -- tfDir is constructed safely from test inputs
 	tfContent, err := os.ReadFile(filepath.Join(tfDir, "s3_public_access_block.tf"))
 	require.NoError(t, err)
 	assert.Contains(t, string(tfContent), "aws_s3_bucket_public_access_block")
@@ -278,7 +288,11 @@ func TestFixBundleGenerator_generateTerraformS3Fix(t *testing.T) {
 func TestFixBundleGenerator_generateValidationScript(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "validation-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	gen := &FixBundleGenerator{
 		logger: logger.NewMockLogger(),
@@ -343,6 +357,7 @@ func TestFixBundleGenerator_generateValidationScript(t *testing.T) {
 			assert.Equal(t, os.FileMode(0755), info.Mode().Perm())
 
 			// Check content
+			// #nosec G304 -- scriptPath is constructed safely from test inputs
 			content, err := os.ReadFile(scriptPath)
 			require.NoError(t, err)
 			for _, check := range tt.checkContent {
@@ -355,7 +370,11 @@ func TestFixBundleGenerator_generateValidationScript(t *testing.T) {
 func TestFixBundleGenerator_generateLLMPrompt(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "llm-prompt-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	gen := &FixBundleGenerator{
 		logger: logger.NewMockLogger(),
@@ -390,6 +409,7 @@ func TestFixBundleGenerator_generateLLMPrompt(t *testing.T) {
 	promptPath := filepath.Join(tmpDir, "llm-prompt.txt")
 	assert.FileExists(t, promptPath)
 
+	// #nosec G304 -- promptPath is constructed safely from test inputs
 	content, err := os.ReadFile(promptPath)
 	require.NoError(t, err)
 
@@ -405,7 +425,11 @@ func TestFixBundleGenerator_generateLLMPrompt(t *testing.T) {
 func TestFixBundleGenerator_generateSummaryReadme(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "summary-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	gen := &FixBundleGenerator{
 		logger: logger.NewMockLogger(),
@@ -451,6 +475,7 @@ func TestFixBundleGenerator_generateSummaryReadme(t *testing.T) {
 	readmePath := filepath.Join(tmpDir, "README.md")
 	assert.FileExists(t, readmePath)
 
+	// #nosec G304 -- readmePath is constructed safely from test inputs
 	content, err := os.ReadFile(readmePath)
 	require.NoError(t, err)
 	contentStr := string(content)
@@ -468,7 +493,11 @@ func TestFixBundleGenerator_generateSummaryReadme(t *testing.T) {
 func TestFixBundleGenerator_generateScripts(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "scripts-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	gen := &FixBundleGenerator{
 		logger: logger.NewMockLogger(),
@@ -509,6 +538,7 @@ func TestFixBundleGenerator_generateScripts(t *testing.T) {
 	assert.Equal(t, os.FileMode(0755), info.Mode().Perm())
 
 	// Check apply script content
+	// #nosec G304 -- applyScript is constructed safely from test inputs
 	content, err := os.ReadFile(applyScript)
 	require.NoError(t, err)
 	contentStr := string(content)
@@ -517,6 +547,7 @@ func TestFixBundleGenerator_generateScripts(t *testing.T) {
 	assert.NotContains(t, contentStr, "rem-002") // Not critical
 
 	// Check validate script content
+	// #nosec G304 -- validateScript is constructed safely from test inputs
 	content, err = os.ReadFile(validateScript)
 	require.NoError(t, err)
 	contentStr = string(content)
@@ -529,7 +560,11 @@ func TestFixBundleGenerator_Integration(t *testing.T) {
 	// This test verifies the complete bundle structure
 	tmpDir, err := os.MkdirTemp("", "integration-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	// Create test findings with enrichments
 	findings := []models.Finding{
@@ -562,9 +597,8 @@ func TestFixBundleGenerator_Integration(t *testing.T) {
 		},
 	}
 
-	cfg := &config.Config{}
 	log := logger.NewMockLogger()
-	gen := NewFixBundleGenerator(cfg, log)
+	gen := NewFixBundleGenerator(log)
 
 	// Generate the bundle
 	err = gen.Generate(findings, tmpDir)
@@ -572,7 +606,7 @@ func TestFixBundleGenerator_Integration(t *testing.T) {
 
 	// Verify complete structure
 	expectedStructure := []string{
-		"manifest.yaml",
+		"manifest.json",
 		"README.md",
 		"scripts/apply-all-critical.sh",
 		"scripts/validate-all.sh",
@@ -602,11 +636,4 @@ func TestFixBundleGenerator_Integration(t *testing.T) {
 			assert.FileExists(t, filepath.Join(remPath, "llm-prompt.txt"))
 		}
 	}
-}
-
-// Test helper to verify file permissions.
-func assertFilePermission(t *testing.T, path string, expected os.FileMode) {
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, expected, info.Mode().Perm(), "File %s has wrong permissions", path)
 }

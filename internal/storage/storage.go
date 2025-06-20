@@ -2,237 +2,290 @@
 package storage
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/joshsymonds/prismatic/internal/database"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/pkg/logger"
-	"github.com/joshsymonds/prismatic/pkg/pathutil"
 )
 
-// Storage handles saving and loading scan results.
+// Storage handles saving and loading scan results using the database.
 type Storage struct {
-	logger  logger.Logger
-	baseDir string
+	logger logger.Logger
+	db     *database.DB
 }
 
-// NewStorage creates a new storage instance.
-func NewStorage(baseDir string) *Storage {
-	return NewStorageWithLogger(baseDir, logger.GetGlobalLogger())
+// NewStorage creates a new storage instance backed by database.
+func NewStorage(db *database.DB) *Storage {
+	return NewStorageWithLogger(db, logger.GetGlobalLogger())
 }
 
 // NewStorageWithLogger creates a new storage instance with a custom logger.
-func NewStorageWithLogger(baseDir string, log logger.Logger) *Storage {
+func NewStorageWithLogger(db *database.DB, log logger.Logger) *Storage {
+	if db == nil {
+		panic("database is nil")
+	}
 	return &Storage{
-		baseDir: baseDir,
-		logger:  log,
+		db:     db,
+		logger: log,
 	}
 }
 
-// SaveScanResults saves scan results to the output directory.
-func (s *Storage) SaveScanResults(outputDir string, metadata *models.ScanMetadata) error {
-	// Validate output directory path is safe (no directory traversal)
-	validOutputDir, err := pathutil.ValidateDataPath(outputDir, "")
-	if err != nil {
-		return fmt.Errorf("invalid output directory: %w", err)
+// SaveScanResults saves scan results to the database.
+func (s *Storage) SaveScanResults(scanID int64, metadata *models.ScanMetadata) error {
+	ctx := context.Background()
+
+	// Save scan metadata
+	dbMetadata := &database.ScanMetadata{
+		ScanID:      scanID,
+		ClientName:  sql.NullString{String: metadata.ClientName, Valid: metadata.ClientName != ""},
+		Environment: sql.NullString{String: metadata.Environment, Valid: metadata.Environment != ""},
 	}
 
-	// Create output directory structure
-	if mkErr := os.MkdirAll(validOutputDir, 0750); mkErr != nil {
-		return fmt.Errorf("creating output directory: %w", mkErr)
+	// Marshal summary to JSON
+	if summaryJSON, err := json.Marshal(metadata.Summary); err == nil {
+		dbMetadata.Summary = summaryJSON
 	}
 
-	rawDir := filepath.Join(validOutputDir, "raw")
-	if mkErr := os.MkdirAll(rawDir, 0750); mkErr != nil {
-		return fmt.Errorf("creating raw directory: %w", mkErr)
+	// Marshal scanner versions if available
+	versions := make(map[string]string)
+	for scanner, result := range metadata.Results {
+		if result.Version != "" {
+			versions[scanner] = result.Version
+		}
+	}
+	if len(versions) > 0 {
+		if versionsJSON, err := json.Marshal(versions); err == nil {
+			dbMetadata.ScannerVersions = versionsJSON
+		}
 	}
 
-	// Save metadata
-	metadataPath, err := pathutil.JoinAndValidate(validOutputDir, "metadata.json")
-	if err != nil {
-		return fmt.Errorf("invalid metadata path: %w", err)
+	if err := s.db.SaveScanMetadata(ctx, dbMetadata); err != nil {
+		return fmt.Errorf("saving scan metadata: %w", err)
 	}
-	if saveErr := s.saveJSON(metadataPath, metadata); saveErr != nil {
-		return fmt.Errorf("saving metadata: %w", saveErr)
-	}
-	s.logger.Debug("Saved metadata", "path", metadataPath)
+	s.logger.Debug("Saved scan metadata", "scanID", scanID)
 
 	// Save raw scanner outputs
 	for scanner, result := range metadata.Results {
 		if len(result.RawOutput) > 0 {
-			rawPath, rawErr := pathutil.JoinAndValidate(rawDir, fmt.Sprintf("%s.json", scanner))
-			if rawErr != nil {
-				s.logger.Warn("Invalid raw output path", "scanner", scanner, "error", rawErr)
-				continue
-			}
-			if writeErr := os.WriteFile(rawPath, result.RawOutput, 0600); writeErr != nil {
-				s.logger.Warn("Failed to save raw output", "scanner", scanner, "error", writeErr)
+			if err := s.db.SaveScannerOutput(ctx, scanID, scanner, string(result.RawOutput)); err != nil {
+				s.logger.Warn("Failed to save raw output", "scanner", scanner, "error", err)
 			} else {
-				s.logger.Debug("Saved raw output", "scanner", scanner, "path", rawPath)
+				s.logger.Debug("Saved raw output", "scanner", scanner)
 			}
+		}
+
+		// Update scanner progress to completed/failed
+		progress := &database.ScanProgress{
+			ScanID:          scanID,
+			Scanner:         scanner,
+			Status:          "completed",
+			ProgressPercent: 100,
+		}
+		if result.Error != "" {
+			progress.Status = "failed"
+			progress.ErrorMessage = sql.NullString{String: result.Error, Valid: true}
+		}
+		if err := s.db.UpdateScanProgress(ctx, progress); err != nil {
+			s.logger.Warn("Failed to update scanner progress", "scanner", scanner, "error", err)
 		}
 	}
 
-	// Save consolidated findings
-	allFindings := s.consolidateFindings(metadata)
-	findingsPath, err := pathutil.JoinAndValidate(validOutputDir, "findings.json")
-	if err != nil {
-		return fmt.Errorf("invalid findings path: %w", err)
-	}
-	if saveErr := s.saveJSON(findingsPath, allFindings); saveErr != nil {
-		return fmt.Errorf("saving findings: %w", saveErr)
-	}
-	s.logger.Debug("Saved findings", "path", findingsPath, "count", len(allFindings))
-
-	// Note: EnrichedFindings are no longer saved separately.
-	// Business context is now part of the Finding struct itself.
-
-	// Save scan log
-	logPath, err := pathutil.JoinAndValidate(validOutputDir, "scan.log")
-	if err != nil {
-		s.logger.Warn("Invalid scan log path", "error", err)
-		return nil
-	}
-	if err := s.saveScanLog(logPath, metadata); err != nil {
-		s.logger.Warn("Failed to save scan log", "error", err)
-	}
+	// Save human-readable scan log
+	s.saveScanLog(ctx, scanID, metadata)
 
 	return nil
 }
 
-// LoadScanResults loads scan results from a directory.
-func (s *Storage) LoadScanResults(scanDir string) (*models.ScanMetadata, error) {
-	// Validate scan directory path is safe (no directory traversal)
-	validScanDir, err := pathutil.ValidateDataPath(scanDir, "")
+// LoadScanResults loads scan results from the database.
+func (s *Storage) LoadScanResults(scanID int64) (*models.ScanMetadata, error) {
+	ctx := context.Background()
+
+	// Load scan record
+	scan, err := s.db.GetScan(ctx, scanID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid scan directory: %w", err)
+		return nil, fmt.Errorf("loading scan: %w", err)
 	}
 
-	// Load metadata
-	metadataPath, err := pathutil.JoinAndValidate(validScanDir, "metadata.json")
+	// Load scan metadata
+	dbMetadata, err := s.db.GetScanMetadata(ctx, scanID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid metadata path: %w", err)
-	}
-	var metadata models.ScanMetadata
-	if loadErr := s.loadJSON(metadataPath, &metadata); loadErr != nil {
-		return nil, fmt.Errorf("loading metadata: %w", loadErr)
-	}
-
-	// Load findings
-	findingsPath, err := pathutil.JoinAndValidate(validScanDir, "findings.json")
-	if err != nil {
-		s.logger.Warn("Invalid findings path", "error", err)
-		// Not fatal - metadata might still be useful
-	}
-	var findings []models.Finding
-	if err := s.loadJSON(findingsPath, &findings); err != nil {
-		s.logger.Warn("Failed to load findings", "error", err)
-		// Not fatal - metadata might still be useful
-	}
-
-	// Note: EnrichedFindings are no longer loaded separately.
-	// Business context is now part of the Finding struct itself.
-
-	// Reconstruct results if needed
-	if metadata.Results == nil {
-		metadata.Results = make(map[string]*models.ScanResult)
-	}
-
-	return &metadata, nil
-}
-
-// FindLatestScan finds the most recent scan directory.
-func (s *Storage) FindLatestScan() (string, error) {
-	scansDir := filepath.Join(s.baseDir, "scans")
-
-	entries, err := os.ReadDir(scansDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("no scans found")
+		if errors.Is(err, database.ErrNoMetadata) {
+			// Return empty metadata if none found
+			return &models.ScanMetadata{
+				ID:        fmt.Sprintf("scan-%d", scanID),
+				StartTime: scan.StartedAt,
+				EndTime:   scan.CompletedAt.Time,
+				Results:   make(map[string]*models.ScanResult),
+			}, nil
 		}
-		return "", fmt.Errorf("reading scans directory: %w", err)
+		return nil, fmt.Errorf("loading scan metadata: %w", err)
 	}
 
-	var latest string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			if latest == "" || entry.Name() > latest {
-				latest = entry.Name()
+	// Build ScanMetadata
+	metadata := &models.ScanMetadata{
+		ClientName:  dbMetadata.ClientName.String,
+		Environment: dbMetadata.Environment.String,
+		StartTime:   scan.StartedAt,
+	}
+
+	if scan.CompletedAt.Valid {
+		metadata.EndTime = scan.CompletedAt.Time
+	}
+
+	// Unmarshal summary
+	if len(dbMetadata.Summary) > 0 {
+		if unmarshalErr := json.Unmarshal(dbMetadata.Summary, &metadata.Summary); unmarshalErr != nil {
+			s.logger.Warn("Failed to unmarshal summary", "error", unmarshalErr)
+		}
+	}
+
+	// Initialize Results map
+	metadata.Results = make(map[string]*models.ScanResult)
+
+	// Load scan progress to get all scanners that ran
+	progress, err := s.db.GetScanProgress(ctx, scanID)
+	if err != nil {
+		s.logger.Warn("Failed to load scan progress", "error", err)
+	} else {
+		for _, p := range progress {
+			if _, ok := metadata.Results[p.Scanner]; !ok {
+				metadata.Results[p.Scanner] = &models.ScanResult{
+					Scanner: p.Scanner,
+				}
+				metadata.Scanners = append(metadata.Scanners, p.Scanner)
+			}
+			// Set error if scanner failed
+			if p.Status == "failed" && p.ErrorMessage.Valid {
+				metadata.Results[p.Scanner].Error = p.ErrorMessage.String
 			}
 		}
 	}
 
-	if latest == "" {
-		return "", fmt.Errorf("no scan directories found")
+	// Load scanner outputs
+	outputs, err := s.db.GetScannerOutputs(ctx, scanID)
+	if err != nil {
+		s.logger.Warn("Failed to load scanner outputs", "error", err)
+	} else {
+		for _, output := range outputs {
+			if result, ok := metadata.Results[output.Scanner]; ok {
+				result.RawOutput = []byte(output.RawOutput)
+			}
+		}
 	}
 
-	return filepath.Join(scansDir, latest), nil
+	// Sort scanners list
+	sort.Strings(metadata.Scanners)
+
+	// Load findings for each scanner
+	findings, err := s.db.GetFindings(ctx, scanID, database.FindingFilter{})
+	if err != nil {
+		s.logger.Warn("Failed to load findings", "error", err)
+	} else {
+		// Group findings by scanner
+		for _, dbFinding := range findings {
+			if result, ok := metadata.Results[dbFinding.Scanner]; ok {
+				finding := s.convertDBFindingToModel(dbFinding)
+				result.Findings = append(result.Findings, finding)
+			}
+		}
+	}
+
+	return metadata, nil
+}
+
+// FindLatestScan finds the most recent scan ID.
+func (s *Storage) FindLatestScan() (int64, error) {
+	ctx := context.Background()
+
+	scans, err := s.db.ListScans(ctx, database.ScanFilter{
+		Limit: 1,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("listing scans: %w", err)
+	}
+
+	if len(scans) == 0 {
+		return 0, fmt.Errorf("no scans found")
+	}
+
+	return scans[0].ID, nil
 }
 
 // ListScans returns a list of available scans.
 func (s *Storage) ListScans(client string, limit int) ([]ScanInfo, error) {
-	scansDir := filepath.Join(s.baseDir, "scans")
+	ctx := context.Background()
 
-	entries, err := os.ReadDir(scansDir)
-	if err != nil {
-		return nil, fmt.Errorf("reading scans directory: %w", err)
+	filter := database.ScanFilter{
+		Limit: limit,
+	}
+	if client != "" {
+		filter.AWSProfile = &client
 	}
 
-	var scans []ScanInfo
+	scans, err := s.db.ListScans(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("listing scans: %w", err)
+	}
 
-	// Read scans in reverse order (newest first)
-	for i := len(entries) - 1; i >= 0; i-- {
-		entry := entries[i]
-		if !entry.IsDir() {
-			continue
-		}
-
-		// Load metadata
-		metadataPath, err := pathutil.JoinAndValidate(scansDir, entry.Name(), "metadata.json")
+	scanInfos := make([]ScanInfo, 0, len(scans))
+	for _, scan := range scans {
+		// Load metadata for each scan
+		metadata, err := s.db.GetScanMetadata(ctx, scan.ID)
 		if err != nil {
-			s.logger.Debug("Invalid metadata path", "dir", entry.Name(), "error", err)
-			continue
-		}
-		var metadata models.ScanMetadata
-		if err := s.loadJSON(metadataPath, &metadata); err != nil {
-			s.logger.Debug("Skipping invalid scan directory", "dir", entry.Name(), "error", err)
+			s.logger.Debug("Failed to load metadata for scan", "scanID", scan.ID, "error", err)
 			continue
 		}
 
-		// Filter by client if specified
-		if client != "" && metadata.ClientName != client {
-			continue
+		// Load finding counts
+		counts, err := s.db.GetFindingCounts(ctx, scan.ID)
+		if err != nil {
+			s.logger.Debug("Failed to load finding counts", "scanID", scan.ID, "error", err)
 		}
 
 		info := ScanInfo{
-			ID:          entry.Name(),
-			Path:        filepath.Join(scansDir, entry.Name()),
-			ClientName:  metadata.ClientName,
-			Environment: metadata.Environment,
-			StartTime:   metadata.StartTime,
-			EndTime:     metadata.EndTime,
-			Summary:     metadata.Summary,
+			ID:          fmt.Sprintf("%d", scan.ID),
+			ClientName:  metadata.ClientName.String,
+			Environment: metadata.Environment.String,
+			StartTime:   scan.StartedAt,
 		}
 
-		scans = append(scans, info)
-
-		if limit > 0 && len(scans) >= limit {
-			break
+		if scan.CompletedAt.Valid {
+			info.EndTime = scan.CompletedAt.Time
 		}
+
+		// Build summary from counts
+		if counts != nil {
+			info.Summary = models.ScanSummary{
+				TotalFindings: counts.Total,
+				BySeverity: map[string]int{
+					"critical": counts.Critical,
+					"high":     counts.High,
+					"medium":   counts.Medium,
+					"low":      counts.Low,
+					"info":     counts.Info,
+				},
+			}
+		}
+
+		scanInfos = append(scanInfos, info)
 	}
 
-	return scans, nil
+	return scanInfos, nil
 }
 
 // ScanInfo provides summary information about a scan.
 type ScanInfo struct {
 	ID          string
-	Path        string
+	Path        string // Deprecated, kept for compatibility
 	ClientName  string
 	Environment string
 	StartTime   time.Time
@@ -240,281 +293,325 @@ type ScanInfo struct {
 	Summary     models.ScanSummary
 }
 
-// consolidateFindings extracts all findings from scan results.
-func (s *Storage) consolidateFindings(metadata *models.ScanMetadata) []models.Finding {
-	// Count total findings first to warn about memory usage
-	totalCount := 0
-	for _, result := range metadata.Results {
-		totalCount += len(result.Findings)
-	}
+// LoadEnrichments loads AI enrichments from the database.
+func (s *Storage) LoadEnrichments(scanID int64) ([]enrichment.FindingEnrichment, *enrichment.Metadata, error) {
+	ctx := context.Background()
 
-	// Warn if too many findings
-	if totalCount > 10000 {
-		s.logger.Warn("Large number of findings may cause memory issues",
-			"count", totalCount)
-	}
-
-	var allFindings []models.Finding
-	for _, result := range metadata.Results {
-		allFindings = append(allFindings, result.Findings...)
-	}
-
-	return allFindings
-}
-
-// saveJSON saves data as JSON to a file.
-func (s *Storage) saveJSON(path string, data any) (err error) {
-	// Path should already be validated by caller
-	file, err := os.Create(path) // #nosec G304 - path is validated by caller
+	dbEnrichments, err := s.db.GetFindingEnrichments(ctx, scanID)
 	if err != nil {
-		return err
+		return nil, nil, fmt.Errorf("loading enrichments: %w", err)
 	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil && err == nil {
-			err = cerr
+
+	enrichments := make([]enrichment.FindingEnrichment, 0, len(dbEnrichments))
+	for _, dbEnrich := range dbEnrichments {
+		enrich := enrichment.FindingEnrichment{
+			FindingID:  dbEnrich.FindingID,
+			EnrichedAt: dbEnrich.CreatedAt,
 		}
-	}()
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(data)
-}
-
-// loadJSON loads JSON data from a file.
-func (s *Storage) loadJSON(path string, data any) (err error) {
-	// Path should already be validated by caller
-	file, err := os.Open(path) // #nosec G304 - path is validated by caller
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil && err == nil {
-			err = cerr
+		// Build analysis from database fields
+		enrich.Analysis = enrichment.Analysis{
+			BusinessImpact: dbEnrich.BusinessImpact.String,
 		}
-	}()
 
-	return json.NewDecoder(file).Decode(data)
-}
-
-// saveScanLog saves a human-readable scan log.
-func (s *Storage) saveScanLog(path string, metadata *models.ScanMetadata) (err error) {
-	// Path should already be validated by caller
-	file, err := os.Create(path) // #nosec G304 - path is validated by caller
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil && err == nil {
-			err = cerr
+		// Build remediation
+		var remediation enrichment.Remediation
+		if dbEnrich.EstimatedEffort.Valid {
+			remediation.EstimatedEffort = dbEnrich.EstimatedEffort.String
 		}
-	}()
+		enrich.Remediation = remediation
 
-	// Use a helper to check fprintf errors
-	w := func(format string, args ...any) error {
-		_, err := fmt.Fprintf(file, format, args...)
-		return err
-	}
-
-	if err := w("Prismatic Security Scan Log\n"); err != nil {
-		return fmt.Errorf("writing header: %w", err)
-	}
-	if err := w("===========================\n\n"); err != nil {
-		return fmt.Errorf("writing separator: %w", err)
-	}
-	if err := w("Client: %s\n", metadata.ClientName); err != nil {
-		return fmt.Errorf("writing client: %w", err)
-	}
-	if err := w("Environment: %s\n", metadata.Environment); err != nil {
-		return fmt.Errorf("writing environment: %w", err)
-	}
-	if err := w("Start Time: %s\n", metadata.StartTime.Format("2006-01-02 15:04:05")); err != nil {
-		return fmt.Errorf("writing start time: %w", err)
-	}
-	if err := w("End Time: %s\n", metadata.EndTime.Format("2006-01-02 15:04:05")); err != nil {
-		return fmt.Errorf("writing end time: %w", err)
-	}
-	if err := w("Duration: %s\n\n", metadata.EndTime.Sub(metadata.StartTime)); err != nil {
-		return fmt.Errorf("writing duration: %w", err)
-	}
-
-	if err := w("Scanners Run:\n"); err != nil {
-		return fmt.Errorf("writing scanners header: %w", err)
-	}
-	for _, scanner := range metadata.Scanners {
-		status := "✓"
-		if result, ok := metadata.Results[scanner]; ok && result.Error != "" {
-			status = "✗"
-		}
-		if err := w("  %s %s\n", status, scanner); err != nil {
-			return fmt.Errorf("writing scanner status: %w", err)
-		}
-	}
-
-	if err := w("\nSummary:\n"); err != nil {
-		return fmt.Errorf("writing summary header: %w", err)
-	}
-	if err := w("  Total Findings: %d\n", metadata.Summary.TotalFindings); err != nil {
-		return fmt.Errorf("writing total findings: %w", err)
-	}
-	if err := w("  Suppressed: %d\n", metadata.Summary.SuppressedCount); err != nil {
-		return fmt.Errorf("writing suppressed count: %w", err)
-	}
-	if err := w("\nBy Severity:\n"); err != nil {
-		return fmt.Errorf("writing severity header: %w", err)
-	}
-	for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
-		if count, ok := metadata.Summary.BySeverity[sev]; ok && count > 0 {
-			if err := w("  %s: %d\n", sev, count); err != nil {
-				return fmt.Errorf("writing severity count: %w", err)
+		// Unmarshal AI analysis if present for additional fields
+		if len(dbEnrich.AIAnalysis) > 0 {
+			var aiData map[string]any
+			if err := json.Unmarshal(dbEnrich.AIAnalysis, &aiData); err == nil {
+				// Extract additional analysis fields
+				if priority, ok := aiData["priority_score"].(float64); ok {
+					enrich.Analysis.PriorityScore = priority
+				}
+				if reasoning, ok := aiData["priority_reasoning"].(string); ok {
+					enrich.Analysis.PriorityReasoning = reasoning
+				}
+				if technical, ok := aiData["technical_details"].(string); ok {
+					enrich.Analysis.TechnicalDetails = technical
+				}
+				if contextual, ok := aiData["contextual_notes"].(string); ok {
+					enrich.Analysis.ContextualNotes = contextual
+				}
+				// Extract remediation steps
+				if immediate, ok := aiData["immediate_steps"].([]any); ok {
+					for _, step := range immediate {
+						if s, ok := step.(string); ok {
+							enrich.Remediation.Immediate = append(enrich.Remediation.Immediate, s)
+						}
+					}
+				}
+				if shortTerm, ok := aiData["short_term_steps"].([]any); ok {
+					for _, step := range shortTerm {
+						if s, ok := step.(string); ok {
+							enrich.Remediation.ShortTerm = append(enrich.Remediation.ShortTerm, s)
+						}
+					}
+				}
+				if longTerm, ok := aiData["long_term_steps"].([]any); ok {
+					for _, step := range longTerm {
+						if s, ok := step.(string); ok {
+							enrich.Remediation.LongTerm = append(enrich.Remediation.LongTerm, s)
+						}
+					}
+				}
 			}
 		}
+
+		enrichments = append(enrichments, enrich)
 	}
 
-	if len(metadata.Summary.FailedScanners) > 0 {
-		if err := w("\nFailed Scanners:\n"); err != nil {
-			return fmt.Errorf("writing failed scanners header: %w", err)
+	// Build metadata
+	var metadata *enrichment.Metadata
+	if len(enrichments) > 0 {
+		metadata = &enrichment.Metadata{
+			StartedAt:        dbEnrichments[0].CreatedAt,
+			CompletedAt:      dbEnrichments[len(dbEnrichments)-1].CreatedAt,
+			TotalFindings:    len(enrichments),
+			EnrichedFindings: len(enrichments),
 		}
-		for _, scanner := range metadata.Summary.FailedScanners {
-			if err := w("  - %s\n", scanner); err != nil {
-				return fmt.Errorf("writing failed scanner: %w", err)
-			}
-			if result, ok := metadata.Results[scanner]; ok && result.Error != "" {
-				if err := w("    Error: %s\n", result.Error); err != nil {
-					return fmt.Errorf("writing scanner error: %w", err)
+
+		// Extract enrichment metadata from first enrichment's AI analysis
+		if len(dbEnrichments) > 0 && len(dbEnrichments[0].AIAnalysis) > 0 {
+			var aiData map[string]any
+			if err := json.Unmarshal(dbEnrichments[0].AIAnalysis, &aiData); err == nil {
+				if enrichMeta, ok := aiData["enrichment_metadata"].(map[string]any); ok {
+					if strategy, ok := enrichMeta["strategy"].(string); ok {
+						metadata.Strategy = strategy
+					}
+					if driver, ok := enrichMeta["driver"].(string); ok {
+						metadata.Driver = driver
+					}
 				}
 			}
 		}
 	}
 
+	if metadata != nil {
+		s.logger.Debug("Loaded enrichments", "count", len(enrichments), "strategy", metadata.Strategy, "driver", metadata.Driver)
+	} else {
+		s.logger.Debug("Loaded enrichments", "count", 0)
+	}
+	return enrichments, metadata, nil
+}
+
+// SaveEnrichments saves AI enrichments to the database.
+func (s *Storage) SaveEnrichments(scanID int64, enrichments []enrichment.FindingEnrichment, metadata *enrichment.Metadata) error {
+	ctx := context.Background()
+
+	// Store metadata in the first enrichment's AI analysis if metadata is provided
+	var metadataMap map[string]any
+	if metadata != nil {
+		metadataMap = map[string]any{
+			"strategy": metadata.Strategy,
+			"driver":   metadata.Driver,
+		}
+	}
+
+	for i, enrich := range enrichments {
+		dbEnrich := &database.FindingEnrichment{
+			FindingID:       enrich.FindingID,
+			ScanID:          scanID,
+			BusinessImpact:  sql.NullString{String: enrich.Analysis.BusinessImpact, Valid: enrich.Analysis.BusinessImpact != ""},
+			EstimatedEffort: sql.NullString{String: enrich.Remediation.EstimatedEffort, Valid: enrich.Remediation.EstimatedEffort != ""},
+		}
+
+		// Combine remediation steps
+		if len(enrich.Remediation.Immediate) > 0 || len(enrich.Remediation.ShortTerm) > 0 || len(enrich.Remediation.LongTerm) > 0 {
+			var steps []string
+			steps = append(steps, enrich.Remediation.Immediate...)
+			steps = append(steps, enrich.Remediation.ShortTerm...)
+			steps = append(steps, enrich.Remediation.LongTerm...)
+			if len(steps) > 0 {
+				dbEnrich.RemediationSteps = sql.NullString{String: strings.Join(steps, "; "), Valid: true}
+			}
+		}
+
+		// Set risk score based on priority score
+		if enrich.Analysis.PriorityScore > 0 {
+			dbEnrich.RiskScore = sql.NullInt64{Int64: int64(enrich.Analysis.PriorityScore * 100), Valid: true}
+		}
+
+		// Marshal the entire analysis as AI analysis
+		aiData := map[string]any{
+			"priority_score":     enrich.Analysis.PriorityScore,
+			"priority_reasoning": enrich.Analysis.PriorityReasoning,
+			"technical_details":  enrich.Analysis.TechnicalDetails,
+			"contextual_notes":   enrich.Analysis.ContextualNotes,
+			"related_findings":   enrich.Analysis.RelatedFindings,
+			"dependencies":       enrich.Analysis.Dependencies,
+			"immediate_steps":    enrich.Remediation.Immediate,
+			"short_term_steps":   enrich.Remediation.ShortTerm,
+			"long_term_steps":    enrich.Remediation.LongTerm,
+			"llm_model":          enrich.LLMModel,
+			"tokens_used":        enrich.TokensUsed,
+		}
+
+		// Store metadata in first enrichment
+		if i == 0 && metadataMap != nil {
+			aiData["enrichment_metadata"] = metadataMap
+		}
+
+		if analysisJSON, err := json.Marshal(aiData); err == nil {
+			dbEnrich.AIAnalysis = analysisJSON
+		}
+
+		if err := s.db.SaveFindingEnrichment(ctx, dbEnrich); err != nil {
+			s.logger.Warn("Failed to save enrichment", "finding_id", enrich.FindingID, "error", err)
+			continue
+		}
+	}
+
+	s.logger.Debug("Saved enrichments", "count", len(enrichments))
 	return nil
 }
 
-// GetScanDirectory returns the base directory for the storage.
+// GetScanDirectory returns empty string as we no longer use directories.
 func (s *Storage) GetScanDirectory() string {
-	return s.baseDir
+	return ""
 }
 
 // LoadResults loads results for a specific scanner from the current scan.
-func (s *Storage) LoadResults(scanner string) (*models.ScanResult, error) {
-	// Load metadata first
-	metadataPath := filepath.Join(s.baseDir, "metadata.json")
-	var metadata models.ScanMetadata
-	if err := s.loadJSON(metadataPath, &metadata); err != nil {
-		return nil, fmt.Errorf("loading metadata: %w", err)
+func (s *Storage) LoadResults(scanID int64, scanner string) (*models.ScanResult, error) {
+	ctx := context.Background()
+
+	// Load findings for the scanner
+	scannerFilter := scanner
+	findings, err := s.db.GetFindings(ctx, scanID, database.FindingFilter{
+		Scanner: &scannerFilter,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("loading findings: %w", err)
 	}
 
-	// Check if scanner results exist
-	result, ok := metadata.Results[scanner]
-	if !ok {
-		return nil, fmt.Errorf("no results found for scanner: %s", scanner)
+	result := &models.ScanResult{
+		Scanner: scanner,
+	}
+
+	// Convert findings
+	for _, dbFinding := range findings {
+		finding := s.convertDBFindingToModel(dbFinding)
+		result.Findings = append(result.Findings, finding)
+	}
+
+	// Load raw output if available
+	outputs, err := s.db.GetScannerOutputs(ctx, scanID)
+	if err == nil {
+		for _, output := range outputs {
+			if output.Scanner == scanner {
+				result.RawOutput = []byte(output.RawOutput)
+				break
+			}
+		}
 	}
 
 	return result, nil
 }
 
-// LoadEnrichments loads AI enrichments from the scan directory.
-func (s *Storage) LoadEnrichments(scanDir string) ([]enrichment.FindingEnrichment, *enrichment.EnrichmentMetadata, error) {
-	// Validate scan directory path is safe (no directory traversal)
-	validScanDir, err := pathutil.ValidateDataPath(scanDir, "")
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid scan directory: %w", err)
+// saveScanLog saves a human-readable scan log to the database.
+func (s *Storage) saveScanLog(ctx context.Context, scanID int64, metadata *models.ScanMetadata) {
+	// Log scan start
+	if err := s.db.SaveScanLog(ctx, &database.ScanLog{
+		ScanID:   scanID,
+		LogLevel: "INFO",
+		Message:  fmt.Sprintf("Prismatic Security Scan started for %s (%s)", metadata.ClientName, metadata.Environment),
+	}); err != nil {
+		s.logger.Debug("Failed to save scan log", "error", err)
 	}
 
-	enrichmentDir := filepath.Join(validScanDir, "enrichments")
-
-	// Check if enrichments directory exists
-	if _, err := os.Stat(enrichmentDir); os.IsNotExist(err) {
-		// No enrichments found is not an error - return empty
-		return []enrichment.FindingEnrichment{}, nil, nil
-	}
-
-	// Load metadata
-	metadataPath, err := pathutil.JoinAndValidate(enrichmentDir, "metadata.json")
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid metadata path: %w", err)
-	}
-
-	var metadata enrichment.EnrichmentMetadata
-	if err := s.loadJSON(metadataPath, &metadata); err != nil {
-		// If metadata doesn't exist, enrichments may be incomplete
-		s.logger.Warn("Failed to load enrichment metadata", "error", err)
-	}
-
-	// Load individual enrichment files
-	entries, err := os.ReadDir(enrichmentDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading enrichments directory: %w", err)
-	}
-
-	var enrichments []enrichment.FindingEnrichment
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || entry.Name() == "metadata.json" {
-			continue
+	// Log scanner results
+	for _, scanner := range metadata.Scanners {
+		if result, ok := metadata.Results[scanner]; ok {
+			if result.Error != "" {
+				if err := s.db.SaveScanLog(ctx, &database.ScanLog{
+					ScanID:   scanID,
+					LogLevel: "ERROR",
+					Message:  fmt.Sprintf("Scanner %s failed: %s", scanner, result.Error),
+					Scanner:  sql.NullString{String: scanner, Valid: true},
+				}); err != nil {
+					s.logger.Debug("Failed to save scan log", "error", err)
+				}
+			} else {
+				if err := s.db.SaveScanLog(ctx, &database.ScanLog{
+					ScanID:   scanID,
+					LogLevel: "INFO",
+					Message:  fmt.Sprintf("Scanner %s completed: %d findings", scanner, len(result.Findings)),
+					Scanner:  sql.NullString{String: scanner, Valid: true},
+				}); err != nil {
+					s.logger.Debug("Failed to save scan log", "error", err)
+				}
+			}
 		}
-
-		enrichmentPath, err := pathutil.JoinAndValidate(enrichmentDir, entry.Name())
-		if err != nil {
-			s.logger.Debug("Invalid enrichment path", "file", entry.Name(), "error", err)
-			continue
-		}
-
-		var enrichment enrichment.FindingEnrichment
-		if err := s.loadJSON(enrichmentPath, &enrichment); err != nil {
-			s.logger.Warn("Failed to load enrichment", "file", entry.Name(), "error", err)
-			continue
-		}
-
-		enrichments = append(enrichments, enrichment)
 	}
 
-	s.logger.Debug("Loaded enrichments", "count", len(enrichments))
-	return enrichments, &metadata, nil
+	// Log summary
+	if err := s.db.SaveScanLog(ctx, &database.ScanLog{
+		ScanID:   scanID,
+		LogLevel: "INFO",
+		Message:  fmt.Sprintf("Scan completed: %d total findings", metadata.Summary.TotalFindings),
+	}); err != nil {
+		s.logger.Debug("Failed to save scan log", "error", err)
+	}
 }
 
-// SaveEnrichments saves AI enrichments to the scan directory.
-func (s *Storage) SaveEnrichments(scanDir string, enrichments []enrichment.FindingEnrichment, metadata *enrichment.EnrichmentMetadata) error {
-	// Validate scan directory path is safe (no directory traversal)
-	validScanDir, err := pathutil.ValidateDataPath(scanDir, "")
-	if err != nil {
-		return fmt.Errorf("invalid scan directory: %w", err)
+// convertDBFindingToModel converts a database finding to a model finding.
+func (s *Storage) convertDBFindingToModel(dbFinding *database.Finding) models.Finding {
+	finding := models.Finding{
+		ID:          fmt.Sprintf("%d", dbFinding.ID),
+		Scanner:     dbFinding.Scanner,
+		Severity:    string(dbFinding.Severity),
+		Title:       dbFinding.Title,
+		Description: dbFinding.Description,
+		Resource:    dbFinding.Resource,
+		Metadata:    make(map[string]string),
 	}
 
-	enrichmentDir := filepath.Join(validScanDir, "enrichments")
+	// Extract technical details
+	if len(dbFinding.TechnicalDetails) > 0 {
+		var details map[string]any
+		if err := json.Unmarshal(dbFinding.TechnicalDetails, &details); err == nil {
+			// Use original finding ID if available
+			if originalID, ok := details["original_id"].(string); ok && originalID != "" {
+				finding.ID = originalID
+			}
 
-	// Create enrichments directory
-	if err := os.MkdirAll(enrichmentDir, 0750); err != nil {
-		return fmt.Errorf("creating enrichments directory: %w", err)
+			// Extract known fields
+			if typ, ok := details["type"].(string); ok {
+				finding.Type = typ
+			}
+			if rem, ok := details["remediation"].(string); ok {
+				finding.Remediation = rem
+			}
+
+			// Extract business context
+			if impact, ok := details["business_impact"].(string); ok {
+				if finding.BusinessContext == nil {
+					finding.BusinessContext = &models.BusinessContext{}
+				}
+				finding.BusinessContext.BusinessImpact = impact
+			}
+			if owner, ok := details["owner"].(string); ok {
+				if finding.BusinessContext == nil {
+					finding.BusinessContext = &models.BusinessContext{}
+				}
+				finding.BusinessContext.Owner = owner
+			}
+
+			// Add remaining fields to metadata
+			for k, v := range details {
+				if k != "type" && k != "remediation" && k != "business_impact" && k != "owner" && k != "original_id" {
+					if strVal, ok := v.(string); ok {
+						finding.Metadata[k] = strVal
+					}
+				}
+			}
+		}
 	}
 
-	// Save individual enrichments
-	for _, enrichment := range enrichments {
-		filename := fmt.Sprintf("%s.json", enrichment.FindingID)
-		enrichmentPath, err := pathutil.JoinAndValidate(enrichmentDir, filename)
-		if err != nil {
-			s.logger.Warn("Invalid enrichment path", "finding_id", enrichment.FindingID, "error", err)
-			continue
-		}
-
-		if err := s.saveJSON(enrichmentPath, enrichment); err != nil {
-			s.logger.Warn("Failed to save enrichment", "finding_id", enrichment.FindingID, "error", err)
-			continue
-		}
-	}
-
-	// Save metadata if provided
-	if metadata != nil {
-		metadataPath, err := pathutil.JoinAndValidate(enrichmentDir, "metadata.json")
-		if err != nil {
-			return fmt.Errorf("invalid metadata path: %w", err)
-		}
-
-		if err := s.saveJSON(metadataPath, metadata); err != nil {
-			return fmt.Errorf("saving enrichment metadata: %w", err)
-		}
-
-		s.logger.Debug("Saved enrichment metadata", "path", metadataPath)
-	}
-
-	s.logger.Debug("Saved enrichments", "count", len(enrichments))
-	return nil
+	return finding
 }

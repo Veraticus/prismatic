@@ -6,7 +6,7 @@ import (
 	"github.com/joshsymonds/prismatic/internal/models"
 )
 
-// Strategy defines the interface for batching strategies.
+// BatchingStrategy defines the interface for batching strategies.
 type BatchingStrategy interface {
 	// Batch groups findings into batches for efficient processing
 	Batch(ctx context.Context, findings []models.Finding, config *Config) ([]Batch, error)
@@ -20,7 +20,7 @@ type BatchingStrategy interface {
 
 // Config contains configuration for batching.
 type Config struct {
-	ClientContext       map[string]interface{}
+	ClientContext       map[string]any
 	GroupBy             []string
 	MaxTokensPerBatch   int
 	MaxFindingsPerBatch int

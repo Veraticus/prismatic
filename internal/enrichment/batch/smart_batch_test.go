@@ -49,6 +49,7 @@ func TestSmartBatchStrategy_Batch(t *testing.T) {
 			},
 			expectedBatches: 5, // Grouped by scanner:type:severity
 			checkBatches: func(t *testing.T, batches []Batch) {
+				t.Helper()
 				// Check that findings are grouped by severity
 				severityGroups := make(map[string]int)
 				for _, batch := range batches {
@@ -89,6 +90,7 @@ func TestSmartBatchStrategy_Batch(t *testing.T) {
 			},
 			expectedBatches: -1, // Don't check exact count
 			checkBatches: func(t *testing.T, batches []Batch) {
+				t.Helper()
 				// At least one batch should be marked for summarization
 				hasSummarization := false
 				for _, batch := range batches {
@@ -113,6 +115,7 @@ func TestSmartBatchStrategy_Batch(t *testing.T) {
 			},
 			expectedBatches: 0,
 			checkBatches: func(t *testing.T, batches []Batch) {
+				t.Helper()
 				if len(batches) != 0 {
 					t.Errorf("Expected no batches for empty findings, got %d", len(batches))
 				}
@@ -127,13 +130,14 @@ func TestSmartBatchStrategy_Batch(t *testing.T) {
 				{ID: "4", Severity: "low", Resource: "prod-cache", Metadata: map[string]string{"environment": "production"}},
 			},
 			config: &Config{
-				ClientContext: map[string]interface{}{
+				ClientContext: map[string]any{
 					"prioritize_production": true,
 				},
 				MaxFindingsPerBatch: 10,
 			},
 			expectedBatches: -1,
 			checkBatches: func(t *testing.T, batches []Batch) {
+				t.Helper()
 				// Production findings should have higher priority
 				for _, batch := range batches {
 					hasProd := false
@@ -164,6 +168,7 @@ func TestSmartBatchStrategy_Batch(t *testing.T) {
 			},
 			expectedBatches: 2, // Two CVE groups
 			checkBatches: func(t *testing.T, batches []Batch) {
+				t.Helper()
 				// Check that similar CVEs are grouped together
 				for _, batch := range batches {
 					if len(batch.Findings) > 0 {

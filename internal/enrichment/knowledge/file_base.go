@@ -1,3 +1,4 @@
+// Package knowledge provides a knowledge base system for storing and retrieving security-related information.
 package knowledge
 
 import (
@@ -10,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // FileBase implements the Base interface using file storage.
@@ -41,7 +40,7 @@ func NewFileBase(basePath string) (*FileBase, error) {
 }
 
 // Get retrieves knowledge by ID.
-func (fb *FileBase) Get(ctx context.Context, id string) (*Entry, error) {
+func (fb *FileBase) Get(_ context.Context, id string) (*Entry, error) {
 	fb.mu.RLock()
 	defer fb.mu.RUnlock()
 
@@ -52,13 +51,14 @@ func (fb *FileBase) Get(ctx context.Context, id string) (*Entry, error) {
 
 	// Load entry from file
 	filename := fb.getFilename(id)
+	// #nosec G304 -- filename is derived from validated ID through getFilename()
 	data, err := os.ReadFile(filepath.Clean(filename))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read entry file: %w", err)
 	}
 
 	var entry Entry
-	if err := yaml.Unmarshal(data, &entry); err != nil {
+	if err := json.Unmarshal(data, &entry); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal entry: %w", err)
 	}
 
@@ -110,7 +110,7 @@ func (fb *FileBase) Search(ctx context.Context, query string, limit int) ([]*Ent
 }
 
 // Store stores a new knowledge entry.
-func (fb *FileBase) Store(ctx context.Context, entry *Entry) error {
+func (fb *FileBase) Store(_ context.Context, entry *Entry) error {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
@@ -132,6 +132,7 @@ func (fb *FileBase) Store(ctx context.Context, entry *Entry) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
+	// Write entry file
 	if err := os.WriteFile(filename, data, 0600); err != nil {
 		return fmt.Errorf("failed to write entry file: %w", err)
 	}
@@ -164,6 +165,7 @@ func (fb *FileBase) Store(ctx context.Context, entry *Entry) error {
 }
 
 // Update updates an existing entry.
+<<<<<<< HEAD
 func (fb *FileBase) Update(ctx context.Context, id string, entry *Entry) error {
 	// First get the existing entry without holding the lock
 	existing, err := fb.Get(ctx, id)
@@ -181,13 +183,35 @@ func (fb *FileBase) Update(ctx context.Context, id string, entry *Entry) error {
 
 	// Preserve created timestamp
 	entry.CreatedAt = existing.CreatedAt
+=======
+func (fb *FileBase) Update(_ context.Context, id string, entry *Entry) error {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
+	// Check if entry exists
+	_, exists := fb.index.Entries[id]
+	if !exists {
+		return &EntryNotFoundError{ID: id}
+	}
+
+	// Read existing entry to preserve created timestamp
+	filename := fb.getFilename(id)
+	// #nosec G304 -- filename is derived from validated ID through getFilename()
+	existingData, err := os.ReadFile(filename)
+	if err == nil {
+		var existing Entry
+		if unmarshalErr := json.Unmarshal(existingData, &existing); unmarshalErr == nil {
+			entry.CreatedAt = existing.CreatedAt
+		}
+	}
+>>>>>>> f32011c (Lots of TUI work)
 
 	entry.ID = id
 	entry.UpdatedAt = time.Now()
 
 	// Save updated entry
-	filename := fb.getFilename(id)
-	data, err := yaml.Marshal(entry)
+	filename = fb.getFilename(id)
+	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal entry: %w", err)
 	}
@@ -209,7 +233,7 @@ func (fb *FileBase) Update(ctx context.Context, id string, entry *Entry) error {
 }
 
 // Delete removes an entry.
-func (fb *FileBase) Delete(ctx context.Context, id string) error {
+func (fb *FileBase) Delete(_ context.Context, id string) error {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
@@ -240,7 +264,7 @@ func (fb *FileBase) Delete(ctx context.Context, id string) error {
 }
 
 // Index rebuilds the search index.
-func (fb *FileBase) Index(ctx context.Context) error {
+func (fb *FileBase) Index(_ context.Context) error {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
@@ -258,8 +282,8 @@ func (fb *FileBase) Index(ctx context.Context) error {
 			return err
 		}
 
-		// Skip directories and non-YAML files
-		if d.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml")) {
+		// Skip directories and non-JSON files
+		if d.IsDir() || !strings.HasSuffix(path, ".json") {
 			return nil
 		}
 
@@ -269,13 +293,18 @@ func (fb *FileBase) Index(ctx context.Context) error {
 		}
 
 		// Load entry
+<<<<<<< HEAD
 		data, err := os.ReadFile(filepath.Clean(path))
+=======
+		// #nosec G304 -- path comes from filepath.WalkDir which provides safe paths
+		data, err := os.ReadFile(path)
+>>>>>>> f32011c (Lots of TUI work)
 		if err != nil {
 			return fmt.Errorf("failed to read %s: %w", path, err)
 		}
 
 		var entry Entry
-		if err := yaml.Unmarshal(data, &entry); err != nil {
+		if err := json.Unmarshal(data, &entry); err != nil {
 			return fmt.Errorf("failed to unmarshal %s: %w", path, err)
 		}
 
@@ -323,18 +352,27 @@ func (fb *FileBase) getFilenameForType(id, entryType string) string {
 
 	// Otherwise check if entry exists in index
 	if indexEntry, exists := fb.index.Entries[id]; exists && indexEntry.Type != "" {
-		return filepath.Join(fb.basePath, indexEntry.Type, id+".yaml")
+		return filepath.Join(fb.basePath, indexEntry.Type, id+".json")
 	}
+<<<<<<< HEAD
 
 	// Default to root directory
 	return filepath.Join(fb.basePath, id+".yaml")
+=======
+	return filepath.Join(fb.basePath, id+".json")
+>>>>>>> f32011c (Lots of TUI work)
 }
 
 func (fb *FileBase) loadIndex() error {
 	indexFile := filepath.Join(fb.basePath, "index.json")
 
 	// Check if index exists
+<<<<<<< HEAD
 	data, err := os.ReadFile(filepath.Clean(indexFile))
+=======
+	// #nosec G304 -- indexFile is a fixed path constructed from basePath
+	data, err := os.ReadFile(indexFile)
+>>>>>>> f32011c (Lots of TUI work)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Create new index
@@ -423,6 +461,7 @@ func (fb *FileBase) removeFromStringSlice(slice []string, value string) []string
 
 // Error types
 
+// EntryNotFoundError is returned when a requested knowledge entry cannot be found.
 type EntryNotFoundError struct {
 	ID string
 }
@@ -431,6 +470,7 @@ func (e *EntryNotFoundError) Error() string {
 	return fmt.Sprintf("knowledge entry not found: %s", e.ID)
 }
 
+// EntryExpiredError is returned when a requested knowledge entry has expired.
 type EntryExpiredError struct {
 	ID string
 }

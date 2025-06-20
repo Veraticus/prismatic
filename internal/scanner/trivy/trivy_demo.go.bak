@@ -1,0 +1,413 @@
+// Package trivy implements a native Trivy scanner using the streaming architecture.
+package trivy
+
+import (
+	"context"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/scanner"
+)
+
+// Config provides Trivy-specific configuration.
+// It implements scanner.Config.
+type Config struct {
+	CacheDir      string
+	Format        string
+	Severities    []string
+	VulnTypes     []string
+	Timeout       time.Duration
+	Parallel      int
+	IgnoreUnfixed bool
+	OfflineMode   bool
+	SkipDBUpdate  bool
+}
+
+// Validate checks if the configuration is valid.
+func (c *Config) Validate() error {
+	// Validate severities
+	validSeverities := map[string]bool{
+		"CRITICAL": true,
+		"HIGH":     true,
+		"MEDIUM":   true,
+		"LOW":      true,
+		"UNKNOWN":  true,
+	}
+
+	for _, sev := range c.Severities {
+		if !validSeverities[sev] {
+			return fmt.Errorf("invalid severity: %s", sev)
+		}
+	}
+
+	// Validate vuln types
+	validTypes := map[string]bool{
+		"vuln":      true,
+		"secret":    true,
+		"misconfig": true,
+	}
+
+	for _, vt := range c.VulnTypes {
+		if !validTypes[vt] {
+			return fmt.Errorf("invalid vulnerability type: %s", vt)
+		}
+	}
+
+	// Validate timeout
+	if c.Timeout < 0 {
+		return fmt.Errorf("timeout cannot be negative")
+	}
+
+	// Validate parallel
+	if c.Parallel < 0 {
+		return fmt.Errorf("parallel cannot be negative")
+	}
+
+	return nil
+}
+
+// DefaultConfig returns sensible defaults for Trivy.
+func DefaultConfig() *Config {
+	return &Config{
+		CacheDir:      filepath.Join("/tmp", "trivy-cache"),
+		Severities:    []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"},
+		VulnTypes:     []string{"vuln", "secret"},
+		Timeout:       30 * time.Minute,
+		IgnoreUnfixed: false,
+		OfflineMode:   false,
+		SkipDBUpdate:  false,
+		Parallel:      3,
+		Format:        "json",
+	}
+}
+
+// Scanner implements the scanner.Scanner interface for Trivy.
+type Scanner struct {
+	config   *Config
+	cancel   context.CancelFunc
+	name     string
+	targets  scanner.Targets
+	mu       sync.Mutex
+	scanning bool
+}
+
+// Factory implements scanner.Factory for Trivy.
+type Factory struct{}
+
+// Name returns the scanner type name.
+func (f *Factory) Name() string {
+	return "trivy"
+}
+
+// Create builds a new Trivy scanner instance.
+func (f *Factory) Create(name string, config scanner.Config, targets scanner.Targets) (scanner.Scanner, error) {
+	// Type assert config
+	trivyConfig, ok := config.(*Config)
+	if !ok {
+		return nil, fmt.Errorf("invalid config type: expected *trivy.Config, got %T", config)
+	}
+
+	// Validate targets
+	if err := validateTargets(targets); err != nil {
+		return nil, err
+	}
+
+	return &Scanner{
+		name:    name,
+		config:  trivyConfig,
+		targets: targets,
+	}, nil
+}
+
+// DefaultConfig returns the default configuration.
+func (f *Factory) DefaultConfig() scanner.Config {
+	return DefaultConfig()
+}
+
+// Capabilities returns Trivy's capabilities.
+func (f *Factory) Capabilities() scanner.Capabilities {
+	return scanner.Capabilities{
+		SupportsImages:       true,
+		SupportsFilesystems:  true,
+		SupportsRepositories: true,
+		SupportsCloud:        false, // Trivy doesn't scan cloud directly
+		SupportsKubernetes:   true,
+		SupportsWeb:          false,
+		SupportsConcurrency:  true,
+		RequiresNetwork:      true, // For DB updates
+		MaxConcurrency:       10,   // Reasonable limit
+	}
+}
+
+// Name returns the scanner instance name.
+func (s *Scanner) Name() string {
+	return s.name
+}
+
+// Scan executes the Trivy security scan.
+func (s *Scanner) Scan(ctx context.Context) (<-chan scanner.Finding, error) {
+	// Check if already scanning
+	s.mu.Lock()
+	if s.scanning {
+		s.mu.Unlock()
+		return nil, scanner.ErrScanInProgress
+	}
+	s.scanning = true
+	s.mu.Unlock()
+
+	// Create cancellable context
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+
+	// Check if Trivy is available
+	if _, err := exec.LookPath("trivy"); err != nil {
+		s.mu.Lock()
+		s.scanning = false
+		s.mu.Unlock()
+		return nil, fmt.Errorf("trivy not found in PATH: %w", err)
+	}
+
+	// Create findings channel
+	findings := make(chan scanner.Finding, 100)
+
+	// Start scanning in background
+	go func() {
+		defer close(findings)
+		defer func() {
+			s.mu.Lock()
+			s.scanning = false
+			s.cancel = nil
+			s.mu.Unlock()
+		}()
+
+		// Create semaphore for parallel scanning
+		sem := make(chan struct{}, s.config.Parallel)
+		var wg sync.WaitGroup
+
+		// Scan images
+		for _, image := range s.targets.Images {
+			wg.Add(1)
+			go func(img scanner.Image) {
+				defer wg.Done()
+
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					return
+				}
+
+				s.scanImage(ctx, img, findings)
+			}(image)
+		}
+
+		// Scan filesystems
+		for _, fs := range s.targets.Filesystems {
+			wg.Add(1)
+			go func(filesystem scanner.Filesystem) {
+				defer wg.Done()
+
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					return
+				}
+
+				s.scanFilesystem(ctx, filesystem, findings)
+			}(fs)
+		}
+
+		// Scan repositories
+		for _, repo := range s.targets.Repositories {
+			wg.Add(1)
+			go func(repository scanner.Repository) {
+				defer wg.Done()
+
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					return
+				}
+
+				s.scanRepository(ctx, repository, findings)
+			}(repo)
+		}
+
+		// Scan Kubernetes clusters
+		for _, cluster := range s.targets.KubernetesClusters {
+			wg.Add(1)
+			go func(k8s scanner.KubernetesCluster) {
+				defer wg.Done()
+
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					return
+				}
+
+				s.scanKubernetes(ctx, k8s, findings)
+			}(cluster)
+		}
+
+		// Wait for all scans to complete
+		wg.Wait()
+	}()
+
+	return findings, nil
+}
+
+// Close releases resources.
+func (s *Scanner) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.cancel != nil {
+		s.cancel()
+	}
+
+	return nil
+}
+
+// scanImage scans a container image.
+func (s *Scanner) scanImage(ctx context.Context, image scanner.Image, findings chan<- scanner.Finding) {
+	// For now, demo implementation
+	// TODO: Integrate actual Trivy library
+	finding := &models.Finding{
+		ID:          generateFindingID("trivy", "vulnerability", image.Name, "CVE-2024-1234"),
+		Scanner:     s.name,
+		Type:        "vulnerability",
+		Severity:    "high",
+		Title:       fmt.Sprintf("Vulnerability in %s", image.Name),
+		Description: "This is a demonstration finding from the native Trivy scanner",
+		Resource:    image.Name,
+		Remediation: "Update to latest version",
+		Metadata: map[string]string{
+			"cve":        "CVE-2024-1234",
+			"package":    "example-package",
+			"version":    "1.0.0",
+			"fixVersion": "1.0.1",
+		},
+		DiscoveredDate: time.Now(),
+	}
+
+	select {
+	case findings <- scanner.Finding{Finding: finding}:
+	case <-ctx.Done():
+		return
+	}
+}
+
+// scanFilesystem scans a filesystem path.
+func (s *Scanner) scanFilesystem(ctx context.Context, fs scanner.Filesystem, findings chan<- scanner.Finding) {
+	// Demo implementation
+	finding := &models.Finding{
+		ID:          generateFindingID("trivy", "secret", fs.Path, "aws-key"),
+		Scanner:     s.name,
+		Type:        "secret",
+		Severity:    "critical",
+		Title:       fmt.Sprintf("AWS credentials found in %s", fs.Path),
+		Description: "Hardcoded AWS credentials detected",
+		Resource:    fs.Path,
+		Remediation: "Remove credentials and use environment variables",
+		Metadata: map[string]string{
+			"file":       filepath.Join(fs.Path, "config.yml"),
+			"line":       "42",
+			"secretType": "aws-access-key",
+		},
+		DiscoveredDate: time.Now(),
+	}
+
+	select {
+	case findings <- scanner.Finding{Finding: finding}:
+	case <-ctx.Done():
+		return
+	}
+}
+
+// scanRepository scans a git repository.
+func (s *Scanner) scanRepository(ctx context.Context, repo scanner.Repository, findings chan<- scanner.Finding) {
+	// Demo implementation combining filesystem scan with git context
+	finding := &models.Finding{
+		ID:          generateFindingID("trivy", "vulnerability", repo.Path, "npm-audit"),
+		Scanner:     s.name,
+		Type:        "vulnerability",
+		Severity:    "medium",
+		Title:       "Vulnerable npm dependency",
+		Description: "Known vulnerability in npm package",
+		Resource:    repo.Path,
+		Remediation: "Run npm audit fix",
+		Metadata: map[string]string{
+			"remote":     repo.Remote,
+			"branch":     repo.Branch,
+			"file":       "package-lock.json",
+			"dependency": "lodash",
+		},
+		DiscoveredDate: time.Now(),
+	}
+
+	select {
+	case findings <- scanner.Finding{Finding: finding}:
+	case <-ctx.Done():
+		return
+	}
+}
+
+// scanKubernetes scans a Kubernetes cluster.
+func (s *Scanner) scanKubernetes(ctx context.Context, cluster scanner.KubernetesCluster, findings chan<- scanner.Finding) {
+	// Demo implementation
+	finding := &models.Finding{
+		ID:          generateFindingID("trivy", "misconfig", cluster.Context, "privileged-pod"),
+		Scanner:     s.name,
+		Type:        "misconfiguration",
+		Severity:    "high",
+		Title:       "Privileged pod detected",
+		Description: "Pod running with privileged security context",
+		Resource:    fmt.Sprintf("k8s://%s", cluster.Context),
+		Remediation: "Remove privileged: true from pod spec",
+		Metadata: map[string]string{
+			"context":   cluster.Context,
+			"namespace": "default",
+			"pod":       "example-pod",
+			"container": "app",
+		},
+		DiscoveredDate: time.Now(),
+	}
+
+	select {
+	case findings <- scanner.Finding{Finding: finding}:
+	case <-ctx.Done():
+		return
+	}
+}
+
+// validateTargets ensures Trivy can handle the requested targets.
+func validateTargets(targets scanner.Targets) error {
+	if !targets.HasTargets() {
+		return scanner.ErrNoTargets
+	}
+
+	// Trivy doesn't support direct cloud scanning
+	if len(targets.CloudAccounts) > 0 {
+		return fmt.Errorf("%w: cloud accounts not supported by trivy", scanner.ErrNotImplemented)
+	}
+
+	// Trivy doesn't support web application scanning
+	if len(targets.WebApplications) > 0 {
+		return fmt.Errorf("%w: web applications not supported by trivy", scanner.ErrNotImplemented)
+	}
+
+	return nil
+}
+
+// generateFindingID creates a deterministic finding ID.
+func generateFindingID(scanner, findingType, resource, detail string) string {
+	// In real implementation, this would create a hash
+	return fmt.Sprintf("%s-%s-%s-%s", scanner, findingType, resource, detail)
+}

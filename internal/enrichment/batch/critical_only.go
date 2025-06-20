@@ -27,7 +27,7 @@ func (s *CriticalOnlyStrategy) Description() string {
 }
 
 // Batch implements BatchingStrategy interface.
-func (s *CriticalOnlyStrategy) Batch(ctx context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
+func (s *CriticalOnlyStrategy) Batch(_ context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
 	// Filter for critical findings only
 	var criticalFindings []models.Finding
 	for _, f := range findings {

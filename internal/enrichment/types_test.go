@@ -27,7 +27,7 @@ func TestFindingEnrichmentCreation(t *testing.T) {
 			AutomationPossible: true,
 			ValidationSteps:    []string{"Run security tests", "Verify fix in staging"},
 		},
-		Context: map[string]interface{}{
+		Context: map[string]any{
 			"environment": "production",
 			"service":     "auth-api",
 		},
@@ -50,6 +50,22 @@ func TestFindingEnrichmentCreation(t *testing.T) {
 
 	if enrichment.TokensUsed != 300 {
 		t.Errorf("Expected tokens used to be 300, got %d", enrichment.TokensUsed)
+	}
+
+	if enrichment.LLMModel != "claude-3-sonnet" {
+		t.Errorf("Expected LLM model to be 'claude-3-sonnet', got %s", enrichment.LLMModel)
+	}
+
+	if len(enrichment.Context) != 2 {
+		t.Errorf("Expected 2 context entries, got %d", len(enrichment.Context))
+	}
+
+	if enrichment.Context["environment"] != "production" {
+		t.Errorf("Expected environment to be 'production', got %v", enrichment.Context["environment"])
+	}
+
+	if !enrichment.EnrichedAt.Equal(now) {
+		t.Errorf("Expected EnrichedAt to be %v, got %v", now, enrichment.EnrichedAt)
 	}
 }
 
@@ -99,15 +115,16 @@ func TestAnalysisValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Validate priority score is between 0 and 1
-			if tt.analysis.PriorityScore < 0 || tt.analysis.PriorityScore > 1 {
+			switch {
+			case tt.analysis.PriorityScore < 0 || tt.analysis.PriorityScore > 1:
 				if tt.valid {
 					t.Error("Expected analysis to be valid but priority score is out of range")
 				}
-			} else if tt.analysis.BusinessImpact == "" || tt.analysis.PriorityReasoning == "" || tt.analysis.TechnicalDetails == "" {
+			case tt.analysis.BusinessImpact == "" || tt.analysis.PriorityReasoning == "" || tt.analysis.TechnicalDetails == "":
 				if tt.valid {
 					t.Error("Expected analysis to be valid but has empty fields")
 				}
-			} else {
+			default:
 				if !tt.valid {
 					t.Error("Expected analysis to be invalid but it appears valid")
 				}
@@ -159,13 +176,17 @@ func TestRemediationArrays(t *testing.T) {
 	if !remediation.AutomationPossible {
 		t.Error("Expected automation to be possible")
 	}
+
+	if remediation.EstimatedEffort != "1-2 weeks" {
+		t.Errorf("Expected estimated effort '1-2 weeks', got %s", remediation.EstimatedEffort)
+	}
 }
 
 func TestEnrichmentMetadataCalculations(t *testing.T) {
 	startTime := time.Now()
 	endTime := startTime.Add(5 * time.Minute)
 
-	metadata := EnrichmentMetadata{
+	metadata := Metadata{
 		StartedAt:        startTime,
 		CompletedAt:      endTime,
 		RunID:            "run-123",
@@ -196,25 +217,49 @@ func TestEnrichmentMetadataCalculations(t *testing.T) {
 	if tokensPerFinding != 157 { // 15000 / 95 ≈ 157
 		t.Errorf("Expected ~157 tokens per finding, got %d", tokensPerFinding)
 	}
+
+	// Test other metadata fields
+	if metadata.RunID != "run-123" {
+		t.Errorf("Expected RunID 'run-123', got %s", metadata.RunID)
+	}
+
+	if metadata.Strategy != "smart-batch" {
+		t.Errorf("Expected Strategy 'smart-batch', got %s", metadata.Strategy)
+	}
+
+	if metadata.Driver != "claude-cli" {
+		t.Errorf("Expected Driver 'claude-cli', got %s", metadata.Driver)
+	}
+
+	if metadata.LLMModel != "claude-3-sonnet" {
+		t.Errorf("Expected LLMModel 'claude-3-sonnet', got %s", metadata.LLMModel)
+	}
+
+	if len(metadata.Errors) != 0 {
+		t.Errorf("Expected no errors, got %d", len(metadata.Errors))
+	}
 }
 
 func TestContextMerge(t *testing.T) {
 	enrichment := FindingEnrichment{
-		FindingID: "test-123",
-		Context: map[string]interface{}{
+		Context: map[string]any{
 			"key1": "value1",
 			"key2": 42,
 		},
 	}
 
 	// Test merging context
-	newContext := map[string]interface{}{
+	newContext := map[string]any{
 		"key2": 100,      // Override
 		"key3": "value3", // New
 	}
 
 	for k, v := range newContext {
 		enrichment.Context[k] = v
+	}
+
+	if enrichment.FindingID != "" {
+		t.Error("FindingID should not be set for this test")
 	}
 
 	if enrichment.Context["key1"] != "value1" {

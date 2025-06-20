@@ -18,7 +18,11 @@ func TestNewFileCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -41,7 +45,11 @@ func TestFileCache_SetAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -69,7 +77,7 @@ func TestFileCache_SetAndGet(t *testing.T) {
 		},
 		LLMModel:   "test-model",
 		TokensUsed: 300,
-		Context: map[string]interface{}{
+		Context: map[string]any{
 			"test": "context",
 		},
 	}
@@ -106,7 +114,11 @@ func TestFileCache_TTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -146,7 +158,11 @@ func TestFileCache_Delete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -195,7 +211,11 @@ func TestFileCache_Clear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -209,15 +229,15 @@ func TestFileCache_Clear(t *testing.T) {
 		findingEnrichment := &enrichment.FindingEnrichment{
 			FindingID: fmt.Sprintf("finding-%d", i),
 		}
-		if err := cache.Set(ctx, findingEnrichment, 1*time.Hour); err != nil {
-			t.Fatalf("Failed to set entry %d: %v", i, err)
+		if setErr := cache.Set(ctx, findingEnrichment, 1*time.Hour); setErr != nil {
+			t.Fatalf("Failed to set entry %d: %v", i, setErr)
 		}
 	}
 
 	// Verify entries exist
 	for i := 0; i < 5; i++ {
 		findingID := fmt.Sprintf("finding-%d", i)
-		if _, err := cache.Get(ctx, findingID); err != nil {
+		if _, getErr := cache.Get(ctx, findingID); getErr != nil {
 			t.Errorf("Entry %s should exist before clear", findingID)
 		}
 	}
@@ -231,7 +251,7 @@ func TestFileCache_Clear(t *testing.T) {
 	// Verify all entries are gone
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("key-%d", i)
-		if _, err := cache.Get(ctx, key); err == nil {
+		if _, getErr := cache.Get(ctx, key); getErr == nil {
 			t.Errorf("Entry %s should not exist after clear", key)
 		}
 	}
@@ -252,7 +272,11 @@ func TestFileCache_Stats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -335,7 +359,11 @@ func TestFileCache_ConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {
@@ -352,8 +380,8 @@ func TestFileCache_ConcurrentAccess(t *testing.T) {
 				FindingID: fmt.Sprintf("concurrent-%d", id),
 			}
 
-			if err := cache.Set(ctx, findingEnrichment, 1*time.Hour); err != nil {
-				t.Errorf("Failed to set concurrent entry %d: %v", id, err)
+			if setErr := cache.Set(ctx, findingEnrichment, 1*time.Hour); setErr != nil {
+				t.Errorf("Failed to set concurrent entry %d: %v", id, setErr)
 			}
 
 			done <- true
@@ -368,9 +396,9 @@ func TestFileCache_ConcurrentAccess(t *testing.T) {
 			// Give writes a chance to complete
 			time.Sleep(10 * time.Millisecond)
 
-			if _, err := cache.Get(ctx, findingID); err != nil {
+			if _, getErr := cache.Get(ctx, findingID); getErr != nil {
 				// It's ok if not found, as write might not have completed
-				t.Logf("Concurrent read %d: %v", id, err)
+				t.Logf("Concurrent read %d: %v", id, getErr)
 			}
 
 			done <- true
@@ -436,7 +464,11 @@ func TestFileCache_CleanupExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Errorf("Failed to remove temp dir: %v", removeErr)
+		}
+	}()
 
 	cache, err := NewFileCache(tmpDir)
 	if err != nil {

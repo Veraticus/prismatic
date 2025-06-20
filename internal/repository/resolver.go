@@ -11,13 +11,19 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
+// Repository represents a code repository.
+type Repository struct {
+	Name   string `yaml:"name"`
+	Path   string `yaml:"path"`
+	Branch string `yaml:"branch"`
+}
+
 // Resolver is a function that resolves a repository to a local path
 // It returns the local path, a cleanup function, and an error.
-type Resolver func(ctx context.Context, repo config.Repository) (localPath string, cleanup func(), err error)
+type Resolver func(ctx context.Context, repo Repository) (localPath string, cleanup func(), err error)
 
 // ResolverOption configures the resolver.
 type ResolverOption func(*resolverOptions)
@@ -96,7 +102,7 @@ func NewGitResolver(opts ...ResolverOption) Resolver {
 		opt(options)
 	}
 
-	return func(ctx context.Context, repo config.Repository) (string, func(), error) {
+	return func(ctx context.Context, repo Repository) (string, func(), error) {
 		// If it's already a local path, just validate it exists
 		if isLocalPath(repo.Path) {
 			absPath, err := filepath.Abs(repo.Path)
@@ -161,7 +167,7 @@ func NewLocalResolver(opts ...ResolverOption) Resolver {
 		opt(options)
 	}
 
-	return func(_ context.Context, repo config.Repository) (string, func(), error) {
+	return func(_ context.Context, repo Repository) (string, func(), error) {
 		absPath, err := filepath.Abs(repo.Path)
 		if err != nil {
 			return "", noop, fmt.Errorf("invalid path: %w", err)
@@ -178,7 +184,7 @@ func NewLocalResolver(opts ...ResolverOption) Resolver {
 
 // NewMockResolver creates a resolver for testing that returns temporary directories.
 func NewMockResolver(paths map[string]string) Resolver {
-	return func(_ context.Context, repo config.Repository) (string, func(), error) {
+	return func(_ context.Context, repo Repository) (string, func(), error) {
 		if path, ok := paths[repo.Name]; ok {
 			return path, noop, nil
 		}
@@ -220,7 +226,7 @@ func isLocalPath(path string) bool {
 	return false
 }
 
-func generateRepoDir(baseDir string, repo config.Repository) string {
+func generateRepoDir(baseDir string, repo Repository) string {
 	// Create a hash of the URL for uniqueness
 	h := sha256.New()
 	h.Write([]byte(repo.Path))
@@ -233,7 +239,7 @@ func generateRepoDir(baseDir string, repo config.Repository) string {
 	return filepath.Join(baseDir, fmt.Sprintf("%s-%s", safeName, hash))
 }
 
-func cloneRepo(ctx context.Context, repo config.Repository, targetDir string, options *resolverOptions) error {
+func cloneRepo(ctx context.Context, repo Repository, targetDir string, options *resolverOptions) error {
 	args := []string{"clone"}
 
 	// Add branch if specified

@@ -1,11 +1,11 @@
 {
-  "started_at": "2025-06-10T22:11:02.852048869-07:00",
-  "completed_at": "2025-06-10T22:11:02.852058971-07:00",
-  "run_id": "71d12764-d1ea-46eb-929a-10f6e88733b5",
+  "started_at": "2025-06-19T23:06:49.963068223-07:00",
+  "completed_at": "2025-06-19T23:06:50.003830912-07:00",
+  "run_id": "4feb93d1-37ba-4820-bcef-ffc2ebe56265",
   "strategy": "mock",
   "driver": "",
   "llm_model": "mock-model",
   "total_findings": 4,
-  "enriched_findings": 0,
+  "enriched_findings": 4,
   "total_tokens_used": 0
 }

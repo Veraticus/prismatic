@@ -1,447 +1,437 @@
+// Package scanner provides orchestration for security scanners.
 package scanner
 
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/internal/models"
-	"github.com/joshsymonds/prismatic/internal/repository"
 	"github.com/joshsymonds/prismatic/pkg/logger"
 )
 
-// Orchestrator manages multiple scanners and coordinates their execution.
+// FindingProcessor processes findings before storage.
+// Processors can transform, enrich, or filter findings.
+// Returning nil drops the finding from processing.
+type FindingProcessor interface {
+	Process(ctx context.Context, finding *models.Finding) (*models.Finding, error)
+	Name() string // For debugging and metrics
+}
+
+// FindingStore persists findings.
+type FindingStore interface {
+	Store(ctx context.Context, findings []*models.Finding) error
+}
+
+// OrchestratorConfig configures the scan orchestrator.
+type OrchestratorConfig struct {
+	Logger        logger.Logger
+	Store         FindingStore
+	Progress      ProgressFunc
+	Processors    []FindingProcessor
+	MaxConcurrent int
+	BatchSize     int
+	BatchTimeout  time.Duration
+}
+
+// scannerFinding wraps a finding with its source scanner name.
+type scannerFinding struct {
+	finding Finding
+	scanner string
+}
+
+// SetDefaults applies sensible defaults to config.
+func (c *OrchestratorConfig) SetDefaults() {
+	if c.MaxConcurrent <= 0 {
+		c.MaxConcurrent = 3
+	}
+	if c.BatchSize <= 0 {
+		c.BatchSize = 100
+	}
+	if c.BatchTimeout <= 0 {
+		c.BatchTimeout = 5 * time.Second
+	}
+	if c.Logger == nil {
+		c.Logger = logger.GetGlobalLogger()
+	}
+}
+
+// Orchestrator coordinates multiple scanner executions.
+// It handles concurrent scanning, finding processing, and storage.
 type Orchestrator struct {
-	logger        logger.Logger
-	config        *config.Config
-	repoPaths     map[string]string
-	statusChannel chan *models.ScannerStatus
-	outputDir     string
-	scanners      []Scanner
-	repoCleanups  []func()
-	maxWorkers    int
-	scanTimeout   time.Duration
-	useMock       bool
+	scanners map[string]Scanner
+	cancel   context.CancelFunc
+	config   OrchestratorConfig
+	mu       sync.RWMutex
+	running  atomic.Bool
 }
 
-// NewOrchestrator creates a new scanner orchestrator.
-func NewOrchestrator(cfg *config.Config, outputDir string, useMock bool) *Orchestrator {
-	return NewOrchestratorWithLogger(cfg, outputDir, useMock, logger.GetGlobalLogger())
-}
+// NewOrchestrator creates a new scan orchestrator.
+func NewOrchestrator(config OrchestratorConfig) *Orchestrator {
+	config.SetDefaults()
 
-// NewOrchestratorWithLogger creates a new scanner orchestrator with a custom logger.
-func NewOrchestratorWithLogger(cfg *config.Config, outputDir string, useMock bool, log logger.Logger) *Orchestrator {
 	return &Orchestrator{
-		config:       cfg,
-		outputDir:    outputDir,
-		useMock:      useMock,
-		scanners:     []Scanner{},
-		maxWorkers:   3, // Default to 3 concurrent scanners
-		scanTimeout:  30 * time.Minute,
-		logger:       log,
-		repoPaths:    make(map[string]string),
-		repoCleanups: []func(){},
+		config:   config,
+		scanners: make(map[string]Scanner),
 	}
 }
 
-// SetMaxWorkers sets the maximum number of concurrent scanner workers.
-func (o *Orchestrator) SetMaxWorkers(maxWorkers int) {
-	if maxWorkers < 1 {
-		maxWorkers = 1
-	}
-	o.maxWorkers = maxWorkers
-}
-
-// SetScanTimeout sets the timeout for individual scanner execution.
-func (o *Orchestrator) SetScanTimeout(timeout time.Duration) {
-	o.scanTimeout = timeout
-}
-
-// SetStatusChannel sets the channel for receiving scanner status updates.
-func (o *Orchestrator) SetStatusChannel(ch chan *models.ScannerStatus) {
-	o.statusChannel = ch
-}
-
-// PrepareRepositories clones all configured repositories before scanning.
-func (o *Orchestrator) PrepareRepositories(ctx context.Context) error {
-	if len(o.config.Repositories) == 0 {
-		return nil
+// AddScanner adds a scanner to be executed.
+// Returns error if a scanner with the same name already exists.
+func (o *Orchestrator) AddScanner(scanner Scanner) error {
+	if scanner == nil {
+		return fmt.Errorf("scanner is nil")
 	}
 
-	o.logger.Info("Preparing repositories", "count", len(o.config.Repositories))
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
-	// Create resolver with repository directory in output
-	resolver := repository.NewGitResolver(
-		repository.WithBaseDir(filepath.Join(o.outputDir, "repos")),
-		repository.WithLogger(o.logger),
-	)
-
-	// If mock mode, use mock resolver
-	if o.useMock {
-		mockPaths := make(map[string]string)
-		for _, repo := range o.config.Repositories {
-			mockPaths[repo.Name] = filepath.Join(o.outputDir, "mock-repos", repo.Name)
-		}
-		resolver = repository.NewMockResolver(mockPaths)
+	name := scanner.Name()
+	if _, exists := o.scanners[name]; exists {
+		return fmt.Errorf("scanner already added: %s", name)
 	}
 
-	// Clone all repositories
-	for _, repo := range o.config.Repositories {
-		o.logger.Info("Cloning repository", "name", repo.Name, "url", repo.Path)
-
-		localPath, cleanup, err := resolver(ctx, repo)
-		if err != nil {
-			o.logger.Error("Repository clone failed", "name", repo.Name, "error", err)
-			// Clean up any previously cloned repos
-			o.CleanupRepositories()
-			return fmt.Errorf("failed to prepare repository %s: %w", repo.Name, err)
-		}
-
-		o.repoPaths[repo.Name] = localPath
-		o.repoCleanups = append(o.repoCleanups, cleanup)
-
-		o.logger.Info("Repository prepared", "name", repo.Name, "local_path", localPath)
-	}
-
+	o.scanners[name] = scanner
 	return nil
 }
 
-// CleanupRepositories removes all cloned repositories.
-func (o *Orchestrator) CleanupRepositories() {
-	for _, cleanup := range o.repoCleanups {
-		cleanup()
-	}
-	o.repoCleanups = []func(){}
-	o.repoPaths = make(map[string]string)
+// RemoveScanner removes a scanner by name.
+func (o *Orchestrator) RemoveScanner(name string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.scanners, name)
 }
 
-// GetRepositoryPaths returns the local paths of all prepared repositories.
-func (o *Orchestrator) GetRepositoryPaths() map[string]string {
-	return o.repoPaths
-}
-
-// InitializeScanners sets up scanners based on configuration.
-func (o *Orchestrator) InitializeScanners(onlyScanners []string) error {
-	baseConfig := Config{
-		WorkingDir: o.outputDir,
-		Timeout:    300,
-		Debug:      false,
+// Execute runs all configured scanners and returns results.
+// It blocks until all scanners complete or context is canceled.
+func (o *Orchestrator) Execute(ctx context.Context) (*ScanResult, error) {
+	// Check if already running
+	if !o.running.CompareAndSwap(false, true) {
+		return nil, ErrScanInProgress
 	}
+	defer o.running.Store(false)
 
-	// Create appropriate factory based on mock flag
-	var factory interface {
-		CreateScanner(string) (Scanner, error)
-	}
-
-	if o.useMock {
-		factory = NewMockScannerFactory(baseConfig, o.logger)
-	} else {
-		realFactory := NewScannerFactoryWithLogger(baseConfig, o.config, o.outputDir, o.logger)
-		realFactory.SetRepositoryPaths(o.repoPaths)
-		factory = realFactory
-	}
-
-	// Determine which scanners to initialize
-	scannerTypes := o.detectScanners(onlyScanners)
-
-	// Initialize scanners using factory
-	for _, scannerType := range scannerTypes {
-		scanner, err := factory.CreateScanner(scannerType)
-		if err != nil {
-			// Skip scanners that can't be initialized (e.g., no config)
-			o.logger.Debug("Skipping scanner", "type", scannerType, "reason", err)
-			continue
-		}
-
-		o.scanners = append(o.scanners, scanner)
-		o.logger.Debug("Initialized scanner", "name", scanner.Name(), "type", scannerType)
-	}
-
+	// Get scanner snapshot
+	o.mu.RLock()
 	if len(o.scanners) == 0 {
-		return fmt.Errorf("no scanners initialized")
+		o.mu.RUnlock()
+		return nil, fmt.Errorf("no scanners configured")
 	}
 
-	return nil
-}
+	// Copy scanners to avoid holding lock during execution
+	scanners := make(map[string]Scanner, len(o.scanners))
+	for name, scanner := range o.scanners {
+		scanners[name] = scanner
+	}
+	o.mu.RUnlock()
 
-// RunScans executes all scanners with resource management using worker pool.
-func (o *Orchestrator) RunScans(ctx context.Context) (*models.ScanMetadata, error) {
-	metadata := &models.ScanMetadata{
-		StartTime:   time.Now(),
-		ClientName:  o.config.Client.Name,
-		Environment: o.config.Client.Environment,
-		Results:     make(map[string]*models.ScanResult),
-		Summary: models.ScanSummary{
-			BySeverity: make(map[string]int),
-			ByScanner:  make(map[string]int),
-		},
+	// Create cancellable context
+	ctx, cancel := context.WithCancel(ctx)
+	o.cancel = cancel
+	defer cancel()
+
+	// Initialize result
+	result := &ScanResult{
+		StartTime:     time.Now(),
+		FindingCounts: make(map[string]int),
+		Errors:        make(map[string]error),
 	}
 
-	// Send initial pending status for all scanners
-	for _, scanner := range o.scanners {
-		status := models.NewScannerStatus(scanner.Name())
-		o.sendStatus(status)
-	}
+	// Create channels
+	findingsChan := make(chan scannerFinding, o.config.BatchSize)
 
-	// Create worker pool
-	jobs := make(chan Scanner, len(o.scanners))
-	results := make(chan *models.ScanResult, len(o.scanners))
+	// Start processor goroutine
+	processorDone := make(chan struct{})
+	go o.processFindings(ctx, findingsChan, result, processorDone)
 
-	// Start workers
+	// Run scanners concurrently
 	var wg sync.WaitGroup
-	for i := 0; i < o.maxWorkers && i < len(o.scanners); i++ {
-		wg.Add(1)
-		go o.worker(ctx, &wg, jobs, results)
-	}
+	sem := make(chan struct{}, o.config.MaxConcurrent)
 
-	// Send jobs to workers
-	go func() {
-		for _, scanner := range o.scanners {
+	for name, scanner := range scanners {
+		wg.Add(1)
+		go func(name string, scanner Scanner) {
+			defer wg.Done()
+
+			// Rate limit
 			select {
-			case jobs <- scanner:
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
 			case <-ctx.Done():
-				close(jobs)
 				return
 			}
-		}
-		close(jobs)
-	}()
 
-	// Wait for workers to finish and close results
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+			// Report progress
+			if o.config.Progress != nil {
+				o.config.Progress(Progress{
+					Scanner: name,
+					Phase:   "starting",
+					Message: fmt.Sprintf("Starting %s scanner", name),
+				})
+			}
 
-	// Collect results
-	for result := range results {
-		o.processResult(result, metadata)
+			// Run scanner
+			if err := o.runScanner(ctx, name, scanner, findingsChan); err != nil {
+				result.mu.Lock()
+				result.Errors[name] = err
+				result.mu.Unlock()
+
+				o.config.Logger.Error("Scanner failed",
+					"scanner", name,
+					"error", err)
+			}
+
+			// Report completion
+			if o.config.Progress != nil {
+				o.config.Progress(Progress{
+					Scanner: name,
+					Phase:   "completed",
+					Message: fmt.Sprintf("%s scanner completed", name),
+				})
+			}
+		}(name, scanner)
 	}
 
-	metadata.EndTime = time.Now()
-	metadata.Scanners = o.getScannerNames()
+	// Wait for all scanners
+	wg.Wait()
+	close(findingsChan)
 
-	return metadata, nil
+	// Wait for processor
+	<-processorDone
+
+	result.EndTime = time.Now()
+	return result, nil
 }
 
-// worker processes scanner jobs from the jobs channel.
-func (o *Orchestrator) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Scanner, results chan<- *models.ScanResult) {
-	defer wg.Done()
+// Stop gracefully stops the orchestrator.
+func (o *Orchestrator) Stop() {
+	if o.cancel != nil {
+		o.cancel()
+	}
+}
 
-	for scanner := range jobs {
-		// Send status update if channel is available
-		status := models.NewScannerStatus(scanner.Name())
-		o.sendStatus(status)
-
-		// Create scanner-specific context with timeout
-		scanCtx, cancel := context.WithTimeout(ctx, o.scanTimeout)
-
-		o.logger.Info("Running scanner", "name", scanner.Name())
-
-		// Update status to running
-		status.SetRunning("Scanning targets...")
-		o.sendStatus(status)
-
-		// Set up progress reporting if scanner supports it
-		if reporter, ok := scanner.(ProgressReporter); ok {
-			reporter.SetProgressCallback(func(current, total int, message string) {
-				status.SetProgress(current, total)
-				status.Message = message
-				o.sendStatus(status)
-			})
+// runScanner executes a single scanner and streams findings.
+func (o *Orchestrator) runScanner(ctx context.Context, name string, scanner Scanner, out chan<- scannerFinding) error {
+	// Ensure scanner is closed
+	defer func() {
+		if err := scanner.Close(); err != nil {
+			o.config.Logger.Error("Failed to close scanner",
+				"scanner", name,
+				"error", err)
 		}
+	}()
 
-		result, err := scanner.Scan(scanCtx)
+	// Start scan
+	findings, err := scanner.Scan(ctx)
+	if err != nil {
+		return fmt.Errorf("scan start failed: %w", err)
+	}
 
-		cancel() // Clean up the context
+	// Stream findings
+	count := 0
+	for finding := range findings {
+		count++
 
-		if err != nil {
-			if IsNoTargetsError(err) {
-				o.logger.Info("Scanner skipped", "name", scanner.Name(), "reason", "No targets configured")
-				status.SetSkipped("No targets configured")
-				o.sendStatus(status)
-
-				result = &models.ScanResult{
-					Scanner:   scanner.Name(),
-					StartTime: time.Now(),
-					EndTime:   time.Now(),
-					Findings:  []models.Finding{},
-				}
-			} else {
-				o.logger.Error("Scanner failed", "name", scanner.Name(), "error", err)
-				status.SetFailed(err)
-				o.sendStatus(status)
-
-				result = &models.ScanResult{
-					Scanner:   scanner.Name(),
-					StartTime: time.Now(),
-					EndTime:   time.Now(),
-					Error:     err.Error(),
-					Findings:  []models.Finding{},
-				}
-			}
-		} else {
-			// Count findings by severity
-			findingCounts := make(map[string]int)
-			totalFindings := len(result.Findings)
-
-			for _, finding := range result.Findings {
-				if !finding.Suppressed {
-					findingCounts[finding.Severity]++
-				}
-			}
-
-			status.SetCompletedWithFindings(totalFindings, findingCounts)
-			o.sendStatus(status)
+		// Attach scanner name to finding
+		if finding.Finding != nil {
+			finding.Finding.Scanner = name
 		}
 
 		select {
-		case results <- result:
+		case out <- scannerFinding{scanner: name, finding: finding}:
 		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	o.config.Logger.Info("Scanner completed",
+		"scanner", name,
+		"findings", count)
+
+	return nil
+}
+
+// processFindings handles finding processing and storage.
+func (o *Orchestrator) processFindings(ctx context.Context, findings <-chan scannerFinding, result *ScanResult, done chan<- struct{}) {
+	defer close(done)
+
+	batch := make([]*models.Finding, 0, o.config.BatchSize)
+	ticker := time.NewTicker(o.config.BatchTimeout)
+	defer ticker.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+
+		// Process findings through pipeline
+		processed := make([]*models.Finding, 0, len(batch))
+
+		for _, finding := range batch {
+			f := finding
+
+			// Run through processors
+			for _, processor := range o.config.Processors {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				var err error
+				f, err = processor.Process(ctx, f)
+				if err != nil {
+					o.config.Logger.Error("Processor failed",
+						"processor", processor.Name(),
+						"finding", finding.ID,
+						"error", err)
+					// Continue with original finding
+					f = finding
+				}
+
+				// Processor can drop findings by returning nil
+				if f == nil {
+					break
+				}
+			}
+
+			if f != nil {
+				processed = append(processed, f)
+			}
+		}
+
+		// Store processed findings
+		if len(processed) > 0 && o.config.Store != nil {
+			if err := o.config.Store.Store(ctx, processed); err != nil {
+				o.config.Logger.Error("Storage failed",
+					"count", len(processed),
+					"error", err)
+			}
+		}
+
+		// Update result counts
+		result.mu.Lock()
+		for _, f := range processed {
+			result.FindingCounts[f.Scanner]++
+			result.TotalFindings++
+
+			// Track by severity
+			if result.BySeverity == nil {
+				result.BySeverity = make(map[string]int)
+			}
+			result.BySeverity[f.Severity]++
+
+			// Track by type
+			if result.ByType == nil {
+				result.ByType = make(map[string]int)
+			}
+			result.ByType[f.Type]++
+		}
+		result.mu.Unlock()
+
+		// Clear batch
+		batch = batch[:0]
+	}
+
+	// Process findings
+	for {
+		select {
+		case sf, ok := <-findings:
+			if !ok {
+				flush()
+				return
+			}
+
+			// Handle errors
+			if sf.finding.Error != nil {
+				result.mu.Lock()
+				if result.ScannerErrors == nil {
+					result.ScannerErrors = make(map[string][]error)
+				}
+				result.ScannerErrors[sf.scanner] = append(
+					result.ScannerErrors[sf.scanner],
+					sf.finding.Error,
+				)
+				result.mu.Unlock()
+				continue
+			}
+
+			// Add to batch
+			if sf.finding.Finding != nil {
+				batch = append(batch, sf.finding.Finding)
+				if len(batch) >= o.config.BatchSize {
+					flush()
+				}
+			}
+
+		case <-ticker.C:
+			flush()
+
+		case <-ctx.Done():
+			flush()
 			return
 		}
 	}
 }
 
-// processResult processes a single scanner result and updates metadata.
-func (o *Orchestrator) processResult(result *models.ScanResult, metadata *models.ScanMetadata) {
-	// Apply suppressions and severity overrides
-	processedFindings := make([]models.Finding, 0, len(result.Findings))
-
-	for _, finding := range result.Findings {
-		// Check if suppressed using the finding's discovered date
-		// Use PublishedDate for CVEs if available, otherwise use DiscoveredDate
-		suppressionDate := finding.DiscoveredDate
-		if !finding.PublishedDate.IsZero() && finding.Type == "vulnerability" {
-			suppressionDate = finding.PublishedDate
-		}
-
-		suppressed, reason := o.config.IsSuppressed(finding.Scanner, finding.Type, suppressionDate)
-		if suppressed {
-			finding.Suppressed = true
-			finding.SuppressionReason = reason
-			metadata.Summary.SuppressedCount++
-		}
-
-		// Apply severity override
-		if newSeverity, ok := o.config.GetSeverityOverride(finding.Type); ok {
-			finding.OriginalSeverity = finding.Severity
-			// Use WithSeverity to normalize the override
-			finding.WithSeverity(newSeverity)
-		}
-
-		// Validate and normalize
-		if err := ValidateFinding(&finding); err != nil {
-			o.logger.Warn("Invalid finding skipped",
-				"scanner", finding.Scanner,
-				"type", finding.Type,
-				"error", err,
-			)
-			continue
-		}
-
-		processedFindings = append(processedFindings, finding)
-
-		// Update summary
-		if !finding.Suppressed {
-			metadata.Summary.TotalFindings++
-			metadata.Summary.BySeverity[finding.Severity]++
-		}
-	}
-
-	result.Findings = processedFindings
-	metadata.Results[result.Scanner] = result
-	metadata.Summary.ByScanner[result.Scanner] = len(processedFindings)
-
-	// Track failed scanners
-	if result.Error != "" {
-		metadata.Summary.FailedScanners = append(metadata.Summary.FailedScanners, result.Scanner)
-	}
+// ScanResult contains the results of an orchestrated scan.
+type ScanResult struct {
+	StartTime     time.Time
+	EndTime       time.Time
+	FindingCounts map[string]int
+	BySeverity    map[string]int
+	ByType        map[string]int
+	Errors        map[string]error
+	ScannerErrors map[string][]error
+	TotalFindings int
+	mu            sync.Mutex
 }
 
-// EnrichFindings adds business context to findings if metadata enrichment is configured.
-// This is an optional post-processing step that runs after all scanners complete.
-// It modifies findings in-place rather than creating new objects.
-
-// getScannerNames returns the names of all configured scanners.
-func (o *Orchestrator) getScannerNames() []string {
-	names := make([]string, len(o.scanners))
-	for i, scanner := range o.scanners {
-		names[i] = scanner.Name()
-	}
-	return names
+// Duration returns how long the scan took.
+func (r *ScanResult) Duration() time.Duration {
+	return r.EndTime.Sub(r.StartTime)
 }
 
-// detectScanners determines which scanners to use based on configuration.
-func (o *Orchestrator) detectScanners(onlyScanners []string) []string {
-	// If specific scanners requested, use only those (but still check if enabled)
-	if len(onlyScanners) > 0 {
-		return o.filterEnabledScanners(onlyScanners)
-	}
-
-	// Otherwise, determine based on configuration
-	var scanners []string
-
-	// Check AWS config
-	if o.config.AWS != nil && len(o.config.AWS.Profiles) > 0 {
-		scanners = append(scanners, "prowler")
-	}
-
-	// Check Docker config
-	if o.config.Docker != nil && len(o.config.Docker.Containers) > 0 {
-		scanners = append(scanners, "trivy")
-	}
-
-	// Check Kubernetes config
-	if o.config.Kubernetes != nil && len(o.config.Kubernetes.Contexts) > 0 {
-		scanners = append(scanners, "kubescape")
-	}
-
-	// Check endpoints
-	if len(o.config.Endpoints) > 0 {
-		scanners = append(scanners, "nuclei")
-	}
-
-	// Always include these scanners if not filtered
-	scanners = append(scanners, "gitleaks", "checkov")
-
-	return o.filterEnabledScanners(scanners)
+// Success returns true if all scanners completed without errors.
+func (r *ScanResult) Success() bool {
+	return len(r.Errors) == 0 && len(r.ScannerErrors) == 0
 }
 
-// filterEnabledScanners filters out disabled scanners based on configuration.
-func (o *Orchestrator) filterEnabledScanners(scanners []string) []string {
-	// If no scanner configuration, all scanners are enabled by default
-	if o.config.Scanners == nil {
-		return scanners
+// Summary generates a human-readable summary.
+func (r *ScanResult) Summary() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	summary := fmt.Sprintf(
+		"Scan completed in %s\n"+
+			"Total findings: %d\n"+
+			"Scanners: %d\n",
+		r.Duration().Round(time.Second),
+		r.TotalFindings,
+		len(r.FindingCounts),
+	)
+
+	// Add severity breakdown
+	if len(r.BySeverity) > 0 {
+		summary += "\nBy Severity:\n"
+		for sev, count := range r.BySeverity {
+			summary += fmt.Sprintf("  %s: %d\n", sev, count)
+		}
 	}
 
-	enabled := make([]string, 0, len(scanners))
-	for _, scanner := range scanners {
-		// Check if scanner has explicit configuration
-		if scannerConfig, exists := o.config.Scanners[scanner]; exists {
-			// Skip if explicitly disabled
-			if !scannerConfig.Enabled {
-				o.logger.Debug("Scanner disabled by configuration", "scanner", scanner)
-				continue
+	// Add scanner breakdown
+	if len(r.FindingCounts) > 0 {
+		summary += "\nBy Scanner:\n"
+		for scanner, count := range r.FindingCounts {
+			summary += fmt.Sprintf("  %s: %d", scanner, count)
+			if err, ok := r.Errors[scanner]; ok {
+				summary += fmt.Sprintf(" (failed: %v)", err)
 			}
-		}
-		// If no explicit config or enabled=true, include the scanner
-		enabled = append(enabled, scanner)
-	}
-
-	return enabled
-}
-
-// sendStatus sends a status update if the status channel is available.
-func (o *Orchestrator) sendStatus(status *models.ScannerStatus) {
-	if o.statusChannel != nil {
-		select {
-		case o.statusChannel <- status:
-		default:
-			// Don't block if channel is full
+			summary += "\n"
 		}
 	}
+
+	return summary
 }

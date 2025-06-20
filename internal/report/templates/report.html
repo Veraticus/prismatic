@@ -24,6 +24,12 @@
                     <p>Report Generated: {{formatTime .GeneratedAt}}</p>
                     {{if .HasEnrichments}}
                     <p class="enrichment-info">🤖 AI Enriched: {{.EnrichmentMeta.EnrichedFindings}} findings</p>
+                    {{if .EnrichmentMeta.Strategy}}
+                    <p class="enrichment-info">Strategy: {{.EnrichmentMeta.Strategy}}</p>
+                    {{end}}
+                    {{if .EnrichmentMeta.Driver}}
+                    <p class="enrichment-info">Driver: {{.EnrichmentMeta.Driver}}</p>
+                    {{end}}
                     {{end}}
                 </div>
             </div>

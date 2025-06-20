@@ -11,7 +11,7 @@ import (
 )
 
 // buildEnrichmentPrompt creates the prompt for enriching findings.
-func buildEnrichmentPrompt(findings []models.Finding, batch *batch.Batch, knowledgeEntries []*knowledge.Entry, clientContext map[string]interface{}) string {
+func buildEnrichmentPrompt(findings []models.Finding, batch *batch.Batch, knowledgeEntries []*knowledge.Entry, clientContext map[string]any) string {
 	var sb strings.Builder
 
 	// System prompt

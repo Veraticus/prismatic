@@ -28,23 +28,23 @@ type ManifestMetadata struct {
 
 // Remediation represents a single remediation action that may fix multiple findings.
 type Remediation struct {
-	Rollback       RollbackProcedure  `yaml:"rollback"`
-	Title          string             `yaml:"title"`
-	Description    string             `yaml:"description"`
-	Severity       string             `yaml:"severity"`
-	ID             string             `yaml:"id"`
-	Context        RemediationContext `yaml:"context"`
-	Target         RemediationTarget  `yaml:"target"`
-	Validation     []ValidationStep   `yaml:"validation"`
-	FindingRefs    []string           `yaml:"finding_refs"`
-	Dependencies   []string           `yaml:"dependencies"`
-	Blocks         []string           `yaml:"blocks"`
-	Implementation Implementation     `yaml:"implementation"`
-	Priority       int                `yaml:"priority"`
+	Rollback       RollbackProcedure `yaml:"rollback"`
+	Title          string            `yaml:"title"`
+	Description    string            `yaml:"description"`
+	Severity       string            `yaml:"severity"`
+	ID             string            `yaml:"id"`
+	Context        Context           `yaml:"context"`
+	Target         Target            `yaml:"target"`
+	Validation     []ValidationStep  `yaml:"validation"`
+	FindingRefs    []string          `yaml:"finding_refs"`
+	Dependencies   []string          `yaml:"dependencies"`
+	Blocks         []string          `yaml:"blocks"`
+	Implementation Implementation    `yaml:"implementation"`
+	Priority       int               `yaml:"priority"`
 }
 
-// RemediationTarget identifies where the fix should be applied.
-type RemediationTarget struct {
+// Target identifies where the fix should be applied.
+type Target struct {
 	RepositoryType  string           `yaml:"repository_type"`
 	RepositoryHints []RepositoryHint `yaml:"repository_hints"`
 	AffectedFiles   []FilePattern    `yaml:"affected_files"`
@@ -60,8 +60,8 @@ type FilePattern struct {
 	Pattern string `yaml:"pattern"`
 }
 
-// RemediationContext provides business and technical context.
-type RemediationContext struct {
+// Context provides business and technical context.
+type Context struct {
 	BusinessImpact         string   `yaml:"business_impact"`
 	DataAtRisk             string   `yaml:"data_at_risk"`
 	ExploitationLikelihood string   `yaml:"exploitation_likelihood"`
@@ -98,8 +98,8 @@ type RollbackProcedure struct {
 	Risk         string `yaml:"risk"`
 }
 
-// RemediationGroup represents findings that can be fixed together.
-type RemediationGroup struct {
+// Group represents findings that can be fixed together.
+type Group struct {
 	Strategy        string
 	RepositoryType  string
 	Findings        []models.Finding
@@ -140,17 +140,18 @@ const (
 
 // EstimateEffort converts a duration to a human-readable effort string.
 func EstimateEffort(d time.Duration) string {
-	if d < 30*time.Minute {
+	switch {
+	case d < 30*time.Minute:
 		return "15-30 minutes"
-	} else if d < time.Hour {
+	case d < time.Hour:
 		return "30-60 minutes"
-	} else if d < 2*time.Hour {
+	case d < 2*time.Hour:
 		return "1-2 hours"
-	} else if d < 4*time.Hour {
+	case d < 4*time.Hour:
 		return "2-4 hours"
-	} else if d < 8*time.Hour {
+	case d < 8*time.Hour:
 		return "4-8 hours"
-	} else {
+	default:
 		days := int(d.Hours() / 8)
 		return fmt.Sprintf("%d+ days", days)
 	}

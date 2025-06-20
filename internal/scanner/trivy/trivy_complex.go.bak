@@ -1,0 +1,691 @@
+package trivy
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	dbTypes "github.com/aquasecurity/trivy-db/pkg/db"
+	"github.com/aquasecurity/trivy/pkg/cache"
+	"github.com/aquasecurity/trivy/pkg/fanal/analyzer"
+	"github.com/aquasecurity/trivy/pkg/fanal/applier"
+	"github.com/aquasecurity/trivy/pkg/fanal/artifact"
+	aimage "github.com/aquasecurity/trivy/pkg/fanal/artifact/image"
+	alocal "github.com/aquasecurity/trivy/pkg/fanal/artifact/local"
+	"github.com/aquasecurity/trivy/pkg/fanal/artifact/repo"
+	"github.com/aquasecurity/trivy/pkg/fanal/image"
+	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
+	"github.com/aquasecurity/trivy/pkg/fanal/walker"
+	"github.com/aquasecurity/trivy/pkg/log"
+	"github.com/aquasecurity/trivy/pkg/scan"
+	"github.com/aquasecurity/trivy/pkg/scan/langpkg"
+	"github.com/aquasecurity/trivy/pkg/scan/local"
+	"github.com/aquasecurity/trivy/pkg/scan/ospkg"
+	"github.com/aquasecurity/trivy/pkg/types"
+	"github.com/aquasecurity/trivy/pkg/vulnerability"
+	"github.com/joshsymonds/prismatic/internal/models"
+	"github.com/joshsymonds/prismatic/internal/scanner"
+	"github.com/joshsymonds/prismatic/pkg/logger"
+
+	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/all"
+	_ "github.com/aquasecurity/trivy/pkg/fanal/handler/all"
+)
+
+func init() {
+	// Register Trivy scanner with the factory
+	scanner.Register("trivy", func() scanner.Scanner {
+		return NewScanner("")
+	})
+}
+
+// Scanner implements the Scanner interface using native Trivy library.
+type Scanner struct {
+	logger           logger.Logger
+	progressReporter scanner.ProgressReporter
+	cacheDir         string
+	version          string
+	
+	// Trivy-specific configuration
+	disabledAnalyzers []analyzer.Type
+	scanners          types.Scanners
+}
+
+// NewScanner creates a new Trivy scanner instance.
+func NewScanner(cacheDir string) *Scanner {
+	return NewScannerWithLogger(cacheDir, logger.GetGlobalLogger())
+}
+
+// NewScannerWithLogger creates a new Trivy scanner with a custom logger.
+func NewScannerWithLogger(cacheDir string, log logger.Logger) *Scanner {
+	if cacheDir == "" {
+		cacheDir = filepath.Join(os.TempDir(), ".trivy-cache")
+	}
+	
+	return &Scanner{
+		logger:   log,
+		cacheDir: cacheDir,
+		// Default to all scanners enabled
+		scanners: types.Scanners{
+			types.VulnerabilityScanner,
+			types.MisconfigScanner,
+			types.SecretScanner,
+		},
+		disabledAnalyzers: []analyzer.Type{
+			analyzer.TypeApkCommand, // Don't analyze apk commands by default
+		},
+	}
+}
+
+// Name returns the scanner name.
+func (s *Scanner) Name() string {
+	return "trivy"
+}
+
+// Version returns the scanner version.
+func (s *Scanner) Version() string {
+	if s.version == "" {
+		// Try to get version from Trivy
+		// For now, return a static version
+		s.version = "native-v1"
+	}
+	return s.version
+}
+
+// Initialize prepares the scanner for use.
+func (s *Scanner) Initialize(ctx context.Context) error {
+	// Ensure cache directory exists
+	if err := os.MkdirAll(s.cacheDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+	
+	// Initialize Trivy's logger to suppress noise
+	log.InitLogger(false, true)
+	
+	// Verify cache is accessible
+	cacheOpts := cache.Options{}
+	
+	c, cleanup, err := cache.New(s.cacheDir, cacheOpts)
+	if err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+	cleanup()
+	
+	return nil
+}
+
+// Validate checks if the scanner can run with the given targets.
+func (s *Scanner) Validate(ctx context.Context, targets scanner.ScanTargets) error {
+	if !targets.HasTargets() {
+		return scanner.ErrNoTargets
+	}
+	
+	// Check if we have targets Trivy can handle
+	canHandle := len(targets.Images) > 0 || 
+		len(targets.FilesystemPaths) > 0 || 
+		len(targets.GitRepos) > 0
+	
+	if !canHandle {
+		return fmt.Errorf("trivy: no supported targets found")
+	}
+	
+	return nil
+}
+
+// Cleanup releases any resources held by the scanner.
+func (s *Scanner) Cleanup() error {
+	// Trivy doesn't need explicit cleanup
+	return nil
+}
+
+// SetProgressReporter sets the progress reporter for real-time updates.
+func (s *Scanner) SetProgressReporter(reporter scanner.ProgressReporter) {
+	s.progressReporter = reporter
+}
+
+// Scan executes Trivy scanning with streaming results.
+func (s *Scanner) Scan(ctx context.Context, targets scanner.ScanTargets) (<-chan *models.Finding, error) {
+	// Create finding channel with buffer
+	findings := make(chan *models.Finding, 100)
+
+	// Calculate total targets
+	totalTargets := len(targets.Images) + len(targets.FilesystemPaths) + len(targets.GitRepos)
+	if totalTargets == 0 {
+		close(findings)
+		return findings, scanner.ErrNoTargets
+	}
+
+	// Report total targets
+	if s.progressReporter != nil {
+		s.progressReporter.ReportTotal(totalTargets)
+	}
+
+	// Start scanning in background
+	go func() {
+		defer close(findings)
+		
+		var currentTarget int
+		var totalFindings int
+		var wg sync.WaitGroup
+		
+		// Use semaphore to limit concurrent scans
+		sem := make(chan struct{}, 3)
+		
+		// Scan container images
+		for _, image := range targets.Images {
+			wg.Add(1)
+			go func(img string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				
+				currentTarget++
+				s.reportProgress(currentTarget, fmt.Sprintf("Scanning image: %s", img))
+				
+				if err := s.scanImage(ctx, img, findings, &totalFindings); err != nil {
+					s.logger.Error("Failed to scan image", "image", img, "error", err)
+					if s.progressReporter != nil {
+						s.progressReporter.ReportError(err)
+					}
+				}
+			}(image)
+		}
+		
+		// Scan filesystem paths
+		for _, path := range targets.FilesystemPaths {
+			wg.Add(1)
+			go func(p string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				
+				currentTarget++
+				s.reportProgress(currentTarget, fmt.Sprintf("Scanning filesystem: %s", p))
+				
+				if err := s.scanFilesystem(ctx, p, findings, &totalFindings); err != nil {
+					s.logger.Error("Failed to scan filesystem", "path", p, "error", err)
+					if s.progressReporter != nil {
+						s.progressReporter.ReportError(err)
+					}
+				}
+			}(path)
+		}
+		
+		// Scan git repositories
+		for name, path := range targets.GitRepos {
+			wg.Add(1)
+			go func(n, p string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				
+				currentTarget++
+				s.reportProgress(currentTarget, fmt.Sprintf("Scanning repository: %s", n))
+				
+				if err := s.scanRepository(ctx, n, p, findings, &totalFindings); err != nil {
+					s.logger.Error("Failed to scan repository", "name", n, "path", p, "error", err)
+					if s.progressReporter != nil {
+						s.progressReporter.ReportError(err)
+					}
+				}
+			}(name, path)
+		}
+		
+		// Wait for all scans to complete
+		wg.Wait()
+		
+		// Report completion
+		if s.progressReporter != nil {
+			s.progressReporter.ReportComplete(totalFindings)
+		}
+	}()
+
+	return findings, nil
+}
+
+
+// scanImage scans a container image using native Trivy.
+func (s *Scanner) scanImage(ctx context.Context, imageName string, findings chan<- *models.Finding, totalFindings *int) error {
+	// Initialize cache
+	cacheOpts := cache.Options{}
+	
+	c, cleanup, err := cache.New(s.cacheDir, cacheOpts)
+	if err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+	defer cleanup()
+	
+	// Create local scanner components
+	applierService := applier.NewApplier(c)
+	osScanner := ospkg.NewScanner()
+	langScanner := langpkg.NewScanner()
+	vulnClient := vulnerability.NewClient(dbTypes.Config{})
+	localService := local.NewService(applierService, osScanner, langScanner, vulnClient)
+	
+	// Create image artifact
+	img, cleanup2, err := image.NewContainerImage(ctx, imageName, ftypes.ImageOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create container image: %w", err)
+	}
+	defer cleanup2()
+	
+	artifactOpt := artifact.Option{
+		DisabledAnalyzers: s.getDisabledAnalyzers(),
+	}
+	
+	art, err := aimage.NewArtifact(img, c, artifactOpt)
+	if err != nil {
+		return fmt.Errorf("failed to create artifact: %w", err)
+	}
+	
+	// Create scan service
+	scanService := scan.NewService(localService, art)
+	
+	// Run the scan
+	report, err := scanService.ScanArtifact(ctx, types.ScanOptions{
+		PkgTypes:         []string{types.PkgTypeOS, types.PkgTypeLibrary},
+		PkgRelationships: []ftypes.Relationship{ftypes.RelationshipUnknown},
+		Scanners: types.Scanners{
+			types.VulnerabilityScanner,
+			types.MisconfigScanner,
+			types.SecretScanner,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("scan failed: %w", err)
+	}
+	
+	// Process the results
+	s.processReport(report, "image", imageName, findings, totalFindings)
+	
+	return nil
+}
+
+// scanFilesystem scans a filesystem path using native Trivy.
+func (s *Scanner) scanFilesystem(ctx context.Context, path string, findings chan<- *models.Finding, totalFindings *int) error {
+	// Initialize cache
+	cacheOpts := cache.Options{}
+	
+	c, cleanup, err := cache.New(s.cacheDir, cacheOpts)
+	if err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+	defer cleanup()
+	
+	// Create local scanner components
+	applierService := applier.NewApplier(c)
+	osScanner := ospkg.NewScanner()
+	langScanner := langpkg.NewScanner()
+	vulnClient := vulnerability.NewClient(dbTypes.Config{})
+	localService := local.NewService(applierService, osScanner, langScanner, vulnClient)
+	
+	// Create filesystem artifact
+	artifactOpt := artifact.Option{
+		DisabledAnalyzers: s.getDisabledAnalyzers(),
+	}
+	
+	art, err := alocal.NewArtifact(path, c, walker.NewFS(), artifactOpt)
+	if err != nil {
+		return fmt.Errorf("failed to create artifact: %w", err)
+	}
+	
+	// Create scan service
+	scanService := scan.NewService(localService, art)
+	
+	// Run the scan
+	report, err := scanService.ScanArtifact(ctx, types.ScanOptions{
+		PkgTypes:         []string{types.PkgTypeOS, types.PkgTypeLibrary},
+		PkgRelationships: []ftypes.Relationship{ftypes.RelationshipUnknown},
+		Scanners: types.Scanners{
+			types.VulnerabilityScanner,
+			types.MisconfigScanner,
+			types.SecretScanner,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("scan failed: %w", err)
+	}
+	
+	// Process the results
+	s.processReport(report, "filesystem", path, findings, totalFindings)
+	
+	return nil
+}
+
+// scanRepository scans a git repository using native Trivy.
+func (s *Scanner) scanRepository(ctx context.Context, name, path string, findings chan<- *models.Finding, totalFindings *int) error {
+	// Initialize cache
+	cacheOpts := cache.Options{}
+	
+	c, cleanup, err := cache.New(s.cacheDir, cacheOpts)
+	if err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+	defer cleanup()
+	
+	// Create local scanner components
+	applierService := applier.NewApplier(c)
+	osScanner := ospkg.NewScanner()
+	langScanner := langpkg.NewScanner()
+	vulnClient := vulnerability.NewClient(dbTypes.Config{})
+	localService := local.NewService(applierService, osScanner, langScanner, vulnClient)
+	
+	// Create repository artifact
+	artifactOpt := artifact.Option{
+		DisabledAnalyzers: append(analyzer.TypeIndividualPkgs, analyzer.TypeOSes...),
+		ScannerOption: types.ScannerOption{
+			Scanners: types.Scanners{
+				types.VulnerabilityScanner,
+				types.MisconfigScanner,
+				types.SecretScanner,
+			},
+		},
+	}
+	
+	art, err := repo.NewArtifact(path, c, walker.NewFS(), artifactOpt)
+	if err != nil {
+		return fmt.Errorf("failed to create artifact: %w", err)
+	}
+	
+	// Create scan service
+	scanService := scan.NewService(localService, art)
+	
+	// Run the scan
+	report, err := scanService.ScanArtifact(ctx, types.ScanOptions{
+		PkgTypes:         []string{types.PkgTypeLibrary},
+		PkgRelationships: []ftypes.Relationship{ftypes.RelationshipUnknown},
+		Scanners: types.Scanners{
+			types.VulnerabilityScanner,
+			types.MisconfigScanner,
+			types.SecretScanner,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("scan failed: %w", err)
+	}
+	
+	// Process the results
+	s.processReport(report, "repository", name, findings, totalFindings)
+	
+	return nil
+}
+
+// getDisabledAnalyzers returns the list of analyzers to disable.
+func (s *Scanner) getDisabledAnalyzers() []analyzer.Type {
+	return s.disabledAnalyzers
+}
+
+// processReport converts Trivy report to Prismatic findings.
+func (s *Scanner) processReport(report types.Report, scanType, target string, findings chan<- *models.Finding, totalFindings *int) {
+	for _, result := range report.Results {
+		// Process vulnerabilities
+		for _, vuln := range result.Vulnerabilities {
+			finding := s.createVulnerabilityFinding(vuln, result, target)
+			select {
+			case findings <- finding:
+				*totalFindings++
+				if s.progressReporter != nil {
+					s.progressReporter.ReportFinding(finding)
+				}
+			case <-time.After(5 * time.Second):
+				s.logger.Warn("Timeout sending finding", "target", target)
+			}
+		}
+		
+		// Process misconfigurations
+		for _, misconf := range result.Misconfigurations {
+			finding := s.createMisconfigurationFinding(misconf, result, target)
+			select {
+			case findings <- finding:
+				*totalFindings++
+				if s.progressReporter != nil {
+					s.progressReporter.ReportFinding(finding)
+				}
+			case <-time.After(5 * time.Second):
+				s.logger.Warn("Timeout sending finding", "target", target)
+			}
+		}
+		
+		// Process secrets
+		for _, secret := range result.Secrets {
+			finding := s.createSecretFinding(secret, result, target)
+			select {
+			case findings <- finding:
+				*totalFindings++
+				if s.progressReporter != nil {
+					s.progressReporter.ReportFinding(finding)
+				}
+			case <-time.After(5 * time.Second):
+				s.logger.Warn("Timeout sending finding", "target", target)
+			}
+		}
+	}
+}
+
+// createVulnerabilityFinding creates a finding from a vulnerability.
+func (s *Scanner) createVulnerabilityFinding(vuln types.DetectedVulnerability, result types.Result, target string) *models.Finding {
+	finding := models.NewFinding(
+		s.Name(),
+		"vulnerability",
+		target,
+		vuln.PkgName,
+	).WithSeverity(vuln.Severity)
+	
+	finding.Title = fmt.Sprintf("%s: %s vulnerability in %s", vuln.VulnerabilityID, vuln.Severity, vuln.PkgName)
+	finding.Description = vuln.Description
+	if finding.Description == "" {
+		finding.Description = fmt.Sprintf(
+			"Package %s version %s is vulnerable to %s",
+			vuln.PkgName, vuln.InstalledVersion, vuln.VulnerabilityID,
+		)
+	}
+	
+	// Build remediation
+	if vuln.FixedVersion != "" {
+		finding.Remediation = fmt.Sprintf("Update %s to version %s or later", vuln.PkgName, vuln.FixedVersion)
+	} else {
+		finding.Remediation = fmt.Sprintf("No fix available yet for %s in %s", vuln.VulnerabilityID, vuln.PkgName)
+	}
+	
+	// Add references
+	if vuln.PrimaryURL != "" {
+		finding.References = []string{vuln.PrimaryURL}
+	}
+	finding.References = append(finding.References, vuln.References...)
+	
+	// Set published date if available
+	if vuln.PublishedDate != nil {
+		finding.PublishedDate = *vuln.PublishedDate
+	}
+	
+	// Create technical details
+	technical := s.createVulnerabilityTechnical(vuln, result)
+	
+	// Store technical details in metadata as JSON
+	if techJSON, err := json.Marshal(technical); err == nil {
+		finding.Metadata["technical_details"] = string(techJSON)
+	}
+	
+	return finding
+}
+
+// createMisconfigurationFinding creates a finding from a misconfiguration.
+func (s *Scanner) createMisconfigurationFinding(misconf types.DetectedMisconfiguration, result types.Result, target string) *models.Finding {
+	location := fmt.Sprintf("%s:%d", result.Target, misconf.CauseMetadata.StartLine)
+	
+	finding := models.NewFinding(
+		s.Name(),
+		"misconfiguration",
+		target,
+		location,
+	).WithSeverity(misconf.Severity)
+	
+	finding.Title = misconf.Title
+	finding.Description = misconf.Description
+	finding.Remediation = misconf.Resolution
+	finding.Impact = misconf.Message
+	
+	if misconf.PrimaryURL != "" {
+		finding.References = []string{misconf.PrimaryURL}
+	}
+	
+	// Create technical details
+	technical := s.createMisconfigurationTechnical(misconf, result)
+	
+	// Store technical details in metadata as JSON
+	if techJSON, err := json.Marshal(technical); err == nil {
+		finding.Metadata["technical_details"] = string(techJSON)
+	}
+	
+	return finding
+}
+
+// createSecretFinding creates a finding from a secret.
+func (s *Scanner) createSecretFinding(secret types.DetectedSecret, result types.Result, target string) *models.Finding {
+	location := fmt.Sprintf("%s:%d", result.Target, secret.StartLine)
+	
+	finding := models.NewFinding(
+		s.Name(),
+		"secret",
+		target,
+		location,
+	).WithSeverity(secret.Severity)
+	
+	finding.Title = fmt.Sprintf("Exposed %s", secret.Title)
+	finding.Description = fmt.Sprintf("Found %s at line %d", secret.Title, secret.StartLine)
+	finding.Remediation = "Remove the secret from the codebase and rotate it immediately"
+	finding.Impact = "Exposed secrets can lead to unauthorized access and data breaches"
+	
+	// Create technical details
+	technical := s.createSecretTechnical(secret, result)
+	
+	// Store technical details in metadata as JSON
+	if techJSON, err := json.Marshal(technical); err == nil {
+		finding.Metadata["technical_details"] = string(techJSON)
+	}
+	
+	return finding
+}
+
+// createVulnerabilityTechnical creates technical details for a vulnerability.
+func (s *Scanner) createVulnerabilityTechnical(vuln types.DetectedVulnerability, result types.Result) *TrivyTechnical {
+	tech := &TrivyTechnical{
+		ScannerType:      "vuln",
+		Target:          result.Target,
+		Class:           string(result.Class),
+		CVE:             vuln.VulnerabilityID,
+		CWE:             vuln.CweIDs,
+		Package:         vuln.PkgName,
+		InstalledVersion: vuln.InstalledVersion,
+		FixedVersion:    vuln.FixedVersion,
+		PackageType:     string(result.Type),
+		PackagePath:     vuln.PkgPath,
+		References:      vuln.References,
+	}
+	
+	// Add CVSS details if available
+	if vuln.CVSS != nil {
+		for source, cvss := range vuln.CVSS {
+			if strings.Contains(source, "nvd") && cvss.V3Score > 0 {
+				tech.CVSS.V3Score = cvss.V3Score
+				tech.CVSS.V3Vector = cvss.V3Vector
+			} else if cvss.V2Score > 0 {
+				tech.CVSS.V2Score = cvss.V2Score
+				tech.CVSS.V2Vector = cvss.V2Vector
+			}
+		}
+	}
+	
+	// Add vendor severity if available
+	if vuln.VendorSeverity != nil {
+		tech.VendorSeverity = make(map[string]string)
+		for vendor, severity := range vuln.VendorSeverity {
+			tech.VendorSeverity[vendor] = string(severity)
+		}
+	}
+	
+	// Add dates
+	if vuln.PublishedDate != nil {
+		tech.PublishedDate = vuln.PublishedDate
+	}
+	if vuln.LastModifiedDate != nil {
+		tech.LastModified = vuln.LastModifiedDate
+	}
+	
+	// Add layer info for container images
+	if vuln.Layer != nil {
+		tech.Layer = LayerInfo{
+			Digest: vuln.Layer.Digest,
+			DiffID: vuln.Layer.DiffID,
+		}
+	}
+	
+	return tech
+}
+
+// createMisconfigurationTechnical creates technical details for a misconfiguration.
+func (s *Scanner) createMisconfigurationTechnical(misconf types.DetectedMisconfiguration, result types.Result) *TrivyTechnical {
+	tech := &TrivyTechnical{
+		ScannerType:      "misconfig",
+		Target:          result.Target,
+		Class:           string(result.Class),
+		CheckID:         misconf.ID,
+		CheckTitle:      misconf.Title,
+		CheckType:       misconf.Type,
+		CheckSeverity:   misconf.Severity,
+		CheckDescription: misconf.Description,
+		CheckRemediation: misconf.Resolution,
+		CheckReferences: misconf.References,
+	}
+	
+	// Add line information
+	if misconf.CauseMetadata != nil {
+		tech.Lines = []LineInfo{
+			{
+				Start: misconf.CauseMetadata.StartLine,
+				End:   misconf.CauseMetadata.EndLine,
+			},
+		}
+		
+		// Add code context if available
+		if misconf.CauseMetadata.Code != nil {
+			tech.Code = CodeDetails{
+				Lines:     misconf.CauseMetadata.Code.Lines,
+				StartLine: misconf.CauseMetadata.StartLine,
+				EndLine:   misconf.CauseMetadata.EndLine,
+			}
+		}
+	}
+	
+	return tech
+}
+
+// createSecretTechnical creates technical details for a secret.
+func (s *Scanner) createSecretTechnical(secret types.DetectedSecret, result types.Result) *TrivyTechnical {
+	return &TrivyTechnical{
+		ScannerType: "secret",
+		Target:     result.Target,
+		Class:      string(result.Class),
+		RuleID:     secret.RuleID,
+		Match:      secret.Match,
+		SecretType: secret.Category,
+		Lines: []LineInfo{
+			{
+				Start: secret.StartLine,
+				End:   secret.EndLine,
+			},
+		},
+	}
+}
+
+// reportProgress reports scan progress.
+func (s *Scanner) reportProgress(current int, message string) {
+	if s.progressReporter != nil {
+		s.progressReporter.ReportProgress(current, message)
+	}
+}
+

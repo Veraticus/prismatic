@@ -1,3 +1,4 @@
+// Package cache provides caching functionality for enrichment results.
 package cache
 
 import (
@@ -59,7 +60,7 @@ type Stats struct {
 type DefaultKeyGenerator struct{}
 
 // GenerateKey implements KeyGenerator.
-func (g *DefaultKeyGenerator) GenerateKey(findingID string, _ map[string]interface{}) string {
+func (g *DefaultKeyGenerator) GenerateKey(findingID string, _ map[string]any) string {
 	// Simple implementation - can be enhanced to include context
 	return findingID
 }

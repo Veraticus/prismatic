@@ -1,58 +1,57 @@
 package report
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
+	"github.com/joshsymonds/prismatic/internal/database"
+	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/storage"
+	"github.com/joshsymonds/prismatic/pkg/logger"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestHTMLReportWithEnrichedFindings(t *testing.T) {
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "report-enrichment-test-*")
+func TestGenerateEnrichmentReport(t *testing.T) {
+	// Create in-memory database
+	db, err := database.New(":memory:")
 	require.NoError(t, err)
 	defer func() {
-		_ = os.RemoveAll(tmpDir)
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
 	}()
 
-	// Create scan data with findings that have business context
-	scanDir := filepath.Join(tmpDir, "data", "scans", "test-scan")
-	err = os.MkdirAll(scanDir, 0750)
+	ctx := context.Background()
+	scanID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: time.Now().Add(-30 * time.Minute),
+	})
 	require.NoError(t, err)
 
+	// Create metadata with findings
 	metadata := &models.ScanMetadata{
-		ID:          "test-scan",
+		ClientName:  "test-client",
+		Environment: "production",
 		StartTime:   time.Now().Add(-30 * time.Minute),
-		EndTime:     time.Now(),
-		ClientName:  "ACME Corp",
-		Environment: "Production",
-		Scanners:    []string{"prowler", "trivy"},
+		EndTime:     time.Now().Add(-5 * time.Minute),
 		Results: map[string]*models.ScanResult{
 			"prowler": {
 				Scanner: "prowler",
 				Findings: []models.Finding{
 					{
-						ID:          "aws-finding-1",
+						ID:          "FINDING-001",
 						Scanner:     "prowler",
-						Type:        "aws-misconfiguration",
-						Severity:    "high",
-						Title:       "S3 bucket has public read access",
-						Description: "The S3 bucket allows public read access which could expose sensitive data",
-						Resource:    "arn:aws:s3:::acme-customer-data",
-						Remediation: "Remove public read permissions from the bucket policy",
-						Impact:      "Potential data breach of customer information",
-						BusinessContext: &models.BusinessContext{
-							Owner:              "data-analytics-team",
-							DataClassification: "highly-confidential",
-							BusinessImpact:     "Contains 5 years of customer purchase history and PII",
-							ComplianceImpact:   []string{"GDPR", "CCPA", "PCI-DSS"},
-						},
+						Severity:    "critical",
+						Title:       "S3 bucket public access",
+						Description: "S3 bucket allows public read access",
+						Resource:    "arn:aws:s3:::sensitive-data-bucket",
+						Type:        "aws-s3",
 					},
 				},
 			},
@@ -60,31 +59,18 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 				Scanner: "trivy",
 				Findings: []models.Finding{
 					{
-						ID:          "container-finding-1",
+						ID:          "FINDING-002",
 						Scanner:     "trivy",
+						Severity:    "high",
+						Title:       "Critical vulnerability in nginx",
+						Description: "nginx version has known security vulnerabilities",
+						Resource:    "nginx:1.14",
 						Type:        "vulnerability",
-						Severity:    "critical",
-						Title:       "CVE-2024-1234: Remote Code Execution in libssl",
-						Description: "A critical vulnerability in OpenSSL allows remote code execution",
-						Resource:    "api-service:v2.1.0",
-						Location:    "libssl1.1",
-						Remediation: "Update to libssl 1.1.1w or later",
-						Impact:      "Remote attackers could execute arbitrary code",
-						BusinessContext: &models.BusinessContext{
-							Owner:              "platform-team",
-							DataClassification: "internal",
-							BusinessImpact:     "Main customer-facing API - processes 10k requests/minute",
-							ComplianceImpact:   []string{"SOC2", "ISO27001"},
-						},
 					},
 				},
 			},
 		},
 		Summary: models.ScanSummary{
-			BySeverity: map[string]int{
-				"critical": 1,
-				"high":     1,
-			},
 			ByScanner: map[string]int{
 				"prowler": 1,
 				"trivy":   1,
@@ -94,280 +80,312 @@ func TestHTMLReportWithEnrichedFindings(t *testing.T) {
 	}
 
 	// Save the scan data
-	store := storage.NewStorage(tmpDir)
-	err = store.SaveScanResults(scanDir, metadata)
+	store := storage.NewStorage(db)
+	err = store.SaveScanResults(scanID, metadata)
 	require.NoError(t, err)
+
+	// Save findings to database
+	saveFindingsToDatabase(t, db, scanID, metadata)
 
 	// Generate HTML report
-	generator, err := NewHTMLGenerator(scanDir, nil)
+	scanIDStr := fmt.Sprintf("%d", scanID)
+	generator, err := NewHTMLGeneratorWithDatabase(scanIDStr, db, logger.GetGlobalLogger())
 	require.NoError(t, err)
 
-	reportPath := filepath.Join(tmpDir, "report.html")
-	err = generator.Generate(reportPath)
+	// Create temp file for output
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "report.html")
+
+	err = generator.Generate(outputPath)
 	require.NoError(t, err)
 
 	// Read and verify the report content
-	content, err := os.ReadFile(reportPath) // #nosec G304 - test file
+	content, err := os.ReadFile(outputPath) // #nosec G304 - test file path
 	require.NoError(t, err)
-
 	html := string(content)
 
-	// Check for business context in the report
-	assert.Contains(t, html, "Business Context", "Report should include business context section")
-	assert.Contains(t, html, "data-analytics-team", "Should show owner")
-	assert.Contains(t, html, "highly-confidential", "Should show data classification")
-	assert.Contains(t, html, "Contains 5 years of customer purchase history", "Should show business impact")
-	assert.Contains(t, html, "GDPR", "Should show compliance impact")
-	assert.Contains(t, html, "CCPA", "Should show compliance impact")
-	assert.Contains(t, html, "PCI-DSS", "Should show compliance impact")
-
-	// Check second enriched finding
-	assert.Contains(t, html, "platform-team", "Should show platform team as owner")
-	assert.Contains(t, html, "Main customer-facing API", "Should show API business impact")
-	assert.Contains(t, html, "SOC2", "Should show SOC2 compliance")
-
-	// Verify the business context elements are being used
-	assert.Contains(t, html, "business-context", "Should have business context CSS class")
+	assert.Contains(t, html, "test-client")
+	assert.Contains(t, html, "production")
+	assert.Contains(t, html, "S3 bucket public access")
+	assert.Contains(t, html, "Critical vulnerability in nginx")
+	assert.Contains(t, html, "Total Findings")
+	assert.Contains(t, html, "2") // Total findings count
 }
 
-func TestHTMLReportWithoutEnrichment(t *testing.T) {
-	// Test that report works correctly without enrichment
-	tmpDir, err := os.MkdirTemp("", "report-no-enrichment-test-*")
+func TestGenerateEnrichmentReportWithAIEnrichments(t *testing.T) {
+	// Create in-memory database
+	db, err := database.New(":memory:")
 	require.NoError(t, err)
 	defer func() {
-		_ = os.RemoveAll(tmpDir)
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
 	}()
 
-	scanDir := filepath.Join(tmpDir, "data", "scans", "test-scan")
-	err = os.MkdirAll(scanDir, 0750)
+	ctx := context.Background()
+	scanID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: time.Now().Add(-30 * time.Minute),
+	})
 	require.NoError(t, err)
 
+	// Create metadata with findings
 	metadata := &models.ScanMetadata{
-		ID:          "test-scan",
+		ClientName:  "test-client",
+		Environment: "production",
 		StartTime:   time.Now().Add(-30 * time.Minute),
-		EndTime:     time.Now(),
-		ClientName:  "Test Corp",
-		Environment: "Staging",
+		EndTime:     time.Now().Add(-5 * time.Minute),
 		Results: map[string]*models.ScanResult{
-			"gitleaks": {
-				Scanner: "gitleaks",
+			"prowler": {
+				Scanner: "prowler",
 				Findings: []models.Finding{
 					{
-						ID:          "secret-1",
-						Scanner:     "gitleaks",
-						Type:        "exposed-secret",
-						Severity:    "high",
-						Title:       "AWS Access Key exposed in source code",
-						Description: "Found AWS access key in config file",
-						Resource:    "src/config/aws.js",
-						Location:    "line 42",
-						// No BusinessContext - this is a regular finding
+						ID:          "FINDING-001",
+						Scanner:     "prowler",
+						Severity:    "critical",
+						Title:       "S3 bucket public access",
+						Description: "S3 bucket allows public read access",
+						Resource:    "arn:aws:s3:::customer-data-bucket",
+						Type:        "aws-s3",
 					},
 				},
 			},
 		},
 		Summary: models.ScanSummary{
-			BySeverity:    map[string]int{"high": 1},
-			ByScanner:     map[string]int{"gitleaks": 1},
+			ByScanner: map[string]int{
+				"prowler": 1,
+			},
 			TotalFindings: 1,
 		},
 	}
 
-	// Save without enriched findings
-	store := storage.NewStorage(tmpDir)
-	err = store.SaveScanResults(scanDir, metadata)
+	// Save the scan data
+	store := storage.NewStorage(db)
+	err = store.SaveScanResults(scanID, metadata)
 	require.NoError(t, err)
 
-	// Generate report
-	generator, err := NewHTMLGenerator(scanDir, nil)
+	// Save findings to database
+	saveFindingsToDatabase(t, db, scanID, metadata)
+
+	// Add AI enrichments
+	enrichments := []enrichment.FindingEnrichment{
+		{
+			FindingID:  "FINDING-001",
+			EnrichedAt: time.Now(),
+			Analysis: enrichment.Analysis{
+				BusinessImpact:    "Exposed customer PII data could lead to GDPR violations and fines up to 4% of annual revenue",
+				PriorityScore:     0.95,
+				PriorityReasoning: "Production bucket containing customer data with public access is a critical security issue",
+				TechnicalDetails:  "Bucket policy allows s3:GetObject from principal '*' without conditions",
+				ContextualNotes:   "This bucket stores daily customer data exports and transaction logs",
+			},
+			Remediation: enrichment.Remediation{
+				EstimatedEffort: "30 minutes",
+				Immediate: []string{
+					"Block all public access on the S3 bucket immediately",
+					"Enable S3 bucket logging to audit any access attempts",
+				},
+				ShortTerm: []string{
+					"Implement bucket policies restricting access to specific IAM roles",
+					"Enable S3 encryption at rest",
+				},
+				LongTerm: []string{
+					"Migrate sensitive data to a dedicated VPC with S3 VPC endpoints",
+					"Implement data classification and automated access controls",
+				},
+			},
+		},
+	}
+
+	err = store.SaveEnrichments(scanID, enrichments, &enrichment.Metadata{
+		StartedAt:        time.Now().Add(-5 * time.Minute),
+		CompletedAt:      time.Now(),
+		TotalFindings:    1,
+		EnrichedFindings: 1,
+	})
 	require.NoError(t, err)
 
-	reportPath := filepath.Join(tmpDir, "report.html")
-	err = generator.Generate(reportPath)
+	// Generate HTML report
+	scanIDStr := fmt.Sprintf("%d", scanID)
+	generator, err := NewHTMLGeneratorWithDatabase(scanIDStr, db, logger.GetGlobalLogger())
 	require.NoError(t, err)
 
-	// Verify report generated successfully
-	content, err := os.ReadFile(reportPath) // #nosec G304 - test file
+	// Create temp file for output
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "report.html")
+
+	err = generator.Generate(outputPath)
 	require.NoError(t, err)
 
+	// Read and verify the report content
+	content, err := os.ReadFile(outputPath) // #nosec G304 - test file path
+	require.NoError(t, err)
 	html := string(content)
 
-	// Should still show the finding
-	assert.Contains(t, html, "AWS Access Key exposed", "Should show finding title")
-	assert.Contains(t, html, "src/config/aws.js", "Should show resource")
-
-	// Should NOT contain business context elements for findings without context
-	assert.NotContains(t, html, "data-analytics-team", "Should not have team owner")
-	assert.NotContains(t, html, "highly-confidential", "Should not have data classification")
+	// Verify the report includes AI enrichments
+	assert.Contains(t, html, "GDPR violations")
+	assert.Contains(t, html, "Block all public access")
+	assert.Contains(t, html, "30 minutes")
+	assert.Contains(t, html, "customer data exports")
 }
 
-func TestPrepareData(t *testing.T) {
-	generator := &HTMLGenerator{
-		metadata: &models.ScanMetadata{
-			ClientName:  "Test Corp",
-			Environment: "Production",
-		},
-		findings: []models.Finding{
-			{
-				ID:         "f1",
-				Scanner:    "prowler",
-				Type:       "aws-misconfiguration",
-				Severity:   "critical",
-				Title:      "Critical AWS Issue",
-				Resource:   "aws-resource",
-				Suppressed: false,
-				BusinessContext: &models.BusinessContext{
-					Owner: "cloud-team",
-				},
-			},
-			{
-				ID:         "f2",
-				Scanner:    "prowler",
-				Type:       "aws-misconfiguration",
-				Severity:   "high",
-				Title:      "High AWS Issue",
-				Resource:   "aws-resource-2",
-				Suppressed: true,
-				BusinessContext: &models.BusinessContext{
-					Owner: "cloud-team",
-				},
-			},
-			{
-				ID:         "f3",
-				Scanner:    "trivy",
-				Type:       "vulnerability",
-				Severity:   "medium",
-				Title:      "Container Vulnerability",
-				Resource:   "app:latest",
-				Suppressed: false,
-				BusinessContext: &models.BusinessContext{
-					Owner: "app-team",
-				},
-			},
-		},
-	}
-
-	data := &TemplateData{
-		Metadata: generator.metadata,
-	}
-
-	generator.prepareData(data)
-
-	// Verify counts
-	assert.Equal(t, 2, data.TotalActive, "Should have 2 active findings")
-	assert.Equal(t, 1, data.TotalSuppressed, "Should have 1 suppressed finding")
-	assert.Equal(t, 1, data.CriticalCount)
-	assert.Equal(t, 0, data.HighCount, "High severity finding is suppressed")
-	assert.Equal(t, 1, data.MediumCount)
-
-	// Verify categorization - only active findings are categorized
-	assert.Len(t, data.AWSFindings, 1, "Should have 1 AWS finding (suppressed findings are not categorized)")
-	assert.Len(t, data.ContainerFindings, 1, "Should have 1 container finding")
-
-	// Verify top risks
-	assert.Len(t, data.TopRisks, 1, "Should have 1 top risk (critical only, high is suppressed)")
-	assert.Equal(t, "f1", data.TopRisks[0].ID)
-
-	// Verify business context is preserved
-	assert.Equal(t, "cloud-team", data.AWSFindings[0].BusinessContext.Owner)
-}
-
-func TestFindingCardWithBusinessContext(t *testing.T) {
-	// Test that the finding card template renders correctly with business context
-	tmpDir, err := os.MkdirTemp("", "template-test-*")
+func TestEnrichmentReportSummarySection(t *testing.T) {
+	// Create in-memory database
+	db, err := database.New(":memory:")
 	require.NoError(t, err)
 	defer func() {
-		_ = os.RemoveAll(tmpDir)
+		if closeErr := db.Close(); closeErr != nil {
+			t.Logf("failed to close database: %v", closeErr)
+		}
 	}()
 
-	// Create a minimal test case focusing on template rendering
-	finding := models.Finding{
-		ID:               "test-finding",
-		Scanner:          "prowler",
-		Type:             "aws-misconfiguration",
-		Severity:         "high",
-		OriginalSeverity: "critical",
-		Title:            "Test Finding Title",
-		Description:      "Test finding description",
-		Resource:         "test-resource",
-		Location:         "us-east-1",
-		Framework:        "CIS",
-		Remediation:      "Fix the issue",
-		Impact:           "High impact",
-		Suppressed:       false,
-		BusinessContext: &models.BusinessContext{
-			Owner:              "security-team",
-			DataClassification: "confidential",
-			BusinessImpact:     "Could affect customer data",
-			ComplianceImpact:   []string{"SOC2", "GDPR"},
-		},
-		RemediationDetails: &models.RemediationDetails{
-			Effort:      "medium",
-			TicketURL:   "https://jira.example.com/SEC-123",
-			AutoFixable: true,
-		},
-	}
+	ctx := context.Background()
+	scanID, err := db.CreateScan(ctx, &database.Scan{
+		Status:    database.ScanStatusCompleted,
+		StartedAt: time.Now().Add(-30 * time.Minute),
+	})
+	require.NoError(t, err)
 
-	// Generate a report with just this finding
+	// Create metadata with multiple findings
 	metadata := &models.ScanMetadata{
-		ID:          "template-test",
-		ClientName:  "Template Test",
-		Environment: "Test",
-		StartTime:   time.Now().Add(-10 * time.Minute),
-		EndTime:     time.Now(),
+		ClientName:  "acme-corp",
+		Environment: "production",
+		StartTime:   time.Now().Add(-30 * time.Minute),
+		EndTime:     time.Now().Add(-5 * time.Minute),
 		Results: map[string]*models.ScanResult{
 			"prowler": {
-				Scanner:  "prowler",
-				Findings: []models.Finding{finding},
+				Scanner: "prowler",
+				Findings: []models.Finding{
+					{
+						ID:       "FINDING-001",
+						Scanner:  "prowler",
+						Severity: "critical",
+						Title:    "Root account without MFA",
+						Resource: "arn:aws:iam::123456789012:root",
+					},
+					{
+						ID:       "FINDING-002",
+						Scanner:  "prowler",
+						Severity: "high",
+						Title:    "Security group allows SSH from 0.0.0.0/0",
+						Resource: "sg-123456",
+					},
+					{
+						ID:       "FINDING-003",
+						Scanner:  "prowler",
+						Severity: "medium",
+						Title:    "S3 bucket without versioning",
+						Resource: "arn:aws:s3:::my-bucket",
+					},
+				},
+			},
+			"trivy": {
+				Scanner: "trivy",
+				Findings: []models.Finding{
+					{
+						ID:       "FINDING-004",
+						Scanner:  "trivy",
+						Severity: "critical",
+						Title:    "Remote code execution in log4j",
+						Resource: "app:latest",
+					},
+					{
+						ID:       "FINDING-005",
+						Scanner:  "trivy",
+						Severity: "low",
+						Title:    "Outdated package version",
+						Resource: "redis:6.0",
+					},
+				},
 			},
 		},
 		Summary: models.ScanSummary{
-			BySeverity:      map[string]int{"high": 1},
-			ByScanner:       map[string]int{"prowler": 1},
-			TotalFindings:   1,
-			SuppressedCount: 0,
+			TotalFindings: 5,
+			BySeverity: map[string]int{
+				"critical": 2,
+				"high":     1,
+				"medium":   1,
+				"low":      1,
+			},
+			ByScanner: map[string]int{
+				"prowler": 3,
+				"trivy":   2,
+			},
 		},
 	}
 
-	scanDir := filepath.Join(tmpDir, "scans", "template-test")
-	store := storage.NewStorage(tmpDir)
-	err = store.SaveScanResults(scanDir, metadata)
+	// Save the scan data
+	store := storage.NewStorage(db)
+	err = store.SaveScanResults(scanID, metadata)
 	require.NoError(t, err)
 
-	generator, err := NewHTMLGenerator(scanDir, nil)
+	// Save findings to database
+	saveFindingsToDatabase(t, db, scanID, metadata)
+
+	// Add enrichments for critical findings
+	enrichments := []enrichment.FindingEnrichment{
+		{
+			FindingID: "FINDING-001",
+			Analysis: enrichment.Analysis{
+				BusinessImpact:    "Root account compromise would give attacker full control over entire AWS infrastructure",
+				PriorityScore:     1.0,
+				PriorityReasoning: "Root account without MFA is the highest security risk",
+			},
+			Remediation: enrichment.Remediation{
+				EstimatedEffort: "15 minutes",
+				Immediate:       []string{"Enable MFA on root account immediately"},
+			},
+		},
+		{
+			FindingID: "FINDING-004",
+			Analysis: enrichment.Analysis{
+				BusinessImpact:    "Log4j vulnerability allows remote code execution on application servers",
+				PriorityScore:     0.98,
+				PriorityReasoning: "Actively exploited vulnerability with public exploits available",
+			},
+			Remediation: enrichment.Remediation{
+				EstimatedEffort: "2 hours",
+				Immediate:       []string{"Update log4j to patched version 2.17.0 or later"},
+			},
+		},
+	}
+
+	err = store.SaveEnrichments(scanID, enrichments, &enrichment.Metadata{
+		StartedAt:        time.Now().Add(-5 * time.Minute),
+		CompletedAt:      time.Now(),
+		TotalFindings:    5,
+		EnrichedFindings: 2,
+		Strategy:         "critical-only",
+		Driver:           "claude-cli",
+	})
 	require.NoError(t, err)
 
-	reportPath := filepath.Join(tmpDir, "report.html")
-	err = generator.Generate(reportPath)
+	// Generate HTML report
+	scanIDStr := fmt.Sprintf("%d", scanID)
+	generator, err := NewHTMLGeneratorWithDatabase(scanIDStr, db, logger.GetGlobalLogger())
 	require.NoError(t, err)
 
-	content, err := os.ReadFile(reportPath) // #nosec G304 - test file
+	// Create temp file for output
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "report.html")
+
+	err = generator.Generate(outputPath)
 	require.NoError(t, err)
 
+	// Read and verify the report content
+	content, err := os.ReadFile(outputPath) // #nosec G304 - test file path
+	require.NoError(t, err)
 	html := string(content)
 
-	// Verify all finding elements are rendered
-	assert.Contains(t, html, "Test Finding Title")
-	assert.Contains(t, html, "was: Critical", "Should show original severity")
+	// Verify summary section
+	assert.Contains(t, html, "acme-corp")
+	assert.Contains(t, html, "production")
+	assert.Contains(t, html, "5") // Total findings
+	assert.Contains(t, html, "2") // Critical findings
+	assert.Contains(t, html, "critical-only")
+	assert.Contains(t, html, "claude-cli")
 
-	// Business context elements
-	assert.Contains(t, html, "Business Context", "Should have business context heading")
-	assert.Contains(t, html, "Owner:", "Should have owner label")
-	assert.Contains(t, html, "security-team", "Should show owner value")
-	assert.Contains(t, html, "Data Classification:", "Should have classification label")
-	assert.Contains(t, html, "confidential", "Should show classification value")
-	assert.Contains(t, html, "Business Impact:", "Should have impact label")
-	assert.Contains(t, html, "Could affect customer data", "Should show impact value")
-	assert.Contains(t, html, "Compliance Impact:", "Should have compliance label")
-	assert.Contains(t, html, "SOC2", "Should show compliance values")
-	assert.Contains(t, html, "GDPR", "Should show compliance values")
-
-	// Remediation details
-	assert.Contains(t, html, "Remediation Details", "Should have remediation details heading")
-	assert.Contains(t, html, "Effort:", "Should have effort label")
-	assert.Contains(t, html, "medium", "Should show effort value")
-	assert.Contains(t, html, "Ticket:", "Should have ticket label")
-	assert.Contains(t, html, "https://jira.example.com/SEC-123", "Should show ticket URL")
-	assert.Contains(t, html, "Auto-fixable:", "Should have auto-fixable label")
-	assert.Contains(t, html, "Yes", "Should show auto-fixable value")
+	// Verify priority findings are highlighted
+	assert.Contains(t, html, "Root account without MFA")
+	assert.Contains(t, html, "Remote code execution in log4j")
 }

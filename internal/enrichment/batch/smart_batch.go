@@ -29,7 +29,7 @@ func (s *SmartBatchStrategy) Description() string {
 }
 
 // Batch implements BatchingStrategy interface.
-func (s *SmartBatchStrategy) Batch(ctx context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
+func (s *SmartBatchStrategy) Batch(_ context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
 	// Set sensible defaults if not configured
 	maxPerBatch := config.MaxFindingsPerBatch
 	if maxPerBatch <= 0 {
@@ -140,7 +140,7 @@ func (s *SmartBatchStrategy) areFindingsSimilar(findings []models.Finding) bool 
 	// Check if all findings have similar titles
 	baseTitle := findings[0].Title
 	for _, f := range findings[1:] {
-		if !strings.Contains(f.Title, baseTitle[:min(len(baseTitle)/2, 20)]) {
+		if !strings.Contains(f.Title, baseTitle[:minInt(len(baseTitle)/2, 20)]) {
 			return false
 		}
 	}
@@ -267,8 +267,8 @@ func (s *SmartBatchStrategy) isExploitable(finding models.Finding) bool {
 	return false
 }
 
-// min returns the minimum of two integers.
-func min(a, b int) int {
+// minInt returns the minimum of two integers.
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}

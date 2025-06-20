@@ -17,7 +17,7 @@ func TestEntryCreation(t *testing.T) {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		TTL:         24 * time.Hour,
-		Metadata: map[string]interface{}{
+		Metadata: map[string]any{
 			"cvss_score": 9.8,
 			"exploited":  true,
 		},
@@ -47,6 +47,41 @@ func TestEntryCreation(t *testing.T) {
 	if len(entry.GenericRemediation.PreventionSteps) != 2 {
 		t.Errorf("Expected 2 prevention steps, got %d", len(entry.GenericRemediation.PreventionSteps))
 	}
+
+	if entry.Type != "vulnerability" {
+		t.Errorf("Expected type 'vulnerability', got %s", entry.Type)
+	}
+
+	if entry.Description != "Test vulnerability" {
+		t.Errorf("Expected description 'Test vulnerability', got %s", entry.Description)
+	}
+
+	if len(entry.References) != 1 || entry.References[0] != "https://cve.mitre.org/cve-2021-1234" {
+		t.Error("Expected correct references")
+	}
+
+	if !entry.CreatedAt.Equal(now) {
+		t.Error("Expected CreatedAt to be set correctly")
+	}
+
+	if !entry.UpdatedAt.Equal(now) {
+		t.Error("Expected UpdatedAt to be set correctly")
+	}
+
+	if entry.TTL != 24*time.Hour {
+		t.Errorf("Expected TTL 24 hours, got %v", entry.TTL)
+	}
+
+	// Test metadata
+	if entry.Metadata == nil || len(entry.Metadata) != 2 {
+		t.Errorf("Expected metadata with 2 entries, got %v", entry.Metadata)
+	}
+	if cvssScore, ok := entry.Metadata["cvss_score"].(float64); !ok || cvssScore != 9.8 {
+		t.Error("Expected cvss_score 9.8 in metadata")
+	}
+	if exploited, ok := entry.Metadata["exploited"].(bool); !ok || !exploited {
+		t.Error("Expected exploited true in metadata")
+	}
 }
 
 func TestRemediationSteps(t *testing.T) {
@@ -67,6 +102,14 @@ func TestRemediationSteps(t *testing.T) {
 
 	if len(remediation.PreventionSteps) != 3 {
 		t.Errorf("Expected 3 prevention steps, got %d", len(remediation.PreventionSteps))
+	}
+
+	if remediation.ShortTerm != "Apply patches and updates" {
+		t.Errorf("Expected short term 'Apply patches and updates', got %s", remediation.ShortTerm)
+	}
+
+	if remediation.LongTerm != "Implement security monitoring" {
+		t.Errorf("Expected long term 'Implement security monitoring', got %s", remediation.LongTerm)
 	}
 }
 
@@ -130,6 +173,11 @@ func TestIndexOperations(t *testing.T) {
 	if len(awsEntries) != 1 || awsEntries[0] != "entry-2" {
 		t.Error("Tag index lookup failed for 'aws'")
 	}
+
+	// Test that LastUpdated is set
+	if index.LastUpdated.IsZero() {
+		t.Error("Expected LastUpdated to be set")
+	}
 }
 
 func TestCVEMetadata(t *testing.T) {
@@ -156,11 +204,22 @@ func TestCVEMetadata(t *testing.T) {
 	if len(metadata.AffectedProducts) != 2 {
 		t.Errorf("Expected 2 affected products, got %d", len(metadata.AffectedProducts))
 	}
+
+	if metadata.CVSSVector != "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" {
+		t.Errorf("Expected correct CVSS vector, got %s", metadata.CVSSVector)
+	}
+
+	if !metadata.PatchAvailable {
+		t.Error("Expected patch to be available")
+	}
+
+	if metadata.PublishedDate.IsZero() {
+		t.Error("Expected published date to be set")
+	}
 }
 
 func TestEntryTTL(t *testing.T) {
 	entry := &Entry{
-		ID:        "test-entry",
 		CreatedAt: time.Now().Add(-25 * time.Hour), // Created 25 hours ago
 		TTL:       24 * time.Hour,
 	}

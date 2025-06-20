@@ -2,7 +2,7 @@
   "enriched_at": "0001-01-01T00:00:00Z",
   "context": null,
   "analysis": {
-    "business_impact": "Mock enrichment for 2",
+    "business_impact": "Processed",
     "priority_reasoning": "",
     "technical_details": "",
     "priority_score": 5

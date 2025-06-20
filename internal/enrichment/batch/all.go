@@ -1,3 +1,4 @@
+// Package batch provides strategies for batching security findings for efficient AI enrichment.
 package batch
 
 import (
@@ -27,7 +28,7 @@ func (s *AllStrategy) Description() string {
 }
 
 // Batch implements BatchingStrategy interface.
-func (s *AllStrategy) Batch(ctx context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
+func (s *AllStrategy) Batch(_ context.Context, findings []models.Finding, config *Config) ([]Batch, error) {
 	// Group by scanner and severity for better organization
 	groups := make(map[string][]models.Finding)
 

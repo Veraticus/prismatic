@@ -1,0 +1,20 @@
+{
+  "enriched_at": "0001-01-01T00:00:00Z",
+  "context": null,
+  "analysis": {
+    "business_impact": "Processed",
+    "priority_reasoning": "",
+    "technical_details": "",
+    "priority_score": 5
+  },
+  "finding_id": "3",
+  "llm_model": "",
+  "remediation": {
+    "estimated_effort": "",
+    "immediate": null,
+    "short_term": null,
+    "long_term": null,
+    "automation_possible": false
+  },
+  "tokens_used": 0
+}

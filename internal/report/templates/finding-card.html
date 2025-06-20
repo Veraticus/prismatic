@@ -7,7 +7,7 @@
         <div class="badges">
             <span class="severity-badge {{severityClass $finding.Severity}}">{{title $finding.Severity}}</span>
             {{if $finding.OriginalSeverity}}
-            <span class="original-severity">was: {{title $finding.OriginalSeverity}}</span>
+            <span class="original-severity">Severity Override: was {{title $finding.OriginalSeverity}}</span>
             {{end}}
             {{if $finding.Suppressed}}
             <span class="suppressed-badge">Suppressed</span>
@@ -132,6 +132,13 @@
         <div class="ai-section">
             <strong>Technical Analysis:</strong>
             <p>{{.Analysis.TechnicalDetails}}</p>
+        </div>
+        {{end}}
+        
+        {{if .Analysis.ContextualNotes}}
+        <div class="ai-section">
+            <strong>Contextual Notes:</strong>
+            <p>{{.Analysis.ContextualNotes}}</p>
         </div>
         {{end}}
         

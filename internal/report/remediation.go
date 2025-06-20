@@ -2,15 +2,13 @@
 package report
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/remediation"
@@ -20,18 +18,16 @@ import (
 
 // RemediationReporter generates YAML remediation manifests.
 type RemediationReporter struct {
-	config   *config.Config
 	logger   logger.Logger
 	grouper  *remediation.FindingGrouper
 	metadata *models.ScanMetadata
 }
 
 // NewRemediationReporter creates a new remediation reporter.
-func NewRemediationReporter(cfg *config.Config, log logger.Logger) *RemediationReporter {
+func NewRemediationReporter(log logger.Logger) *RemediationReporter {
 	return &RemediationReporter{
-		config:  cfg,
 		logger:  log,
-		grouper: remediation.NewFindingGrouper(cfg, log),
+		grouper: remediation.NewFindingGrouper(nil, log),
 	}
 }
 
@@ -64,8 +60,8 @@ func (r *RemediationReporter) Generate(findings []models.Finding, enrichments ma
 	// Create manifest
 	manifest := r.createManifest(groups, enrichments)
 
-	// Write YAML output
-	return r.writeYAML(manifest, validPath)
+	// Write JSON output
+	return r.writeJSON(manifest, validPath)
 }
 
 // Name returns the format identifier.
@@ -75,11 +71,11 @@ func (r *RemediationReporter) Name() string {
 
 // Description returns a human-readable description.
 func (r *RemediationReporter) Description() string {
-	return "YAML manifest with structured remediation instructions"
+	return "JSON manifest with structured remediation instructions"
 }
 
 // createManifest builds the complete remediation manifest.
-func (r *RemediationReporter) createManifest(groups []remediation.RemediationGroup, enrichments map[string]*enrichment.FindingEnrichment) *remediation.Manifest {
+func (r *RemediationReporter) createManifest(groups []remediation.Group, enrichments map[string]*enrichment.FindingEnrichment) *remediation.Manifest {
 	manifest := &remediation.Manifest{
 		ManifestVersion: "1.0",
 		GeneratedAt:     time.Now(),
@@ -115,12 +111,12 @@ func (r *RemediationReporter) createManifest(groups []remediation.RemediationGro
 }
 
 // createRemediation creates a single remediation from a group of findings.
-func (r *RemediationReporter) createRemediation(group remediation.RemediationGroup, enrichments map[string]*enrichment.FindingEnrichment, id int) remediation.Remediation {
+func (r *RemediationReporter) createRemediation(group remediation.Group, enrichments map[string]*enrichment.FindingEnrichment, id int) remediation.Remediation {
 	// Get the highest severity from the group
 	severity := r.getHighestSeverity(group.Findings)
 
 	// Collect finding IDs
-	var findingRefs []string
+	findingRefs := make([]string, 0, len(group.Findings))
 	for _, f := range group.Findings {
 		findingRefs = append(findingRefs, f.ID)
 	}
@@ -178,7 +174,7 @@ func (r *RemediationReporter) getHighestSeverity(findings []models.Finding) stri
 }
 
 // generateTitleAndDescription creates human-readable title and description.
-func (r *RemediationReporter) generateTitleAndDescription(group remediation.RemediationGroup) (string, string) {
+func (r *RemediationReporter) generateTitleAndDescription(group remediation.Group) (string, string) {
 	// This is a simplified version - in practice, you'd want more sophisticated logic
 	switch group.Strategy {
 	case "terraform-s3-public-access":
@@ -197,8 +193,8 @@ func (r *RemediationReporter) generateTitleAndDescription(group remediation.Reme
 }
 
 // createContext generates context from enrichments.
-func (r *RemediationReporter) createContext(findings []models.Finding, enrichments map[string]*enrichment.FindingEnrichment) remediation.RemediationContext {
-	context := remediation.RemediationContext{
+func (r *RemediationReporter) createContext(findings []models.Finding, enrichments map[string]*enrichment.FindingEnrichment) remediation.Context {
+	context := remediation.Context{
 		ComplianceViolations: []string{},
 	}
 
@@ -222,8 +218,8 @@ func (r *RemediationReporter) createContext(findings []models.Finding, enrichmen
 }
 
 // createTarget generates the remediation target.
-func (r *RemediationReporter) createTarget(group remediation.RemediationGroup) remediation.RemediationTarget {
-	target := remediation.RemediationTarget{
+func (r *RemediationReporter) createTarget(group remediation.Group) remediation.Target {
+	target := remediation.Target{
 		RepositoryType:  group.RepositoryType,
 		RepositoryHints: []remediation.RepositoryHint{},
 		AffectedFiles:   []remediation.FilePattern{},
@@ -255,7 +251,7 @@ func (r *RemediationReporter) createTarget(group remediation.RemediationGroup) r
 }
 
 // getImplementation returns implementation details for the remediation.
-func (r *RemediationReporter) getImplementation(group remediation.RemediationGroup) remediation.Implementation {
+func (r *RemediationReporter) getImplementation(group remediation.Group) remediation.Implementation {
 	impl := remediation.Implementation{
 		EstimatedEffort:  remediation.EstimateEffort(group.EstimatedEffort),
 		RequiresDowntime: false,
@@ -308,7 +304,7 @@ func (r *RemediationReporter) getImplementation(group remediation.RemediationGro
 }
 
 // generateValidation creates validation steps.
-func (r *RemediationReporter) generateValidation(group remediation.RemediationGroup) []remediation.ValidationStep {
+func (r *RemediationReporter) generateValidation(group remediation.Group) []remediation.ValidationStep {
 	var steps []remediation.ValidationStep
 
 	switch group.Strategy {
@@ -337,7 +333,7 @@ func (r *RemediationReporter) generateValidation(group remediation.RemediationGr
 }
 
 // createRollback generates rollback instructions.
-func (r *RemediationReporter) createRollback(group remediation.RemediationGroup) remediation.RollbackProcedure {
+func (r *RemediationReporter) createRollback(group remediation.Group) remediation.RollbackProcedure {
 	switch group.Strategy {
 	case "terraform-s3-public-access":
 		return remediation.RollbackProcedure{
@@ -369,31 +365,22 @@ func (r *RemediationReporter) prioritizeRemediations(remediations []remediation.
 	})
 }
 
-// writeYAML writes the manifest to a YAML file.
-func (r *RemediationReporter) writeYAML(manifest *remediation.Manifest, outputPath string) error {
+// writeJSON writes the manifest to a JSON file.
+func (r *RemediationReporter) writeJSON(manifest *remediation.Manifest, outputPath string) error {
 	// Create output directory if needed
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0750); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
-	// Create output file
-	file, err := os.Create(outputPath) // #nosec G304 - path is validated
+	// Marshal to JSON with indentation
+	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return fmt.Errorf("creating output file: %w", err)
-	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("closing output file: %w", cerr)
-		}
-	}()
-
-	// Configure YAML encoder
-	encoder := yaml.NewEncoder(file)
-	encoder.SetIndent(2)
-
-	// Write manifest
-	if err := encoder.Encode(manifest); err != nil {
 		return fmt.Errorf("encoding manifest: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(outputPath, data, 0600); err != nil {
+		return fmt.Errorf("writing output file: %w", err)
 	}
 
 	r.logger.Info("Generated remediation manifest", "path", outputPath)
@@ -415,7 +402,7 @@ func (r *RemediationReporter) writeEmptyManifest(outputPath string) error {
 		Remediations: []remediation.Remediation{},
 	}
 
-	return r.writeYAML(manifest, outputPath)
+	return r.writeJSON(manifest, outputPath)
 }
 
 // deduplicateStrings removes duplicate strings from a slice.

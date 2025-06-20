@@ -8,6 +8,8 @@ import (
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 )
 
+// Cache defines the interface for caching enrichments.
+
 // MockCache implements Cache for testing.
 type MockCache struct {
 	GetFunc    func(ctx context.Context, findingID string) (*enrichment.FindingEnrichment, error)

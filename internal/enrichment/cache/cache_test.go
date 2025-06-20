@@ -15,7 +15,7 @@ func TestDefaultKeyGenerator(t *testing.T) {
 	tests := []struct {
 		name      string
 		findingID string
-		context   map[string]interface{}
+		context   map[string]any
 		expected  string
 	}{
 		{
@@ -27,7 +27,7 @@ func TestDefaultKeyGenerator(t *testing.T) {
 		{
 			name:      "Finding ID with context",
 			findingID: "finding-456",
-			context:   map[string]interface{}{"env": "prod"},
+			context:   map[string]any{"env": "prod"},
 			expected:  "finding-456", // Current implementation ignores context
 		},
 		{
@@ -90,6 +90,23 @@ func TestStats(t *testing.T) {
 	if totalRequests != 100 {
 		t.Errorf("Expected 100 total requests, got %d", totalRequests)
 	}
+
+	// Test other stats fields
+	if stats.TotalEntries != 100 {
+		t.Errorf("Expected 100 total entries, got %d", stats.TotalEntries)
+	}
+
+	if stats.TotalSize != 1024*1024 {
+		t.Errorf("Expected 1MB total size, got %d", stats.TotalSize)
+	}
+
+	if stats.OldestEntry != 24*time.Hour {
+		t.Errorf("Expected oldest entry 24h, got %v", stats.OldestEntry)
+	}
+
+	if stats.TokensSaved != 50000 {
+		t.Errorf("Expected 50000 tokens saved, got %d", stats.TokensSaved)
+	}
 }
 
 func TestMockCacheOperations(t *testing.T) {
@@ -97,7 +114,7 @@ func TestMockCacheOperations(t *testing.T) {
 
 	// Test successful cache operations
 	cache := &MockCache{
-		GetFunc: func(ctx context.Context, findingID string) (*enrichment.FindingEnrichment, error) {
+		GetFunc: func(_ context.Context, findingID string) (*enrichment.FindingEnrichment, error) {
 			if findingID == "test-finding" {
 				return &enrichment.FindingEnrichment{
 					FindingID: "test-finding",
@@ -108,13 +125,13 @@ func TestMockCacheOperations(t *testing.T) {
 			}
 			return nil, &Error{Op: "get", Key: findingID, Err: fmt.Errorf("not found")}
 		},
-		SetFunc: func(ctx context.Context, e *enrichment.FindingEnrichment, ttl time.Duration) error {
+		SetFunc: func(_ context.Context, e *enrichment.FindingEnrichment, _ time.Duration) error {
 			if e.FindingID == "" {
 				return fmt.Errorf("empty finding ID")
 			}
 			return nil
 		},
-		StatsFunc: func(ctx context.Context) (*Stats, error) {
+		StatsFunc: func(_ context.Context) (*Stats, error) {
 			return &Stats{
 				TotalEntries: 10,
 				TotalHits:    8,

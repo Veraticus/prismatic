@@ -1,15 +1,13 @@
 package report
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/internal/remediation"
@@ -87,30 +85,30 @@ func TestRemediationReporter_Generate(t *testing.T) {
 	}
 
 	// Create reporter
-	cfg := &config.Config{}
-	reporter := NewRemediationReporter(cfg, log)
+	reporter := NewRemediationReporter(log)
 
 	// Generate report
-	outputPath := filepath.Join(t.TempDir(), "remediation.yaml")
+	outputPath := filepath.Join(t.TempDir(), "remediation.json")
 	err := reporter.Generate(findings, enrichments, metadata, outputPath)
 	if err != nil {
 		t.Fatalf("Failed to generate remediation report: %v", err)
 	}
 
 	// Verify file was created
-	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+	if _, statErr := os.Stat(outputPath); os.IsNotExist(statErr) {
 		t.Fatal("Output file was not created")
 	}
 
 	// Load and verify manifest
+	// #nosec G304 -- outputPath is constructed safely from test inputs
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read output file: %v", err)
 	}
 
 	var manifest remediation.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		t.Fatalf("Failed to parse YAML manifest: %v", err)
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("Failed to parse JSON manifest: %v", err)
 	}
 
 	// Verify manifest structure
@@ -198,8 +196,8 @@ func TestRemediationReporter_SuppressedFindings(t *testing.T) {
 		ID: "test-scan",
 	}
 
-	reporter := NewRemediationReporter(nil, log)
-	outputPath := filepath.Join(t.TempDir(), "remediation.yaml")
+	reporter := NewRemediationReporter(log)
+	outputPath := filepath.Join(t.TempDir(), "remediation.json")
 
 	err := reporter.Generate(findings, nil, metadata, outputPath)
 	if err != nil {
@@ -207,13 +205,14 @@ func TestRemediationReporter_SuppressedFindings(t *testing.T) {
 	}
 
 	// Load manifest
+	// #nosec G304 -- outputPath is constructed safely from test inputs
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read output: %v", err)
 	}
 
 	var manifest remediation.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("Failed to parse manifest: %v", err)
 	}
 
@@ -236,13 +235,13 @@ func TestRemediationReporter_SuppressedFindings(t *testing.T) {
 
 func TestRemediationReporter_EmptyFindings(t *testing.T) {
 	log := logger.NewMockLogger()
-	reporter := NewRemediationReporter(nil, log)
+	reporter := NewRemediationReporter(log)
 
 	metadata := &models.ScanMetadata{
 		ID: "empty-scan",
 	}
 
-	outputPath := filepath.Join(t.TempDir(), "empty.yaml")
+	outputPath := filepath.Join(t.TempDir(), "empty.json")
 	err := reporter.Generate([]models.Finding{}, nil, metadata, outputPath)
 
 	if err != nil {
@@ -250,13 +249,14 @@ func TestRemediationReporter_EmptyFindings(t *testing.T) {
 	}
 
 	// Should create an empty manifest
+	// #nosec G304 -- outputPath is constructed safely from test inputs
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read output: %v", err)
 	}
 
 	var manifest remediation.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("Failed to parse manifest: %v", err)
 	}
 
@@ -306,8 +306,8 @@ func TestRemediationReporter_PriorityOrdering(t *testing.T) {
 		ID: "priority-test",
 	}
 
-	reporter := NewRemediationReporter(nil, log)
-	outputPath := filepath.Join(t.TempDir(), "priority.yaml")
+	reporter := NewRemediationReporter(log)
+	outputPath := filepath.Join(t.TempDir(), "priority.json")
 
 	err := reporter.Generate(findings, nil, metadata, outputPath)
 	if err != nil {
@@ -315,13 +315,14 @@ func TestRemediationReporter_PriorityOrdering(t *testing.T) {
 	}
 
 	// Load manifest
+	// #nosec G304 -- outputPath is constructed safely from test inputs
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read output: %v", err)
 	}
 
 	var manifest remediation.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("Failed to parse manifest: %v", err)
 	}
 
@@ -343,7 +344,7 @@ func TestRemediationReporter_PriorityOrdering(t *testing.T) {
 	}
 }
 
-func TestRemediationReporter_YAMLFormat(t *testing.T) {
+func TestRemediationReporter_JSONFormat(t *testing.T) {
 	log := logger.NewMockLogger()
 
 	findings := []models.Finding{
@@ -375,43 +376,47 @@ func TestRemediationReporter_YAMLFormat(t *testing.T) {
 		ID: "yaml-test",
 	}
 
-	reporter := NewRemediationReporter(nil, log)
-	outputPath := filepath.Join(t.TempDir(), "format.yaml")
+	reporter := NewRemediationReporter(log)
+	outputPath := filepath.Join(t.TempDir(), "format.json")
 
 	err := reporter.Generate(findings, enrichments, metadata, outputPath)
 	if err != nil {
 		t.Fatalf("Failed to generate report: %v", err)
 	}
 
-	// Read and verify YAML structure
+	// Read and verify JSON structure
+	// #nosec G304 -- outputPath is constructed safely from test inputs
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read output: %v", err)
 	}
 
-	// Verify it's valid YAML
-	var rawData map[string]interface{}
-	if err := yaml.Unmarshal(data, &rawData); err != nil {
-		t.Fatalf("Invalid YAML generated: %v", err)
+	// Debug: Log the JSON output
+	t.Logf("Generated JSON: %s", string(data))
+
+	// Verify it's valid JSON
+	var rawData map[string]any
+	if err := json.Unmarshal(data, &rawData); err != nil {
+		t.Fatalf("Invalid JSON generated: %v", err)
 	}
 
 	// Verify key fields are present
-	yamlStr := string(data)
+	jsonStr := string(data)
 	expectedFields := []string{
-		"manifest_version:",
-		"generated_at:",
-		"scan_id:",
-		"metadata:",
-		"remediations:",
-		"finding_refs:",
-		"target:",
-		"implementation:",
-		"validation:",
+		"\"ManifestVersion\":",
+		"\"GeneratedAt\":",
+		"\"ScanID\":",
+		"\"Metadata\":",
+		"\"Remediations\":",
+		"\"FindingRefs\":",
+		"\"Target\":",
+		"\"Implementation\":",
+		"\"Validation\":",
 	}
 
 	for _, field := range expectedFields {
-		if !strings.Contains(yamlStr, field) {
-			t.Errorf("Expected field %s not found in YAML", field)
+		if !strings.Contains(jsonStr, field) {
+			t.Errorf("Expected field %s not found in JSON", field)
 		}
 	}
 }

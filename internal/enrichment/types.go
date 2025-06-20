@@ -6,13 +6,13 @@ import (
 
 // FindingEnrichment contains the enriched information for a finding.
 type FindingEnrichment struct {
-	EnrichedAt  time.Time              `json:"enriched_at"`
-	Context     map[string]interface{} `json:"context"`
-	Analysis    Analysis               `json:"analysis"`
-	FindingID   string                 `json:"finding_id"`
-	LLMModel    string                 `json:"llm_model"`
-	Remediation Remediation            `json:"remediation"`
-	TokensUsed  int                    `json:"tokens_used"`
+	EnrichedAt  time.Time      `json:"enriched_at"`
+	Context     map[string]any `json:"context"`
+	Analysis    Analysis       `json:"analysis"`
+	FindingID   string         `json:"finding_id"`
+	LLMModel    string         `json:"llm_model"`
+	Remediation Remediation    `json:"remediation"`
+	TokensUsed  int            `json:"tokens_used"`
 }
 
 // Analysis contains AI-generated analysis of a finding.
@@ -36,8 +36,8 @@ type Remediation struct {
 	AutomationPossible bool     `json:"automation_possible"`
 }
 
-// EnrichmentMetadata contains metadata about an enrichment run.
-type EnrichmentMetadata struct {
+// Metadata contains metadata about an enrichment run.
+type Metadata struct {
 	StartedAt        time.Time `json:"started_at"`
 	CompletedAt      time.Time `json:"completed_at"`
 	RunID            string    `json:"run_id"`

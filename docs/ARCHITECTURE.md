@@ -1,842 +1,506 @@
-# Prismatic Security Scanner - Architecture Document
+# Prismatic Architecture
 
 ## Overview
 
-Prismatic is a security scanning orchestrator that refracts multiple open-source security tools into a unified, beautiful report. It operates in two phases: scanning and report generation, allowing for manual review and adjustment of findings between phases.
+Prismatic is a unified security scanning platform that combines multiple open-source security tools into a single, elegant TUI (Terminal User Interface) application. Built on modern Go with a SQLite backend, it provides real-time security scanning for containers, Kubernetes, infrastructure-as-code, and web applications.
 
-## Core Architecture
+## Core Principles
 
-### Design Principles
-1. **Refraction Model**: Multiple security scanners (light sources) → Prismatic (prism) → Unified spectrum of findings (report)
-2. **Two-Phase Operation**: Separate scanning from reporting for flexibility
-3. **Client-Centric Configuration**: YAML configs per client/environment
-4. **Claude Code Optimized**: HTML output designed for AI readability
-5. **Idiomatic Go**: Prefer clarity and simplicity over clever abstractions
-6. **Zero Code Duplication**: Shared logic consolidated in base implementations
+1. **Single Entry Point**: One command (`prismatic`) launches an interactive TUI
+2. **Native Go Integration**: All scanners use native Go libraries - no exec() calls
+3. **Database-Centric**: SQLite provides persistent storage and enables rich queries
+4. **User-First Design**: Beautiful TUI with intuitive navigation and real-time feedback
+5. **Testable Architecture**: Interfaces, dependency injection, and in-memory databases for testing
+6. **Progressive Enhancement**: Start simple, add features without breaking changes
 
-### Project Structure
+## Architecture Decisions
+
+### 1. Terminal User Interface (TUI)
+
+Prismatic uses a TUI-first approach inspired by tools like k9s, lazygit, and btop:
+
 ```
-prismatic/
-??? cmd/
-?   ??? scan/          # Phase 1: Security scanning
-?   ??? report/        # Phase 2: Report generation
-??? internal/
-?   ??? scanner/       # Scanner integrations
-?   ?   ??? prowler.go
-?   ?   ??? trivy.go
-?   ?   ??? kubescape.go
-?   ?   ??? nuclei.go
-?   ?   ??? gitleaks.go
-?   ?   ??? checkov.go
-?   ??? models/        # Data structures
-?   ??? config/        # Configuration handling
-?   ??? report/        # Report generation
-?       ??? html.go
-?       ??? pdf.go     # Orchestrates HTML?PDF via headless browser
-?       ??? templates/
-??? configs/           # Client configurations
-?   ??? example.yaml
-?   ??? client-*.yaml
-??? data/             # Scan results storage
-?   ??? scans/
-?       ??? YYYY-MM-DD-HHMMSS/
-?           ??? metadata.json
-?           ??? prowler.json
-?           ??? trivy.json
-?           ??? ...
-??? go.mod
+┌─────────────────────────────────────────┐
+│          Prismatic Security Scanner      │
+│  ┌─────────┬────────────┬───────────┐  │
+│  │ Scanner │  Findings   │  Reports  │  │
+│  │ Config  │   Display   │ Generator │  │
+│  └─────────┴────────────┴───────────┘  │
+│                                         │
+│  [n]ew [h]istory [q]uit                │
+└─────────────────────────────────────────┘
 ```
 
-## Phase 1: Scanning (`prismatic scan`)
+**Key Decisions:**
+- Built with bubbletea/lipgloss for modern TUI capabilities
+- Vim-style (hjkl) and arrow key navigation
+- Split panes for main content, modals for important actions
+- Color-coded severity levels:
+  - Critical = Red
+  - High = Orange  
+  - Medium = Yellow
+  - Low = Blue
+  - Info = Gray
 
-### Command Interface
-```bash
-prismatic scan \
-  --config configs/client-acme.yaml \
-  --output data/scans/2024-01-15-140000 \
-  --aws-profile production \
-  --k8s-context prod-cluster
+### 2. Data Storage
+
+All operational data lives in a single SQLite database (`prismatic.db`):
+
+```sql
+-- Core schema
+CREATE TABLE scans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aws_profile TEXT,
+    aws_regions TEXT, -- JSON array
+    kube_context TEXT,
+    scanners INTEGER, -- Bitmask of enabled scanners
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    status TEXT CHECK(status IN ('running', 'completed', 'failed')),
+    error_details TEXT
+);
+
+CREATE TABLE findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id INTEGER REFERENCES scans(id),
+    scanner TEXT,
+    severity TEXT CHECK(severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO')),
+    title TEXT,
+    description TEXT,
+    resource TEXT,
+    technical_details JSON, -- Scanner-specific structured data
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_findings_scan (scan_id),
+    INDEX idx_findings_severity (severity)
+);
+
+CREATE TABLE suppressions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id INTEGER REFERENCES findings(id),
+    reason TEXT,
+    suppressed_by TEXT, -- Username or "system"
+    suppressed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_suppressions_finding (finding_id)
+);
 ```
 
-### Client Configuration (YAML)
-```yaml
-# configs/client-acme.yaml
-client:
-  name: "ACME Corporation"
-  environment: "Production"
+**Key Decisions:**
+- Single file database in working directory
+- No multi-tenancy - one database per user
+- Bitmask for efficient scanner configuration storage
+- JSON fields for flexible scanner-specific data
+- Indexes on commonly queried fields
 
-aws:
-  regions:
-    - us-east-1
-    - us-west-2
-  profiles:
-    - production
-    - staging
+### 3. Scanner Architecture
 
-docker:
-  registries:
-    - registry.acme.com
-  containers:
-    - api:latest
-    - web:latest
-    - worker:latest
-
-kubernetes:
-  contexts:
-    - prod-cluster
-    - staging-cluster
-  namespaces:  # optional, scan all if not specified
-    - default
-    - production
-
-endpoints:
-  - https://api.acme.com
-  - https://www.acme.com
-  - https://admin.acme.com
-
-suppressions:
-  global:
-    date_before: "2023-01-01"  # Ignore findings before this date
-  
-  trivy:
-    - CVE-2021-3711      # Old Ruby OpenSSL
-    - CVE-2021-23840     # Ruby version
-    - GHSA-*             # Ignore GitHub advisories
-  
-  prowler:
-    - iam_user_hardware_mfa_enabled  # Using SSO instead
-    - s3_bucket_public_read_prohibited # Public website bucket
-  
-  kubescape:
-    - C-0034  # Automatic mapping of service account
-    - C-0035  # Cluster-admin binding
-  
-  nuclei:
-    - exposed-panels/gitlab-detect
-    - technologies/nginx-version
-  
-  gitleaks:
-    - generic-api-key  # Too many false positives
-
-severity_overrides:
-  CVE-2021-3711: low     # Not exploitable in our context
-  check_s3_encryption: medium  # Downgrade from high
-
-metadata_enrichment:
-  # Add business context to findings
-  # Note: If no enrichment is configured, findings remain as-is (no enrichment required)
-  # This is the recommended default - findings are sufficient without business context
-  resources:
-    "arn:aws:s3:::acme-public-website":
-      owner: "Marketing Team"
-      data_classification: "public"
-    "api-deployment":
-      owner: "Platform Team"
-      data_classification: "confidential"
-```
-
-### Scanner Execution Flow
-
-The scanner package provides a clean abstraction for all security scanners:
+All scanners implement a common interface using native Go libraries:
 
 ```go
-// internal/scanner/scanner.go
 type Scanner interface {
+    // Metadata
     Name() string
-    Scan(ctx context.Context) (*ScanResult, error)
-    ParseResults(raw []byte) ([]Finding, error)
-}
-
-// internal/scanner/base_scanner.go
-type BaseScanner struct {
-    logger  logger.Logger
-    name    string
-    version string
-    config  Config
-}
-
-// SimpleScan provides a template implementation for common scanning patterns
-func (b *BaseScanner) SimpleScan(ctx context.Context, opts SimpleScanOptions) (*ScanResult, error) {
-    // Handles:
-    // - Context cancellation
-    // - Error handling and logging
-    // - Finding validation
-    // - Progress tracking
-}
-
-// internal/scanner/orchestrator.go
-type Orchestrator struct {
-    config     *Config
-    outputDir  string
-    scanners   []Scanner
-}
-
-type ScanResult struct {
-    Scanner   string    `json:"scanner"`
-    Version   string    `json:"version"`
-    StartTime time.Time `json:"start_time"`
-    EndTime   time.Time `json:"end_time"`
-    RawOutput []byte    `json:"-"`
-    Findings  []Finding `json:"findings"`
-    Error     string    `json:"error,omitempty"`
-}
-
-type Finding struct {
-    ID              string            `json:"id"`  // Stable, deterministic hash - see below
-    Scanner         string            `json:"scanner"`
-    Type            string            `json:"type"`
-    Severity        string            `json:"severity"`
-    OriginalSeverity string           `json:"original_severity,omitempty"`
-    Title           string            `json:"title"`
-    Description     string            `json:"description"`
-    Resource        string            `json:"resource"`
-    Location        string            `json:"location,omitempty"`
-    Framework       string            `json:"framework,omitempty"`
-    Remediation     string            `json:"remediation"`
-    Impact          string            `json:"impact"`
-    References      []string          `json:"references"`
-    Metadata        map[string]string `json:"metadata,omitempty"`
-    Suppressed      bool              `json:"suppressed"`
-    SuppressionReason string          `json:"suppression_reason,omitempty"`
-}
-
-// Stable Finding ID Generation
-// The Finding.ID must be a deterministic hash to uniquely identify the same issue across scans.
-// This enables reliable suppression and tracking without maintaining scan history.
-func GenerateFindingID(f Finding) string {
-    // Hash these core attributes that uniquely identify a finding:
-    // - Scanner + Type + Resource + Location (if applicable)
-    // Example: sha256("prowler:iam_root_no_mfa:arn:aws:iam::123456789012:root")
-    core := fmt.Sprintf("%s:%s:%s:%s", f.Scanner, f.Type, f.Resource, f.Location)
-    hash := sha256.Sum256([]byte(core))
-    return hex.EncodeToString(hash[:8]) // First 8 bytes for readability
-}
-```
-
-### Finding Enrichment Philosophy
-
-Metadata enrichment in Prismatic is **optional and additive**. The design principles are:
-
-1. **Findings are sufficient by default** - Scanner output contains all necessary technical information
-2. **Enrichment adds business context** - When configured, it layers organizational information on top
-3. **No enrichment is perfectly valid** - Most organizations can use Prismatic effectively without any metadata enrichment
-4. **Organization-wide context** - When no specific resource metadata exists, findings apply to the whole organization
-
-This approach ensures Prismatic works excellently out-of-the-box while allowing sophisticated organizations to add business context as needed.
-
-#### Enrichment Implementation
-
-The orchestrator includes an optional `EnrichFindings` method that:
-- Returns an empty slice if no metadata enrichment is configured (the default)
-- Matches findings to resource metadata based on the resource identifier
-- Creates `EnrichedFinding` objects that include business context
-- Preserves all original finding data while adding organizational information
-
-```go
-// Example enriched finding
-{
-    "id": "abc12345",
-    "scanner": "trivy",
-    "type": "vulnerability",
-    "resource": "postgres:14",
-    "severity": "high",
-    "title": "CVE-2024-1234",
-    // ... other finding fields ...
-    "business_context": {
-        "owner": "data-team",
-        "data_classification": "confidential",
-        "business_impact": "Core customer database",
-        "compliance_impact": ["GDPR", "SOC2"]
-    }
-}
-```
-
-### Scan Output Structure
-```
-data/scans/2024-01-15-140000/
-??? metadata.json       # Scan metadata and summary
-??? raw/               # Raw scanner outputs (for debugging)
-?   ??? prowler.json
-?   ??? trivy.json
-?   ??? ...
-??? findings.json      # Normalized, enriched findings
-??? scan.log          # Detailed execution log
-```
-
-## Phase 2: Report Generation (`prismatic report`)
-
-### Command Interface
-```bash
-# Generate report from latest scan
-prismatic report \
-  --scan data/scans/2024-01-15-140000 \
-  --output reports/acme-security-audit.html
-
-# Generate with custom modifications
-prismatic report \
-  --scan data/scans/2024-01-15-140000 \
-  --modifications fixes.yaml \
-  --format html,pdf \
-  --output reports/acme-audit
-```
-
-### Manual Modifications File
-```yaml
-# fixes.yaml - Applied before report generation
-suppress:
-  - finding_id: "prowler-iam-123"
-    reason: "False positive - service account"
-  
-  - finding_id: "trivy-cve-456"
-    reason: "Accepted risk - legacy system"
-
-severity_changes:
-  - finding_id: "nuclei-789"
-    new_severity: "low"
-    reason: "Internal only endpoint"
-
-add_notes:
-  - finding_id: "kubescape-abc"
-    note: "Scheduled for fix in Q2 2024"
-```
-
-### Report Structure
-
-#### Executive Summary
-- Total findings by severity (Very High, High, Medium, Low)
-- Compliance scores by framework
-- Top 10 critical risks with brief descriptions
-- Scan coverage summary
-
-#### Detailed Findings (by category)
-1. **AWS Infrastructure**
-   - Grouped by service (IAM, S3, EC2, etc.)
-   - Sorted by severity within each service
-
-2. **Container Security**
-   - Grouped by image
-   - Vulnerability details with fix versions
-
-3. **Kubernetes Security**
-   - Grouped by cluster/namespace
-   - Configuration issues and vulnerabilities
-
-4. **Web Endpoints**
-   - Grouped by domain
-   - OWASP categorization
-
-5. **Secrets & Credentials**
-   - Grouped by repository/location
-   - Sanitized display of findings
-
-### Report Styling - "Professional Prismatic"
-
-```css
-/* Theme: Light refraction through precision optics */
-
-:root {
-  /* Prismatic gradient - subtle spectrum */
-  --prism-gradient: linear-gradient(135deg, 
-    rgba(110, 90, 255, 0.1) 0%,
-    rgba(100, 170, 255, 0.1) 20%,
-    rgba(90, 220, 220, 0.1) 40%,
-    rgba(90, 255, 170, 0.1) 60%,
-    rgba(220, 255, 90, 0.1) 80%,
-    rgba(255, 170, 90, 0.1) 100%
-  );
-  
-  /* Severity colors - gemstone inspired */
-  --severity-critical: #9b111e;  /* Ruby */
-  --severity-high: #ff6700;      /* Amber */
-  --severity-medium: #ffd700;    /* Gold */
-  --severity-low: #4169e1;       /* Sapphire */
-  --severity-info: #708090;      /* Slate */
-  
-  /* UI colors - clean, scientific */
-  --bg-primary: #fafafa;
-  --bg-secondary: #ffffff;
-  --text-primary: #1a1a1a;
-  --text-secondary: #4a4a4a;
-  --border-light: #e0e0e0;
-  --accent: #6a5acd;  /* Slate blue */
-}
-
-body {
-  font-family: 'Inter', -apple-system, sans-serif;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  line-height: 1.6;
-}
-
-.prismatic-header {
-  position: relative;
-  padding: 60px 40px;
-  background: var(--bg-secondary);
-  overflow: hidden;
-}
-
-.prismatic-header::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: var(--prism-gradient);
-  opacity: 0.4;
-  transform: skewY(-2deg);
-}
-
-.finding-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 24px;
-  margin: 16px 0;
-  position: relative;
-  transition: all 0.2s ease;
-}
-
-.finding-card::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: currentColor;
-  border-radius: 8px 0 0 8px;
-}
-
-.severity-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  border-radius: 16px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.severity-critical {
-  color: var(--severity-critical);
-  background: rgba(155, 17, 30, 0.1);
-}
-
-/* Glass morphism for summary cards */
-.summary-card {
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
-}
-
-/* Subtle prismatic effect on key elements */
-.prismatic-accent {
-  position: relative;
-  background: var(--prism-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  font-weight: 700;
-}
-```
-
-## Data Models
-
-### Finding Enrichment
-```go
-type EnrichedFinding struct {
-    Finding
-    BusinessContext struct {
-        Owner              string   `json:"owner"`
-        DataClassification string   `json:"data_classification"`
-        ComplianceImpact   []string `json:"compliance_impact"`
-        BusinessImpact     string   `json:"business_impact"`
-    } `json:"business_context,omitempty"`
+    Description() string
     
-    RemediationDetails struct {
-        Effort       string `json:"effort"` // low, medium, high
-        AutoFixable  bool   `json:"auto_fixable"`
-        TicketURL    string `json:"ticket_url,omitempty"`
-    } `json:"remediation_details,omitempty"`
-}
-```
-
-## Testing Strategy
-
-### Testing Philosophy
-- **Idiomatic Go**: Use standard table-driven tests
-- **No Over-Abstraction**: Avoid unnecessary test helpers that obscure test logic
-- **Clear Test Names**: Tests should document expected behavior
-- **Fast Feedback**: Unit tests run quickly, integration tests can be skipped with `-short`
-
-### Unit Tests
-All scanners follow consistent testing patterns:
-
-```go
-// Standard table-driven test structure
-func TestScannerName_ParseResults(t *testing.T) {
-    scanner := NewScanner(Config{}, /* params */)
+    // Configuration
+    ValidateConfig(ctx context.Context) error
     
-    tests := []struct {
-        name     string
-        input    string
-        expected int
-        validate func(t *testing.T, findings []models.Finding)
-    }{
-        {
-            name: "descriptive test case name",
-            input: `{"test": "data"}`,
-            expected: 1,
-            validate: func(t *testing.T, findings []models.Finding) {
-                t.Helper()
-                // Specific assertions for this test case
-            },
-        },
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            findings, err := scanner.ParseResults([]byte(tt.input))
-            require.NoError(t, err)
-            assert.Len(t, findings, tt.expected)
-            
-            if tt.validate != nil {
-                tt.validate(t, findings)
-            }
-        })
-    }
+    // Execution - returns channel for streaming results
+    Scan(ctx context.Context, targets ScanTargets) (<-chan Finding, error)
+}
+
+type ScanTargets struct {
+    AWSProfile   string
+    AWSRegions   []string
+    KubeContext  string
+    WebEndpoints []string
+    GitRepos     []string
+    // Scanner-specific targets can extend this
 }
 ```
 
-### Integration Tests
+**Supported Scanners (All Native Go):**
+
+| Scanner | Purpose | Go Library |
+|---------|---------|------------|
+| Trivy | Container & IaC scanning | `github.com/aquasecurity/trivy/pkg/scanner` |
+| Nuclei | Web vulnerability scanning | `github.com/projectdiscovery/nuclei/v3/lib` |
+| Gitleaks | Secret detection | `github.com/zricethezav/gitleaks/v8/detect` |
+| Kubeaudit | Kubernetes security | Direct library usage |
+| tfsec | Terraform security | Direct library usage |
+| Terrascan | Multi-IaC scanning | Direct library usage |
+
+**Scanner Storage:**
 ```go
-func TestScanner_Integration(t *testing.T) {
-    if testing.Short() {
-        t.Skip("Skipping integration test")
-    }
-    
-    // Check if tool is installed
-    if _, err := exec.LookPath("scanner-tool"); err != nil {
-        t.Skip("Scanner tool not found in PATH")
-    }
-    
-    // Run actual scanner
-    scanner := NewScanner(Config{Debug: true}, /* params */)
-    ctx := context.Background()
-    result, err := scanner.Scan(ctx)
-    
-    require.NoError(t, err)
-    assert.NotEmpty(t, result.Findings)
-}
-```
+type ScannerFlag uint32
 
-### Mock Scanner Mode
-```bash
-# Use mock data for development/testing
-prismatic scan --mock --config configs/test.yaml
-
-# Generates realistic fake findings without running actual scanners
-```
-
-### Test Fixtures
-```
-tests/
-??? fixtures/
-?   ??? prowler-sample.json
-?   ??? trivy-sample.json
-?   ??? ...
-??? configs/
-?   ??? minimal.yaml
-?   ??? full-featured.yaml
-?   ??? suppression-heavy.yaml
-??? expected/
-    ??? report-minimal.html
-    ??? report-full.html
-```
-
-## Error Handling
-
-### Scanner Failures
-- Continue scanning with other tools if one fails
-- Record failure in metadata
-- Show warning in report
-
-### Authentication Errors
-```go
-// Fail fast with clear messages
-if !awsCredsValid() {
-    log.Fatal("AWS credentials not found. Please run 'aws configure' or set AWS_PROFILE")
-}
-
-if !k8sContextExists(context) {
-    log.Fatalf("Kubernetes context '%s' not found. Available contexts: %v", 
-        context, getAvailableContexts())
-}
-```
-
-## Performance Considerations
-
-### Parallel Scanning
-```go
-// Run scanners in parallel with configurable concurrency
-type ScanResult struct {
-    Scanner string
-    Result  *FindingSet
-    Error   error
-}
-
-results := make(chan ScanResult, len(scanners))
-var wg sync.WaitGroup
-
-for _, scanner := range scanners {
-    wg.Add(1)
-    go func(s Scanner) {
-        defer wg.Done()
-        result, err := s.Scan(ctx)
-        results <- ScanResult{s.Name(), result, err}
-    }(scanner)
-}
-```
-
-### Resource Limits
-- Default timeout: 5 minutes per scanner
-- Memory limit: Track large finding sets
-- Disk usage: Rotate old scan results
-
-## CLI Design
-
-### Commands
-```bash
-# Main commands
-prismatic scan    # Run security scans
-prismatic report  # Generate report from scan data
-prismatic list    # List previous scans
-prismatic config  # Validate configuration
-
-# Examples
-prismatic scan --config client-acme.yaml --only aws,docker
-prismatic report --scan latest --format pdf
-prismatic list --client acme --limit 10
-prismatic config validate --config client-acme.yaml
-```
-
-### Output Examples
-```
-$ prismatic scan --config configs/client-acme.yaml
-?? Prismatic Security Scanner v1.0.0
-?? Configuration: client-acme.yaml
-?? Output: data/scans/2024-01-15-140000
-
-[1/6] ?? Running Prowler (AWS)...
-      ? 127 checks completed across 2 regions
-      ??  15 findings (2 critical, 5 high, 8 medium)
-
-[2/6] ?? Running Trivy (Containers)...
-      ? 3 images scanned
-      ??  23 vulnerabilities found (1 critical, 7 high)
-
-[3/6] ?? Running Kubescape (Kubernetes)...
-      ? 2 clusters analyzed
-      ??  18 security issues detected
-
-[4/6] ?? Running Nuclei (Web Endpoints)...
-      ? 3 endpoints tested
-      ? No critical vulnerabilities found
-
-[5/6] ?? Running Gitleaks (Secrets)...
-      ? Repository scanned
-      ? No secrets detected
-
-[6/6] ?? Running Checkov (IaC)...
-      ? 15 Terraform files analyzed
-      ??  8 misconfigurations found
-
-?? Scan Summary:
-   Total Findings: 64
-   Critical: 3 | High: 12 | Medium: 31 | Low: 18
-   
-? Scan complete! Results saved to: data/scans/2024-01-15-140000
-?? Run 'prismatic report --scan latest' to generate report
-```
-
-## Implementation Notes
-
-### Scanner Integration Pattern
-
-Each scanner follows a consistent implementation pattern:
-
-```go
-// Example: Prowler scanner implementation
-type ProwlerScanner struct {
-    *BaseScanner  // Embed for common functionality
-    profiles []string
-    regions  []string
-    services []string
-}
-
-// Constructor with dependency injection
-func NewProwlerScanner(config Config, profiles, regions, services []string) *ProwlerScanner {
-    return NewProwlerScannerWithLogger(config, profiles, regions, services, logger.GetGlobalLogger())
-}
-
-func NewProwlerScannerWithLogger(config Config, profiles, regions, services []string, log logger.Logger) *ProwlerScanner {
-    return &ProwlerScanner{
-        BaseScanner: NewBaseScannerWithLogger("prowler", config, log),
-        profiles:    profiles,
-        regions:     regions,
-        services:    services,
-    }
-}
-
-// Scan can use SimpleScan for common patterns
-func (s *ProwlerScanner) Scan(ctx context.Context) (*ScanResult, error) {
-    // For scanners with simple iteration patterns:
-    return s.BaseScanner.SimpleScan(ctx, SimpleScanOptions{
-        ScannerName:     s.Name(),
-        GetVersion:      s.getVersion,
-        Iterator:        NewSimpleTargetIterator(s.profiles, nil),
-        ScanTarget:      s.scanProfile,
-        ParseOutput:     s.ParseResults,
-        ContinueOnError: true,
-    })
-    
-    // Or implement custom logic for complex workflows
-}
-
-// ParseResults converts scanner output to normalized findings
-func (s *ProwlerScanner) ParseResults(raw []byte) ([]models.Finding, error) {
-    // Scanner-specific parsing logic
-    // Use models.NewFinding() for consistent ID generation
-    // Use models.NormalizeSeverity() for severity consistency
-}
-```
-
-### Code Quality Standards
-
-1. **Zero Duplication**: Common patterns extracted to BaseScanner
-2. **Consistent Error Handling**: All scanners handle errors uniformly
-3. **Normalized Output**: All findings use the same severity scale and structure
-4. **Testable Design**: Dependency injection for loggers, clear interfaces
-5. **Idiomatic Go**: Standard patterns, no clever abstractions
-
-### Repository Package
-
-The `internal/repository` package provides Git repository cloning functionality for scanners that need to analyze source code (Gitleaks and Checkov). This allows scanning both local and remote Git repositories.
-
-#### Key Components
-- **Resolver Interface**: Abstracts repository access, supporting local paths and remote Git URLs
-- **GitResolver**: Clones remote repositories to temporary directories with automatic cleanup
-- **LocalResolver**: Validates and returns paths for local repositories
-- **MockResolver**: Test implementation for unit testing
-
-#### Usage Pattern
-```go
-// Create a resolver with options
-resolver := repository.NewGitResolver(
-    repository.WithLogger(logger),
-    repository.WithBaseDir("/tmp/prismatic-repos"),
-    repository.WithKeepClones(false), // Auto-cleanup after scan
+const (
+    ScannerTrivy ScannerFlag = 1 << iota
+    ScannerNuclei
+    ScannerGitleaks
+    ScannerKubeaudit
+    ScannerTfsec
+    ScannerTerrascan
 )
 
-// Resolve repository to local path
-localPath, cleanup, err := resolver(ctx, config.Repository{
-    Name: "my-app",
-    Path: "https://github.com/org/my-app.git",
-    Branch: "main",
-})
-defer cleanup() // Ensures cleanup happens
-
-// Scanner can now analyze localPath
+// Database stores as single integer: 63 = all scanners enabled
 ```
 
-#### Features
-- **Smart Path Detection**: Automatically detects local vs remote repositories
-- **Efficient Cloning**: Uses shallow clones (`--depth 1`) for performance
-- **Branch Support**: Can checkout specific branches
-- **Cleanup Management**: Automatic cleanup with option to keep clones for debugging
-- **Authentication**: Supports SSH key authentication for private repositories
-- **Caching**: Reuses existing clones when possible
+### 4. Finding Model
 
-### Development Workflow
+Findings use a two-stage enrichment model to maximize data richness:
 
-1. **Start Simple**: Begin with `scan` command and 1-2 scanners
-2. **Normalize Early**: Get finding normalization working with consistent IDs
-3. **Configuration**: Implement YAML config with suppressions and overrides
-4. **Report Generation**: Start with simple HTML, iterate on styling
-5. **Scale Up**: Add remaining scanners using BaseScanner patterns
-6. **PDF Support**: Implement PDF generation via HTML
-7. **Polish**: Improve CLI output, error messages, and user experience
+```go
+type Finding struct {
+    // Core fields (common to all scanners)
+    ID          int64
+    ScanID      int64
+    Scanner     string
+    Severity    Severity
+    Title       string
+    Description string
+    Resource    string
+    
+    // Technical details (populated during scan)
+    Technical   TechnicalDetails // Interface for scanner-specific data
+    
+    // Contextual enrichment (populated in future enrichment phase)
+    Contextual  *ContextualEnrichment // Nullable for v1
+}
 
-### Development Best Practices
+// Scanner-specific implementations
+type TrivyTechnical struct {
+    CVE          string
+    CVSS         CVSSDetails
+    Package      string
+    Version      string
+    FixedVersion string
+    References   []string
+}
 
-1. **Test-Driven**: Write tests first, especially for parsing logic
-2. **Incremental Commits**: Small, focused changes that pass all tests
-3. **Lint Continuously**: Run `make lint` frequently - must pass with 0 issues
-4. **Document as You Go**: Update README and architecture docs with changes
-5. **Refactor Regularly**: Extract common patterns to reduce duplication
+type NucleiTechnical struct {
+    TemplateID   string
+    TemplatePath string
+    Matcher      string
+    Evidence     string
+    Request      string
+    Response     string
+}
+```
 
-## Recent Refactoring Improvements
+**Key Decisions:**
+- Rich, typed scanner-specific data structures
+- No loss of information from native libraries
+- Prepared for future AI enrichment phase
+- Stored as JSON in `technical_details` column
 
-The codebase has been refactored to eliminate duplication and improve maintainability:
+### 5. Execution Model
 
-### Removed Unused Code
-- Eliminated unused methods (`WithBusinessContext`, `WithRemediationDetails`) that were defined but never called
-- Cleaned up TODOs that were already implemented
+Parallel scanning with proper resource management:
 
-### Consolidated Business Logic
-- Unified severity validation: Single `models.IsValidSeverity()` function used throughout
-- Centralized severity normalization in `models.NormalizeSeverity()`
-- Consistent finding ID generation with `models.GenerateFindingID()`
+```go
+type ScanOrchestrator struct {
+    db          *sql.DB
+    scanners    []Scanner
+    workerPool  *WorkerPool
+    bufferSize  int
+}
 
-### Enhanced BaseScanner
-- Added `SimpleScan()` method that provides a template for common scanning patterns:
-  - Context cancellation handling
-  - Error handling and logging
-  - Finding validation
-  - Progress tracking
-- Created `SimpleTargetIterator` for easy target management
-- Reduces boilerplate in scanner implementations by ~40%
+func (o *ScanOrchestrator) ExecuteScan(ctx context.Context, config ScanConfig) error {
+    // Create scan record
+    scanID := o.createScan(config)
+    
+    // Finding buffer for batch writes
+    buffer := make([]Finding, 0, o.bufferSize)
+    mu := &sync.Mutex{}
+    
+    // Launch scanners in parallel
+    g, ctx := errgroup.WithContext(ctx)
+    
+    for _, scanner := range o.enabledScanners(config) {
+        scanner := scanner
+        g.Go(func() error {
+            findings, err := scanner.Scan(ctx, config.Targets)
+            if err != nil {
+                return fmt.Errorf("%s: %w", scanner.Name(), err)
+            }
+            
+            // Stream findings to buffer
+            for finding := range findings {
+                mu.Lock()
+                buffer = append(buffer, finding)
+                if len(buffer) >= o.bufferSize {
+                    o.flushFindings(scanID, buffer)
+                    buffer = buffer[:0]
+                }
+                mu.Unlock()
+            }
+            return nil
+        })
+    }
+    
+    // Wait for completion and flush remaining
+    err := g.Wait()
+    o.flushFindings(scanID, buffer)
+    o.completeScan(scanID, err)
+    return err
+}
+```
 
-### Maintained Idiomatic Go
-- Kept standard table-driven tests without unnecessary abstractions
-- Avoided over-engineering test helpers that would obscure test logic
-- Followed Go's principle: "a little copying is better than a little dependency"
+**Key Decisions:**
+- Worker pool limits concurrent scanners
+- Buffered writes to handle SQLite write locks
+- Graceful error handling with partial results
+- Context cancellation for clean shutdown
 
-The refactoring reduced the codebase by ~500 lines while improving consistency and maintainability.
+### 6. User Interface Flow
 
-## Future Enhancements
+```
+Main Menu
+    ├─→ New Scan
+    │     ├─→ Configure (select scanners, set targets)
+    │     ├─→ Start Scan
+    │     ├─→ Progress View (with cancel option)
+    │     └─→ Results Browser
+    │
+    ├─→ Scan History
+    │     ├─→ View Past Scans
+    │     ├─→ Load Results
+    │     └─→ Delete Old Scans
+    │
+    └─→ Results Browser
+          ├─→ Finding List (grouped by severity)
+          ├─→ Finding Details
+          ├─→ Suppression Management
+          └─→ Report Generation
+```
 
-These features are intentionally deferred to keep the MVP focused:
+**Progress Display:**
+```
+┌─ Scanning ─────────────────────────┐
+│ Trivy:      ████████░░ (80%)       │
+│ Nuclei:     ██████░░░░ (60%)       │
+│ Gitleaks:   ██████████ (Complete)  │
+│                                    │
+│ Total Findings: 234                │
+│ Elapsed: 3m 42s                    │
+│                                    │
+│ [q] Stop Scan                      │
+└────────────────────────────────────┘
+```
 
-### Historical Trending
-- Track findings across scans to show:
-  - First seen / last seen dates
-  - Occurrence frequency
-  - Risk trend visualization
-- Implementation approach: SQLite database for finding history
+### 7. Configuration Management
 
-### Automated Remediation
-- Generate machine-actionable remediation manifests and fix bundles
-- LLM-ready instructions for assisted remediation
-- Integration with IaC repositories and GitOps workflows
-- See [REMEDIATION.md](REMEDIATION.md) for detailed design
+No YAML files - configuration via environment and TUI:
 
-### AI-Powered Enrichment
-- Add contextual analysis and prioritization via LLMs
-- Generate business impact assessments
-- Provide environment-specific remediation guidance
-- See [ENRICHMENT.md](ENRICHMENT.md) for detailed design
+```go
+type AppConfig struct {
+    // From environment
+    AWSProfile   string // AWS_PROFILE or default
+    AWSConfig    string // ~/.aws/credentials location
+    KubeConfig   string // KUBECONFIG or ~/.kube/config
+    KubeContext  string // Current context from kubeconfig
+    
+    // From TUI interaction
+    EnabledScanners ScannerFlag
+    ScanTargets     ScanTargets
+}
 
-### Additional Integrations
-- Jira/GitHub issue creation
-- Slack notifications for critical findings
-- CI/CD pipeline integration
-- Custom scanner plugins
+func (c *AppConfig) Validate() error {
+    if c.AWSProfile == "" {
+        return fmt.Errorf("AWS profile not configured. Set AWS_PROFILE or ensure ~/.aws/credentials exists")
+    }
+    if c.KubeContext == "" {
+        return fmt.Errorf("Kubernetes context not configured. Set KUBECONFIG or ensure ~/.kube/config exists")
+    }
+    return nil
+}
+```
 
-This architecture provides a solid foundation for prismatic while keeping complexity manageable for a solo developer. The two-phase design gives you the flexibility you wanted, and the HTML-first approach ensures Claude Code can help throughout development.
+### 8. Report Generation
+
+HTML.
+
+```go
+type ReportGenerator struct {
+    templatePath string
+    db           *sql.DB
+}
+
+func (r *ReportGenerator) Generate(scanID int64, format ReportFormat) (string, error) {
+    // Load findings from database
+    findings := r.loadFindings(scanID)
+    
+    // Group by severity and scanner
+    grouped := r.groupFindings(findings)
+    
+    // Generate HTML
+    html := r.renderHTML(grouped)
+    
+    return r.saveHTML(html)
+}
+```
+
+**Report Features:**
+- Professional "prismatic" design theme
+- Severity-based color coding
+- Executive summary with metrics
+- Detailed findings with remediation
+- Suppressed findings appendix
+
+### 9. Testing Strategy
+
+Comprehensive testing approach leveraging interfaces:
+
+```go
+// In-memory database for tests
+func NewTestDB() *sql.DB {
+    db, _ := sql.Open("sqlite3", ":memory:")
+    // Run migrations
+    return db
+}
+
+// Integration test example
+func TestScanOrchestrator(t *testing.T) {
+    db := NewTestDB()
+    
+    // Create a real scanner with test configuration
+    trivyScanner := trivy.NewScanner(trivy.Config{
+        ImageName: "alpine:latest",
+    })
+    
+    orch := NewScanOrchestrator(db, []Scanner{trivyScanner})
+    err := orch.ExecuteScan(context.Background(), testConfig)
+    
+    assert.NoError(t, err)
+    // Verify findings in database
+}
+```
+
+### 10. Error Handling
+
+Multi-error collection for comprehensive feedback:
+
+```go
+type ScanErrors struct {
+    errors map[string]error
+    mu     sync.Mutex
+}
+
+func (e *ScanErrors) Add(scanner string, err error) {
+    e.mu.Lock()
+    defer e.mu.Unlock()
+    e.errors[scanner] = err
+}
+
+func (e *ScanErrors) Error() string {
+    if len(e.errors) == 0 {
+        return ""
+    }
+    
+    var parts []string
+    for scanner, err := range e.errors {
+        parts = append(parts, fmt.Sprintf("%s: %v", scanner, err))
+    }
+    return strings.Join(parts, "; ")
+}
+```
+
+### 11. Package Structure
+
+Clean, testable organization:
+
+```
+prismatic/
+├── cmd/
+│   └── prismatic/
+│       └── main.go          # Entry point
+├── internal/
+│   ├── database/
+│   │   ├── migrations.go    # Schema setup
+│   │   ├── queries.go       # Common queries
+│   │   └── db.go           # Database helpers
+│   ├── scanner/
+│   │   ├── interface.go     # Scanner interface
+│   │   ├── orchestrator.go  # Parallel execution
+│   │   ├── trivy/          # Scanner implementations
+│   │   ├── nuclei/
+│   │   ├── gitleaks/
+│   │   ├── kubeaudit/
+│   │   ├── tfsec/
+│   │   └── terrascan/
+│   ├── tui/
+│   │   ├── app.go          # Main TUI application
+│   │   ├── pages/          # Different screens
+│   │   ├── components/     # Reusable UI components
+│   │   └── styles.go       # Consistent styling
+│   ├── models/
+│   │   ├── finding.go      # Core data models
+│   │   ├── scan.go
+│   │   └── severity.go
+│   └── report/
+│       ├── generator.go    # Report generation
+│       ├── templates/      # HTML templates
+│       └── assets/         # CSS, images
+├── pkg/
+│   └── version/           # Version information
+└── prismatic.db           # SQLite database (git ignored)
+```
+
+## Security Considerations
+
+1. **No Sensitive Data in Logs**: Scanner credentials never logged
+2. **Database Security**: Local file with user permissions only
+3. **Input Validation**: All user input sanitized before database storage
+4. **Credential Management**: Leverages existing AWS/Kube credential chains
+5. **No Network Services**: Pure local CLI tool, no attack surface
+
+## Performance Targets
+
+- **Startup Time**: < 1 second to TUI display
+- **Scan Initiation**: < 5 seconds from config to first finding
+- **Finding Ingestion**: > 1000 findings/second
+- **Memory Usage**: < 500MB for 10,000 findings
+- **Database Size**: ~100KB per 100 findings
+
+## Future Enhancements (Post-v1)
+
+1. **AI-Powered Enrichment**: Add contextual analysis phase
+2. **Scan Profiles**: Save and reuse scanner configurations
+3. **AWS Security**: Integrate native AWS security scanning
+4. **Real-time Streaming**: Show findings as they're discovered
+5. **REST API**: Optional API server for integrations
+6. **Cloud Backends**: Support for S3/GCS database storage
+7. **Collaborative Features**: Team-based suppression management
+
+## Development Workflow
+
+```bash
+# Run the application
+go run cmd/prismatic/main.go
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run integration tests
+go test -tags=integration ./...
+
+# Build for release
+go build -o prismatic cmd/prismatic/main.go
+
+# Database debugging
+sqlite3 prismatic.db "SELECT COUNT(*) FROM findings"
+```
+
+## MVP Success Criteria
+
+1. **Single Command Launch**: `prismatic` starts TUI immediately
+2. **Intuitive Navigation**: New users productive in < 5 minutes
+3. **Reliable Scanning**: No crashed scans, partial results on error
+4. **Beautiful Reports**: Professional PDFs ready for clients
+5. **Fast Execution**: Complete scan in < 10 minutes
+6. **Zero Configuration**: Works with existing AWS/Kube setup
+7. **Comprehensive Coverage**: 6 scanners across all infrastructure
+
+---
+
+This architecture provides a solid foundation for a modern, user-friendly security scanning platform that leverages the best of Go's ecosystem while providing an exceptional user experience through its TUI interface.

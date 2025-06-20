@@ -3,10 +3,10 @@ package core
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
+	"github.com/joshsymonds/prismatic/internal/database"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/enrichment/batch"
 	"github.com/joshsymonds/prismatic/internal/enrichment/cache"
@@ -19,15 +19,18 @@ import (
 
 // createTestStorage creates a temporary storage for testing.
 func createTestStorage(t *testing.T) (*storage.Storage, func()) {
-	tmpDir, err := os.MkdirTemp("", "orchestrator-test")
+	t.Helper()
+	db, err := database.New(":memory:")
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatalf("Failed to create database: %v", err)
 	}
 
-	testStorage := storage.NewStorageWithLogger(tmpDir, logger.NewMockLogger())
+	testStorage := storage.NewStorageWithLogger(db, logger.NewMockLogger())
 
 	cleanup := func() {
-		_ = os.RemoveAll(tmpDir)
+		if err := db.Close(); err != nil {
+			t.Logf("failed to close database: %v", err)
+		}
 	}
 
 	return testStorage, cleanup
@@ -77,11 +80,11 @@ func (m *mockLLMDriver) EstimateTokens(prompt string) (int, error) {
 	return len(prompt) / 4, nil
 }
 
-func (m *mockLLMDriver) HealthCheck(ctx context.Context) error {
+func (m *mockLLMDriver) HealthCheck(_ context.Context) error {
 	return nil
 }
 
-func (m *mockLLMDriver) Configure(_ map[string]interface{}) error {
+func (m *mockLLMDriver) Configure(_ map[string]any) error {
 	return nil
 }
 
@@ -181,7 +184,7 @@ func TestOrchestrator_EnrichFindings(t *testing.T) {
 				TokenBudget: 10, // Very low budget
 			},
 			mockStrategy: &mockBatchingStrategy{
-				batchFunc: func(ctx context.Context, findings []models.Finding, config *batch.Config) ([]batch.Batch, error) {
+				batchFunc: func(_ context.Context, findings []models.Finding, _ *batch.Config) ([]batch.Batch, error) {
 					return []batch.Batch{
 						{
 							ID:              "batch-1",
@@ -201,7 +204,7 @@ func TestOrchestrator_EnrichFindings(t *testing.T) {
 			},
 			config: &enrichment.Config{},
 			mockDriver: &mockLLMDriver{
-				enrichFunc: func(ctx context.Context, findings []models.Finding, prompt string) ([]enrichment.FindingEnrichment, error) {
+				enrichFunc: func(_ context.Context, _ []models.Finding, _ string) ([]enrichment.FindingEnrichment, error) {
 					return nil, fmt.Errorf("LLM error")
 				},
 			},
@@ -215,7 +218,7 @@ func TestOrchestrator_EnrichFindings(t *testing.T) {
 			},
 			config: &enrichment.Config{},
 			mockStrategy: &mockBatchingStrategy{
-				batchFunc: func(ctx context.Context, findings []models.Finding, config *batch.Config) ([]batch.Batch, error) {
+				batchFunc: func(_ context.Context, _ []models.Finding, _ *batch.Config) ([]batch.Batch, error) {
 					return nil, fmt.Errorf("batching error")
 				},
 			},
@@ -264,7 +267,7 @@ func TestOrchestrator_WithCache(t *testing.T) {
 	cacheHits := 0
 	cacheMisses := 0
 	mockCache := &cache.MockCache{
-		GetFunc: func(ctx context.Context, key string) (*enrichment.FindingEnrichment, error) {
+		GetFunc: func(_ context.Context, key string) (*enrichment.FindingEnrichment, error) {
 			if key == "cached-finding" {
 				cacheHits++
 				return &enrichment.FindingEnrichment{
@@ -278,10 +281,10 @@ func TestOrchestrator_WithCache(t *testing.T) {
 			cacheMisses++
 			return nil, fmt.Errorf("not found")
 		},
-		SetFunc: func(ctx context.Context, e *enrichment.FindingEnrichment, ttl time.Duration) error {
+		SetFunc: func(_ context.Context, _ *enrichment.FindingEnrichment, _ time.Duration) error {
 			return nil
 		},
-		StatsFunc: func(ctx context.Context) (*cache.Stats, error) {
+		StatsFunc: func(_ context.Context) (*cache.Stats, error) {
 			return &cache.Stats{
 				TotalHits:   int64(cacheHits),
 				TotalMisses: int64(cacheMisses),
@@ -344,7 +347,7 @@ func TestOrchestrator_WithCache(t *testing.T) {
 func TestOrchestrator_WithKnowledgeBase(t *testing.T) {
 	// Create mock knowledge base
 	mockKB := &knowledge.MockBase{
-		SearchFunc: func(ctx context.Context, query string, limit int) ([]*knowledge.Entry, error) {
+		SearchFunc: func(_ context.Context, query string, _ int) ([]*knowledge.Entry, error) {
 			if query == "SQL injection" {
 				return []*knowledge.Entry{
 					{
@@ -365,7 +368,7 @@ func TestOrchestrator_WithKnowledgeBase(t *testing.T) {
 
 	enrichCalled := false
 	driver := &mockLLMDriver{
-		enrichFunc: func(ctx context.Context, findings []models.Finding, prompt string) ([]enrichment.FindingEnrichment, error) {
+		enrichFunc: func(_ context.Context, findings []models.Finding, prompt string) ([]enrichment.FindingEnrichment, error) {
 			enrichCalled = true
 			// Verify that knowledge base info is in the prompt
 			if prompt == "" {
@@ -427,7 +430,7 @@ func TestOrchestrator_ConcurrentBatches(t *testing.T) {
 	processingOrder := make([]string, 0)
 
 	driver := &mockLLMDriver{
-		enrichFunc: func(ctx context.Context, findings []models.Finding, prompt string) ([]enrichment.FindingEnrichment, error) {
+		enrichFunc: func(_ context.Context, findings []models.Finding, _ string) ([]enrichment.FindingEnrichment, error) {
 			// Simulate processing time
 			time.Sleep(10 * time.Millisecond)
 
@@ -449,7 +452,7 @@ func TestOrchestrator_ConcurrentBatches(t *testing.T) {
 
 	// Create multiple batches
 	strategy := &mockBatchingStrategy{
-		batchFunc: func(ctx context.Context, findings []models.Finding, config *batch.Config) ([]batch.Batch, error) {
+		batchFunc: func(_ context.Context, findings []models.Finding, _ *batch.Config) ([]batch.Batch, error) {
 			batches := make([]batch.Batch, len(findings))
 			for i, f := range findings {
 				batches[i] = batch.Batch{

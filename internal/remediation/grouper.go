@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joshsymonds/prismatic/internal/config"
 	"github.com/joshsymonds/prismatic/internal/enrichment"
 	"github.com/joshsymonds/prismatic/internal/models"
 	"github.com/joshsymonds/prismatic/pkg/logger"
@@ -13,20 +12,18 @@ import (
 
 // FindingGrouper groups findings by remediation strategy.
 type FindingGrouper struct {
-	config *config.Config
 	logger logger.Logger
 }
 
 // NewFindingGrouper creates a new finding grouper.
-func NewFindingGrouper(cfg *config.Config, log logger.Logger) *FindingGrouper {
+func NewFindingGrouper(_ any, log logger.Logger) *FindingGrouper {
 	return &FindingGrouper{
-		config: cfg,
 		logger: log,
 	}
 }
 
 // GroupByRemediation groups findings that can be fixed together.
-func (g *FindingGrouper) GroupByRemediation(findings []models.Finding, enrichments map[string]*enrichment.FindingEnrichment) []RemediationGroup {
+func (g *FindingGrouper) GroupByRemediation(findings []models.Finding, enrichments map[string]*enrichment.FindingEnrichment) []Group {
 	// Create a map to collect findings by strategy
 	strategyMap := make(map[string][]models.Finding)
 
@@ -36,9 +33,9 @@ func (g *FindingGrouper) GroupByRemediation(findings []models.Finding, enrichmen
 	}
 
 	// Convert map to groups
-	var groups []RemediationGroup
+	groups := make([]Group, 0, len(strategyMap))
 	for strategy, findings := range strategyMap {
-		group := RemediationGroup{
+		group := Group{
 			Findings:        findings,
 			Strategy:        strategy,
 			RepositoryType:  g.getRepositoryType(strategy),
@@ -52,7 +49,7 @@ func (g *FindingGrouper) GroupByRemediation(findings []models.Finding, enrichmen
 }
 
 // determineStrategy identifies the remediation strategy for a finding.
-func (g *FindingGrouper) determineStrategy(finding models.Finding, enrichment *enrichment.FindingEnrichment) string {
+func (g *FindingGrouper) determineStrategy(finding models.Finding, _ *enrichment.FindingEnrichment) string {
 	// Use scanner and finding type to determine strategy
 	scanner := finding.Scanner
 	findingType := strings.ToLower(finding.Type)
@@ -88,11 +85,12 @@ func (g *FindingGrouper) determineProwlerStrategy(finding models.Finding) string
 
 	// S3 related findings
 	if strings.Contains(resource, "s3") || strings.Contains(findingType, "s3") {
-		if strings.Contains(findingType, "public") || strings.Contains(findingType, "access") {
+		switch {
+		case strings.Contains(findingType, "public") || strings.Contains(findingType, "access"):
 			return "terraform-s3-public-access"
-		} else if strings.Contains(findingType, "encryption") {
+		case strings.Contains(findingType, "encryption"):
 			return "terraform-s3-encryption"
-		} else if strings.Contains(findingType, "versioning") {
+		case strings.Contains(findingType, "versioning"):
 			return "terraform-s3-versioning"
 		}
 	}
@@ -199,16 +197,17 @@ func (g *FindingGrouper) determineCheckovStrategy(finding models.Finding) string
 
 // getRepositoryType maps strategy to repository type.
 func (g *FindingGrouper) getRepositoryType(strategy string) string {
-	if strings.HasPrefix(strategy, "terraform-") {
+	switch {
+	case strings.HasPrefix(strategy, "terraform-"):
 		return RepoTypeTerraform
-	} else if strings.HasPrefix(strategy, "kubernetes-") {
+	case strings.HasPrefix(strategy, "kubernetes-"):
 		return RepoTypeKubernetes
-	} else if strings.HasPrefix(strategy, "docker-") || strings.HasPrefix(strategy, "container-") {
+	case strings.HasPrefix(strategy, "docker-") || strings.HasPrefix(strategy, "container-"):
 		return RepoTypeDocker
-	} else if strings.HasPrefix(strategy, "aws-") {
+	case strings.HasPrefix(strategy, "aws-"):
 		// AWS findings might be in CloudFormation or Terraform
 		return RepoTypeTerraform // Default to Terraform
-	} else if strings.Contains(strategy, "ansible") {
+	case strings.Contains(strategy, "ansible"):
 		return RepoTypeAnsible
 	}
 	return RepoTypeGeneric
@@ -223,16 +222,18 @@ func (g *FindingGrouper) calculatePriority(findings []models.Finding) int {
 	}
 
 	// Priority based on severity distribution
-	if severityCounts[models.SeverityCritical] > 0 {
+	switch {
+	case severityCounts[models.SeverityCritical] > 0:
 		return PriorityUrgent
-	} else if severityCounts[models.SeverityHigh] > 2 {
+	case severityCounts[models.SeverityHigh] > 2:
 		return PriorityHigh
-	} else if severityCounts[models.SeverityHigh] > 0 {
+	case severityCounts[models.SeverityHigh] > 0:
 		return PriorityMedium
-	} else if severityCounts[models.SeverityMedium] > 0 {
+	case severityCounts[models.SeverityMedium] > 0:
 		return PriorityLow
+	default:
+		return PriorityDeferred
 	}
-	return PriorityDeferred
 }
 
 // estimateEffort estimates the time required to implement a remediation.
@@ -242,12 +243,13 @@ func (g *FindingGrouper) estimateEffort(strategy string, findingCount int) time.
 
 	// Scale by number of findings
 	scaleFactor := 1.0
-	if findingCount > 10 {
-		scaleFactor = 1.5
-	} else if findingCount > 20 {
-		scaleFactor = 2.0
-	} else if findingCount > 50 {
+	switch {
+	case findingCount > 50:
 		scaleFactor = 3.0
+	case findingCount > 20:
+		scaleFactor = 2.0
+	case findingCount > 10:
+		scaleFactor = 1.5
 	}
 
 	return time.Duration(float64(baseEffort) * scaleFactor)

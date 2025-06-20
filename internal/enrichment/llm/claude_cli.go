@@ -1,3 +1,4 @@
+// Package llm provides interfaces and implementations for LLM-based enrichment.
 package llm
 
 import (
@@ -30,7 +31,7 @@ func NewClaudeCLIDriver() *ClaudeCLIDriver {
 }
 
 // Configure implements Driver interface.
-func (d *ClaudeCLIDriver) Configure(config map[string]interface{}) error {
+func (d *ClaudeCLIDriver) Configure(config map[string]any) error {
 	if model, ok := config["model"].(string); ok {
 		d.model = model
 	}
@@ -89,8 +90,8 @@ func (d *ClaudeCLIDriver) Enrich(ctx context.Context, findings []models.Finding,
 
 	// Parse the JSON response
 	var response claudeResponse
-	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
-		return nil, fmt.Errorf("failed to parse claude response: %w (output: %s)", err, stdout.String())
+	if unmarshalErr := json.Unmarshal(stdout.Bytes(), &response); unmarshalErr != nil {
+		return nil, fmt.Errorf("failed to parse claude response: %w (output: %s)", unmarshalErr, stdout.String())
 	}
 
 	// Extract enrichments from the response
@@ -107,7 +108,7 @@ func (d *ClaudeCLIDriver) Enrich(ctx context.Context, findings []models.Finding,
 
 		// Add timing context
 		if enrichments[i].Context == nil {
-			enrichments[i].Context = make(map[string]interface{})
+			enrichments[i].Context = make(map[string]any)
 		}
 		enrichments[i].Context["processing_time_ms"] = duration.Milliseconds()
 	}
@@ -145,8 +146,8 @@ func (d *ClaudeCLIDriver) GetCapabilities() Capabilities {
 		},
 	}
 
-	if cap, ok := capabilities[d.model]; ok {
-		return cap
+	if capability, ok := capabilities[d.model]; ok {
+		return capability
 	}
 
 	// Default to Sonnet capabilities
@@ -159,10 +160,12 @@ func (d *ClaudeCLIDriver) EstimateTokens(prompt string) (int, error) {
 	// This is a rough estimate; actual tokenization varies
 	tokens := len(prompt) / 4
 
-	// Add some buffer for response tokens
-	responseBuffer := 1000
+	// Minimum of 1 token for non-empty prompts
+	if prompt != "" && tokens == 0 {
+		tokens = 1
+	}
 
-	return tokens + responseBuffer, nil
+	return tokens, nil
 }
 
 // HealthCheck implements Driver interface.

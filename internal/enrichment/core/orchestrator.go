@@ -1,3 +1,4 @@
+// Package core provides the core orchestration logic for finding enrichment.
 package core
 
 import (
@@ -59,7 +60,7 @@ func (o *Orchestrator) EnrichFindings(ctx context.Context, findings []models.Fin
 	}
 
 	// Create enrichment metadata
-	metadata := &enrichment.EnrichmentMetadata{
+	metadata := &enrichment.Metadata{
 		RunID:         uuid.New().String(),
 		StartedAt:     time.Now(),
 		TotalFindings: len(findings),
@@ -243,7 +244,7 @@ func (o *Orchestrator) buildPrompt(ctx context.Context, findings []models.Findin
 }
 
 // saveEnrichments saves enrichments to the storage.
-func (o *Orchestrator) saveEnrichments(ctx context.Context, enrichments []enrichment.FindingEnrichment, metadata *enrichment.EnrichmentMetadata) error {
+func (o *Orchestrator) saveEnrichments(_ context.Context, enrichments []enrichment.FindingEnrichment, metadata *enrichment.Metadata) error {
 	// Get the scan directory from storage
 	scanDir := o.storage.GetScanDirectory()
 	enrichmentDir := filepath.Join(scanDir, "enrichments")

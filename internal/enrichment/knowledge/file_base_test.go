@@ -26,6 +26,10 @@ func TestNewFileBase(t *testing.T) {
 		t.Errorf("Expected base path %s, got %s", tmpDir, kb.basePath)
 	}
 
+	// Base directory should exist
+	if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
+		t.Error("Expected base directory to exist")
+	}
 	// Check that index file exists
 	indexPath := filepath.Join(tmpDir, "index.json")
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
@@ -249,8 +253,8 @@ func TestFileBase_Search(t *testing.T) {
 	for _, entry := range entries {
 		entry.CreatedAt = time.Now()
 		entry.UpdatedAt = time.Now()
-		if err := kb.Store(ctx, entry); err != nil {
-			t.Fatalf("Failed to store entry %s: %v", entry.ID, err)
+		if storeErr := kb.Store(ctx, entry); storeErr != nil {
+			t.Fatalf("Failed to store entry %s: %v", entry.ID, storeErr)
 		}
 	}
 
@@ -329,8 +333,8 @@ func TestFileBase_Index(t *testing.T) {
 	}
 
 	for _, entry := range entries {
-		if err := kb.Store(ctx, entry); err != nil {
-			t.Fatalf("Failed to store entry: %v", err)
+		if storeErr := kb.Store(ctx, entry); storeErr != nil {
+			t.Fatalf("Failed to store entry: %v", storeErr)
 		}
 	}
 

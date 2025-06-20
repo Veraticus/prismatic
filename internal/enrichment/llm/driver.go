@@ -22,7 +22,7 @@ type Driver interface {
 	HealthCheck(ctx context.Context) error
 
 	// Configure sets driver-specific configuration
-	Configure(config map[string]interface{}) error
+	Configure(config map[string]any) error
 }
 
 // Capabilities describes what an LLM driver can do.

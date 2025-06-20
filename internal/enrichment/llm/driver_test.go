@@ -14,7 +14,7 @@ type MockDriver struct {
 	GetCapabilitiesFunc func() Capabilities
 	EstimateTokensFunc  func(prompt string) (int, error)
 	HealthCheckFunc     func(ctx context.Context) error
-	ConfigureFunc       func(config map[string]interface{}) error
+	ConfigureFunc       func(config map[string]any) error
 }
 
 func (m *MockDriver) Enrich(ctx context.Context, findings []models.Finding, prompt string) ([]enrichment.FindingEnrichment, error) {
@@ -53,7 +53,7 @@ func (m *MockDriver) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-func (m *MockDriver) Configure(config map[string]interface{}) error {
+func (m *MockDriver) Configure(config map[string]any) error {
 	if m.ConfigureFunc != nil {
 		return m.ConfigureFunc(config)
 	}
@@ -122,6 +122,19 @@ func TestCapabilities(t *testing.T) {
 	if caps.MaxTokensPerRequest < caps.MaxTokensPerResponse {
 		t.Error("MaxTokensPerRequest should be greater than MaxTokensPerResponse")
 	}
+
+	// Test other capabilities
+	if caps.ModelName != "test-model" {
+		t.Errorf("Expected model name 'test-model', got %s", caps.ModelName)
+	}
+
+	if !caps.SupportsJSONMode {
+		t.Error("Expected SupportsJSONMode to be true")
+	}
+
+	if caps.SupportsFunctionCalling {
+		t.Error("Expected SupportsFunctionCalling to be false")
+	}
 }
 
 func TestDefaultRegistry(t *testing.T) {
@@ -156,7 +169,7 @@ func TestMockDriverEnrich(t *testing.T) {
 	}
 
 	mockDriver := &MockDriver{
-		EnrichFunc: func(ctx context.Context, f []models.Finding, prompt string) ([]enrichment.FindingEnrichment, error) {
+		EnrichFunc: func(_ context.Context, f []models.Finding, _ string) ([]enrichment.FindingEnrichment, error) {
 			return []enrichment.FindingEnrichment{
 				{
 					FindingID: f[0].ID,

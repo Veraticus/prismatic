@@ -28,16 +28,16 @@ type Base interface {
 
 // Entry represents a knowledge base entry.
 type Entry struct {
-	CreatedAt          time.Time              `yaml:"created_at" json:"created_at"`
-	UpdatedAt          time.Time              `yaml:"updated_at" json:"updated_at"`
-	Metadata           map[string]interface{} `yaml:"metadata" json:"metadata"`
-	GenericRemediation *Remediation           `yaml:"generic_remediation" json:"generic_remediation"`
-	ID                 string                 `yaml:"id" json:"id"`
-	Type               string                 `yaml:"type" json:"type"`
-	Description        string                 `yaml:"description" json:"description"`
-	References         []string               `yaml:"references" json:"references"`
-	Tags               []string               `yaml:"tags" json:"tags"`
-	TTL                time.Duration          `yaml:"ttl" json:"ttl"`
+	CreatedAt          time.Time      `yaml:"created_at" json:"created_at"`
+	UpdatedAt          time.Time      `yaml:"updated_at" json:"updated_at"`
+	Metadata           map[string]any `yaml:"metadata" json:"metadata"`
+	GenericRemediation *Remediation   `yaml:"generic_remediation" json:"generic_remediation"`
+	ID                 string         `yaml:"id" json:"id"`
+	Type               string         `yaml:"type" json:"type"`
+	Description        string         `yaml:"description" json:"description"`
+	References         []string       `yaml:"references" json:"references"`
+	Tags               []string       `yaml:"tags" json:"tags"`
+	TTL                time.Duration  `yaml:"ttl" json:"ttl"`
 }
 
 // Remediation contains remediation guidance.
